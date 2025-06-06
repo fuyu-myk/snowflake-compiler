@@ -56,4 +56,8 @@ impl DiagnosticsReport {
     pub fn report_expected_expression(&mut self, token: &Token) {
         self.report_error(format!("Expected expression, found <{}>", token.kind), token.span.clone());
     }
+
+    pub fn report_undeclared_variable(&mut self, token: &Token) {
+        self.report_error(format!("Undeclared variable '{}'", token.span.literal), token.span.clone());
+    }
 }

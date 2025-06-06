@@ -78,9 +78,14 @@ pub trait ASTVisitor {
 
     fn visit_number_expression(&mut self, number: &ASTNumberExpression);
 
-    fn visit_binary_expression(&mut self, binary_expression: &ASTBinaryExpression);
+    fn visit_binary_expression(&mut self, binary_expression: &ASTBinaryExpression) {
+        self.visit_expression(&binary_expression.left);
+        self.visit_expression(&binary_expression.right);;
+    }
 
-    fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression);
+    fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression) {
+        self.visit_expression(&parenthesised_expression.expression);
+    }
 
     fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression);
 
@@ -170,8 +175,8 @@ pub enum ASTStatementKind {
 }
 
 pub struct ASTLetStatement {
-    identifier: Token,
-    initialiser: ASTExpression,
+    pub identifier: Token,
+    pub initialiser: ASTExpression,
 }
 
 pub struct ASTStatement {
@@ -211,7 +216,7 @@ pub enum ASTExpressionKind {
 }
 
 pub struct ASTVariableExpression {
-    identifier: Token,
+    pub identifier: Token,
 }
 
 impl ASTVariableExpression {
