@@ -50,8 +50,8 @@ impl ASTVisitor for SymbolCheck {
 }
 
 pub struct CompilationUnit {
-    ast: Ast,
-    diagnostics_report: DiagnosticsReportCell,
+    pub ast: Ast,
+    pub diagnostics_report: DiagnosticsReportCell,
 }
 
 impl CompilationUnit {
@@ -95,7 +95,20 @@ impl CompilationUnit {
         Self::create_compilation_unit(ast, diagnostics_report)
     }
 
-    pub fn run_compiler(&self) {
+    pub fn run_errorless(&self) {
+        if self.diagnostics_report.borrow().diagnostics.len() > 0 {
+            if self.diagnostics_report.borrow().diagnostics.len() == 1 {
+                println!("Compilation failed due to {} previous error.", self.diagnostics_report.borrow().diagnostics.len());
+                return;
+            } else {
+                println!("Compilation failed due to {} previous errors.", self.diagnostics_report.borrow().diagnostics.len());
+                return;
+            }
+        }
+
+        self.run_compiler();
+    }
+    fn run_compiler(&self) {
         // evaluator (temp)
         let mut eval = ASTEvaluator::new();
         self.ast.visit(&mut eval);

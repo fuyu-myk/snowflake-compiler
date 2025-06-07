@@ -95,12 +95,12 @@ impl Parser {
          *  if yes, return another binary exp for higher precedence operation
          */
         while let Some(operator) = self.parse_binary_operator() { // try parsing bin operator
-            self.consume();
-
             let operator_precedence = operator.precedence();
             if operator_precedence < precedence { // precedence checks (w/ current)
                 break;
             }
+
+            self.consume();
 
             let right = self.parse_binary_expression(operator_precedence);
             left = ASTExpression::binary(operator, left, right);

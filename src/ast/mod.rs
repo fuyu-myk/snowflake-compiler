@@ -1,4 +1,5 @@
 use crate::ast::lexer::{Token, TextSpan};
+use crate::compilation_unit::CompilationUnit;
 use termion::color;
 use termion::color::Reset;
 use termion::color::Fg;
@@ -80,7 +81,7 @@ pub trait ASTVisitor {
 
     fn visit_binary_expression(&mut self, binary_expression: &ASTBinaryExpression) {
         self.visit_expression(&binary_expression.left);
-        self.visit_expression(&binary_expression.right);;
+        self.visit_expression(&binary_expression.right);
     }
 
     fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression) {
@@ -319,5 +320,161 @@ impl ASTExpression {
  */
 #[cfg(test)]
 mod tests {
-    // todo: add tests
+    use super::*;
+
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum TestASTNode {
+        Number(i64),
+        Binary,
+        Parenthesised,
+        LetStatement,
+        Variable(String),
+    }
+
+    struct ASTVerifier {
+        expected: Vec<TestASTNode>,
+        actual: Vec<TestASTNode>,
+    }
+
+    impl ASTVerifier {
+        pub fn new(input: &str, expected: Vec<TestASTNode>) -> Self {
+            let compilation_unit = CompilationUnit::compile(input);
+            let mut verifier = ASTVerifier { expected, actual: Vec::new() };
+            let flattened_ast = verifier.flatten_ast(&compilation_unit.ast);
+
+            verifier
+        }
+
+        fn flatten_ast(&mut self, ast: &Ast) {
+            self.actual.clear();
+            ast.visit(&mut *self);
+        }
+
+        pub fn verify(&self) {
+            // ensure the expected and actual AST nodes match
+            assert_eq!(self.expected.len(), self.actual.len(), "Expected {} nodes, but got {}.\nActual nodes: {:?}", self.expected.len(), self.actual.len(), self.actual);
+
+            for (index, (expected, actual)) in self.expected.iter().zip(self.actual.iter()).enumerate() {
+                assert_eq!(expected, actual, "Expected {:?} at index {}, but got {:?}", expected, index, actual);
+            }
+        }
+    }
+
+    impl ASTVisitor for ASTVerifier {
+        fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
+            self.actual.push(TestASTNode::LetStatement);
+            self.visit_expression(&let_statement.initialiser);
+        }
+
+        fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression) {
+            self.actual.push(TestASTNode::Variable(variable_expression.identifier().to_string()));
+        }
+
+        fn visit_number_expression(&mut self, number: &ASTNumberExpression) {
+            self.actual.push(TestASTNode::Number(number.number));
+        }
+
+        fn visit_error(&mut self, span: &TextSpan) {
+            // do nothing
+        }
+
+        fn visit_parenthesised_expression(&mut self, parenthesised_expression:&ASTParenthesisedExpression) {
+            self.actual.push(TestASTNode::Parenthesised);
+            self.visit_expression(&parenthesised_expression.expression);
+        }
+
+        fn visit_binary_expression(&mut self, binary_expression: &ASTBinaryExpression) {
+            self.actual.push(TestASTNode::Binary);
+            self.visit_expression(&binary_expression.left);
+            self.visit_expression(&binary_expression.right);
+        }
+    }
+
+    fn assert_tree(input: &str, expected: Vec<TestASTNode>) {
+        let verifier = ASTVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    pub fn test_basic_binary_expression() {
+        let input = "let a = 1 + 2";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Number(1),
+            TestASTNode::Number(2),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_parenthesised_binary_expression() {
+        let input = "let a = (6 + 9) * 42";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Parenthesised,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+            TestASTNode::Number(42),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_parenthesised_binary_expression_with_variable() {
+        let input = "let a = (6 + 9) * b";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Parenthesised,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+            TestASTNode::Variable("b".to_string()),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_nested_parenthesised_binary_expression() {
+        let input = "let a = (b + (c * 2)) / 3";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Parenthesised,
+            TestASTNode::Binary,
+            TestASTNode::Variable("b".to_string()),
+            TestASTNode::Parenthesised,
+            TestASTNode::Binary,
+            TestASTNode::Variable("c".to_string()),
+            TestASTNode::Number(2),
+            TestASTNode::Number(3),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_parenthesised_binary_expression_with_variable_and_number() {
+        let input = "let a = (6 + 9) * b + 42";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Binary,
+            TestASTNode::Parenthesised,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+            TestASTNode::Variable("b".to_string()),
+            TestASTNode::Number(42),
+        ];
+
+        assert_tree(input, expected);
+    }
 }
