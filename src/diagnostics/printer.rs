@@ -46,7 +46,7 @@ impl <'a> DiagnosticsPrinter<'a> {
         
         let (arrow_pointers, arrow_line) = Self::format_arrow(diagnostic, indent);
 
-        let error_message = Self::format_error_msg(diagnostic, indent);
+        let error_message = Self::format_error_msg(diagnostic, indent, column, line_index);
 
         format!("{}{}{}{}{}\n{}\n{}\n{}", prefix, Fg(Red), span, Fg(Reset), suffix, arrow_pointers, arrow_line, error_message)
     }
@@ -75,8 +75,8 @@ impl <'a> DiagnosticsPrinter<'a> {
         (arrow_pointers, arrow_line)
     }
 
-    fn format_error_msg(diagnostic: &Diagnostic, indent: usize) -> String {
-        format!("{:indent$}+-- {}", "", diagnostic.message, indent = indent)
+    fn format_error_msg(diagnostic: &Diagnostic, indent: usize, column: usize, line_index: usize) -> String {
+        format!("{:indent$}+-- {} ({}:{})", "", diagnostic.message, column + 1, line_index + 1, indent = indent)
     }
 
     pub fn print(&self) {

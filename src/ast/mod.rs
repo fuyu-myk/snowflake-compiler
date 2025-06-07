@@ -311,3 +311,13 @@ impl ASTExpression {
         ASTExpression::new(ASTExpressionKind::Error(span))
     }
 }
+
+/*
+ * The goal for the below module is to flatten the AST into a single line of statements
+ * Useful for debugging and visualising
+ * Inclusive of all statements, expressions and their relationships
+ */
+#[cfg(test)]
+mod tests {
+    // todo: add tests
+}

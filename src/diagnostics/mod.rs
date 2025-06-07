@@ -7,7 +7,7 @@ pub mod printer;
 
 use crate::ast::lexer::{Token, TokenKind, TextSpan};
 use std::cell::RefCell;
-use crate::Rc;
+use std::rc::Rc;
 
 
 pub enum DiagnosticKind {
