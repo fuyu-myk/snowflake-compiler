@@ -1,4 +1,4 @@
-use crate::ast::{ASTStatement, ASTExpression, ASTBinaryOperator, ASTBinaryOperatorKind, ASTBinaryOperatorAssociativity};
+use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorAssociativity, ASTBinaryOperatorKind, ASTExpression, ASTStatement, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::diagnostics::DiagnosticsReportCell;
 use std::cell::Cell;
@@ -87,7 +87,7 @@ impl Parser {
     }
 
     fn parse_binary_expression(&mut self, precedence: u8) -> ASTExpression {
-        let mut left = self.parse_primary_expression(); // parsing pri exp (only no.s for now)
+        let mut left = self.parse_unary_expression(); // parsing pri exp (only no.s for now)
 
         /*
          * parse pri exp, check if there are operators of higher precedence
@@ -109,10 +109,39 @@ impl Parser {
         return left;
     }
 
+    fn parse_unary_expression(&mut self) -> ASTExpression {
+        if let Some(operator) = self.parse_unary_operator() {
+            self.consume(); // consume unary operator token
+            let operand = self.parse_unary_expression(); // parse next unary expression
+            return ASTExpression::unary(operator, operand);
+        }
+
+        self.parse_primary_expression()
+    }
+
+    fn parse_unary_operator(&mut self) -> Option<ASTUnaryOperator> {
+        let token = self.current();
+
+        let kind = match token.kind {
+            TokenKind::Minus => {
+                Some(ASTUnaryOperatorKind::Negation)
+            },
+            TokenKind::Tilde => {
+                Some(ASTUnaryOperatorKind::BitwiseNot)
+            },
+            _ => {
+                None
+            }
+        };
+
+        return kind.map(|kind| ASTUnaryOperator::new(kind, token.clone()));
+    }
+
     fn parse_binary_operator(&mut self) -> Option<ASTBinaryOperator> {
         let token = self.current();
 
         let kind = match token.kind {
+            // arithmetic operators
             TokenKind::Plus => {
                 Some(ASTBinaryOperatorKind::Plus)
             },
@@ -124,6 +153,19 @@ impl Parser {
             },
             TokenKind::Slash => {
                 Some(ASTBinaryOperatorKind::Divide)
+            },
+            TokenKind::DoubleAsterisk => {
+                Some(ASTBinaryOperatorKind::Power)
+            },
+            // bitwise operators
+            TokenKind::Ampersand => {
+                Some(ASTBinaryOperatorKind::BitwiseAnd)
+            },
+            TokenKind::Pipe => {
+                Some(ASTBinaryOperatorKind::BitwiseOr)
+            },
+            TokenKind::Caret => {
+                Some(ASTBinaryOperatorKind::BitwiseXor)
             },
             _ => None
         };

@@ -3,17 +3,31 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TokenKind {
+    // literals
     Number(i64),
+
+    // classic arithmetic operators
     Plus,
     Minus,
     Asterisk,
     Slash,
+    Equals,
+    DoubleAsterisk, // ** for power
+
+    // bitwise operators
+    Ampersand, // & for bitwise and
+    Pipe, // | for bitwise or
+    Caret, // ^ for bitwise xor
+    Tilde, // ~ for bitwise not
+
+    // keywords
+    Let,
+
+    // other
     LeftParen,
     RightParen,
     Whitespace,
-    Let,
     Identifier,
-    Equals,
     Bad,
     Eof,
 }
@@ -21,17 +35,31 @@ pub enum TokenKind {
 impl Display for TokenKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            // literals
             TokenKind::Number(_) => write!(f, "Number"),
+
+            // classic arithmetic operators
             TokenKind::Plus => write!(f, "+"),
             TokenKind::Minus => write!(f, "-"),
             TokenKind::Asterisk => write!(f, "*"),
             TokenKind::Slash => write!(f, "/"),
+            TokenKind::Equals => write!(f, "="),
+            TokenKind::DoubleAsterisk => write!(f, "**"),
+
+            // bitwise operators
+            TokenKind::Ampersand => write!(f, "&"),
+            TokenKind::Pipe => write!(f, "|"),
+            TokenKind::Caret => write!(f, "^"),
+            TokenKind::Tilde => write!(f, "~"),
+
+            // keywords
+            TokenKind::Let => write!(f, "Let"),
+
+            // other
             TokenKind::LeftParen => write!(f, "("),
             TokenKind::RightParen => write!(f, ")"),
             TokenKind::Whitespace => write!(f, "Whitespace"),
-            TokenKind::Let => write!(f, "Let"),
             TokenKind::Identifier => write!(f, "Identifier"),
-            TokenKind::Equals => write!(f, "="),
             TokenKind::Bad => write!(f, "Bad"),
             TokenKind::Eof => write!(f, "Eof"),
         }
@@ -141,11 +169,26 @@ impl <'a> Lexer<'a> {
         match c {
             '+' => TokenKind::Plus,
             '-' => TokenKind::Minus,
-            '*' => TokenKind::Asterisk,
+            '*' => {
+                if let Some(next_char) = self.current_char() {
+                    if next_char == '*' {
+                        self.consume(); // consume the second '*'
+                        TokenKind::DoubleAsterisk // '**' for power
+                    } else {
+                        TokenKind::Asterisk // single '*'
+                    }
+                } else {
+                    TokenKind::Asterisk // single '*'
+                }
+            },
             '/' => TokenKind::Slash,
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
             '=' => TokenKind::Equals,
+            '&' => TokenKind::Ampersand,
+            '|' => TokenKind::Pipe,
+            '^' => TokenKind::Caret,
+            '~' => TokenKind::Tilde,
             _ => TokenKind::Bad,
         }
     }

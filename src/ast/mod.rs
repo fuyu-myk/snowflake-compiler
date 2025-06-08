@@ -61,6 +61,9 @@ pub trait ASTVisitor {
             ASTExpressionKind::Binary(expr) => {
                 self.visit_binary_expression(expr);
             }
+            ASTExpressionKind::Unary(expr) => {
+                self.visit_unary_expression(expr);
+            }
             ASTExpressionKind::Parenthesised(expr) => {
                 self.visit_parenthesised_expression(expr);
             }
@@ -83,6 +86,8 @@ pub trait ASTVisitor {
         self.visit_expression(&binary_expression.left);
         self.visit_expression(&binary_expression.right);
     }
+
+    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression);
 
     fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression) {
         self.visit_expression(&parenthesised_expression.expression);
@@ -138,6 +143,12 @@ impl ASTVisitor for ASTPrinter {
         self.add_whitespace();
 
         self.visit_expression(&binary_expression.right);
+    }
+
+    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
+        self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), unary_expression.operator.token.span.literal));
+
+        self.visit_expression(&unary_expression.operand);
     }
 
     fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression) {
@@ -205,6 +216,9 @@ pub enum ASTExpressionKind {
     Binary(
         ASTBinaryExpression
     ),
+    Unary(
+        ASTUnaryExpression
+    ),
     Parenthesised(
         ASTParenthesisedExpression
     ),
@@ -214,6 +228,27 @@ pub enum ASTExpressionKind {
     Error(
         TextSpan
     )
+}
+
+pub enum ASTUnaryOperatorKind {
+    Negation, // unary minus
+    BitwiseNot, // ~
+}
+
+pub struct ASTUnaryOperator {
+    kind: ASTUnaryOperatorKind,
+    token: Token,
+}
+
+impl ASTUnaryOperator {
+    pub fn new(kind: ASTUnaryOperatorKind, token: Token) -> Self {
+        ASTUnaryOperator { kind, token }
+    }
+}
+
+pub struct ASTUnaryExpression {
+    pub operator: ASTUnaryOperator,
+    pub operand: Box<ASTExpression>,
 }
 
 pub struct ASTVariableExpression {
@@ -232,6 +267,9 @@ pub enum ASTBinaryOperatorKind {
     Minus,
     Multiply,
     Divide,
+    BitwiseAnd, // &
+    BitwiseOr,  // |
+    BitwiseXor, // ^
     Power,
 }
 
@@ -253,11 +291,14 @@ impl ASTBinaryOperator {
 
     pub fn precedence(&self) -> u8 {
         match self.kind {
-            ASTBinaryOperatorKind::Plus => 1,
-            ASTBinaryOperatorKind::Minus => 1,
-            ASTBinaryOperatorKind::Multiply => 2,
-            ASTBinaryOperatorKind::Divide => 2,
-            ASTBinaryOperatorKind::Power => todo!(),
+            ASTBinaryOperatorKind::Power => 15,
+            ASTBinaryOperatorKind::Multiply => 14,
+            ASTBinaryOperatorKind::Divide => 14,
+            ASTBinaryOperatorKind::Plus => 13,
+            ASTBinaryOperatorKind::Minus => 13,
+            ASTBinaryOperatorKind::BitwiseAnd => 12,
+            ASTBinaryOperatorKind::BitwiseXor => 11,
+            ASTBinaryOperatorKind::BitwiseOr => 10,
         }
     }
 
@@ -300,6 +341,10 @@ impl ASTExpression {
         ASTExpression::new(ASTExpressionKind::Binary(ASTBinaryExpression{ left: Box::new(left), operator, right: Box::new(right) }))
     }
 
+    pub fn unary(operator: ASTUnaryOperator, operand: ASTExpression) -> Self {
+        ASTExpression::new(ASTExpressionKind::Unary(ASTUnaryExpression{ operator, operand: Box::new(operand) }))
+    }
+
     pub fn parenthesised(expression: ASTExpression) -> Self {
         ASTExpression::new(ASTExpressionKind::Parenthesised(ASTParenthesisedExpression{ expression: Box::new(expression) }))
     }
@@ -327,6 +372,7 @@ mod tests {
     enum TestASTNode {
         Number(i64),
         Binary,
+        Unary,
         Parenthesised,
         LetStatement,
         Variable(String),
@@ -340,8 +386,10 @@ mod tests {
     impl ASTVerifier {
         pub fn new(input: &str, expected: Vec<TestASTNode>) -> Self {
             let compilation_unit = CompilationUnit::compile(input);
+            assert_eq!(compilation_unit.diagnostics_report.borrow().diagnostics.len(), 0, "Expected no diagnostics, but got {:?}", compilation_unit.diagnostics_report.borrow().diagnostics);
+
             let mut verifier = ASTVerifier { expected, actual: Vec::new() };
-            let flattened_ast = verifier.flatten_ast(&compilation_unit.ast);
+            verifier.flatten_ast(&compilation_unit.ast);
 
             verifier
         }
@@ -389,6 +437,11 @@ mod tests {
             self.visit_expression(&binary_expression.left);
             self.visit_expression(&binary_expression.right);
         }
+
+        fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
+            self.actual.push(TestASTNode::Unary);
+            self.visit_expression(&unary_expression.operand);
+        }
     }
 
     fn assert_tree(input: &str, expected: Vec<TestASTNode>) {
@@ -427,8 +480,12 @@ mod tests {
 
     #[test]
     pub fn test_parenthesised_binary_expression_with_variable() {
-        let input = "let a = (6 + 9) * b";
+        let input = "
+        let b = 2
+        let a = (6 + 9) * b";
         let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Number(2),
             TestASTNode::LetStatement,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
@@ -443,8 +500,16 @@ mod tests {
 
     #[test]
     pub fn test_nested_parenthesised_binary_expression() {
-        let input = "let a = (b + (c * 2)) / 3";
+        let input = "
+        let b = 1
+        let c = 2
+        let a = (b + (c * 2)) / 3";
+
         let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Number(1),
+            TestASTNode::LetStatement,
+            TestASTNode::Number(2),
             TestASTNode::LetStatement,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
@@ -462,8 +527,13 @@ mod tests {
 
     #[test]
     pub fn test_parenthesised_binary_expression_with_variable_and_number() {
-        let input = "let a = (6 + 9) * b + 42";
+        let input = "
+        let b = 1
+        let a = (6 + 9) * b + 42";
+
         let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Number(1),
             TestASTNode::LetStatement,
             TestASTNode::Binary,
             TestASTNode::Binary,
@@ -473,6 +543,108 @@ mod tests {
             TestASTNode::Number(9),
             TestASTNode::Variable("b".to_string()),
             TestASTNode::Number(42),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_bitwise_and() {
+        let input = "let a = 6 & 9";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_bitwise_or() {
+        let input = "let a = 6 | 9";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_bitwise_xor() {
+        let input = "let a = 6 ^ 9";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Number(6),
+            TestASTNode::Number(9),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_bitwise_not() {
+        let input = "let a = ~1";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Unary,
+            TestASTNode::Number(1),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_negation() {
+        let input = "let a = -1";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Unary,
+            TestASTNode::Number(1),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_power() {
+        let input = "let a = 2 ** 3";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Number(2),
+            TestASTNode::Number(3),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_loooong_unary_exps() {
+        let input = "let a = -1 + -2 * -3 ** ------4";
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Binary,
+            TestASTNode::Unary,
+            TestASTNode::Number(1),
+            TestASTNode::Binary,
+            TestASTNode::Unary,
+            TestASTNode::Number(2),
+            TestASTNode::Binary,
+            TestASTNode::Unary,
+            TestASTNode::Number(3),
+            TestASTNode::Unary,
+            TestASTNode::Unary,
+            TestASTNode::Unary,
+            TestASTNode::Unary,
+            TestASTNode::Unary,
+            TestASTNode::Unary,
+            TestASTNode::Number(4),
         ];
 
         assert_tree(input, expected);

@@ -1,4 +1,4 @@
-use crate::ast::{Ast, ASTVisitor, ASTLetStatement, ASTVariableExpression, ASTNumberExpression};
+use crate::ast::{Ast, ASTVisitor, ASTLetStatement, ASTVariableExpression, ASTNumberExpression, ASTUnaryExpression};
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::DiagnosticsReportCell;
 use crate::text;
@@ -42,6 +42,10 @@ impl ASTVisitor for SymbolCheck {
 
     fn visit_number_expression(&mut self, number: &ASTNumberExpression) {
 
+    }
+
+    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
+        self.visit_expression(&unary_expression.operand);
     }
 
     fn visit_error(&mut self, span: &TextSpan) {

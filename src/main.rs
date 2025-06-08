@@ -7,7 +7,7 @@ mod compilation_unit;
 
 fn main() {
     let input = "
-        let a = (1 + 2) * b + 3
+        let a = -1 + 2 * 3 - 4 / 5 | 6 + ~6 ^ 7 ** 2
     ";
 
     // Compile the input code ^0^

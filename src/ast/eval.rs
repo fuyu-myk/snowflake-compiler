@@ -1,5 +1,5 @@
-use crate::ast::{ASTBinaryExpression, ASTNumberExpression, ASTVisitor, ASTBinaryOperatorKind, 
-    TextSpan, ASTLetStatement, ASTExpression, ASTVariableExpression, ASTParenthesisedExpression};
+use crate::ast::{ASTBinaryExpression, ASTNumberExpression, ASTVisitor, ASTBinaryOperatorKind, ASTUnaryExpression,
+    TextSpan, ASTLetStatement, ASTExpression, ASTVariableExpression, ASTParenthesisedExpression, ASTUnaryOperatorKind};
 use std::collections::HashMap;
 
 
@@ -27,11 +27,26 @@ impl ASTVisitor for ASTEvaluator {
         let right = self.last_value.unwrap();
 
         self.last_value = Some(match expr.operator.kind {
+            // classic arithmetic operators
             ASTBinaryOperatorKind::Plus => left + right,
             ASTBinaryOperatorKind::Minus => left - right,
             ASTBinaryOperatorKind::Multiply => left * right,
             ASTBinaryOperatorKind::Divide => left / right,
-            ASTBinaryOperatorKind::Power => todo!(),
+            ASTBinaryOperatorKind::Power => left.pow(right as u32),
+            // bitwise operators
+            ASTBinaryOperatorKind::BitwiseAnd => left & right,
+            ASTBinaryOperatorKind::BitwiseOr => left | right,
+            ASTBinaryOperatorKind::BitwiseXor => left ^ right,
+        });
+    }
+
+    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
+        self.visit_expression(&unary_expression.operand);
+        let operand = self.last_value.unwrap();
+
+        self.last_value = Some(match unary_expression.operator.kind {
+            ASTUnaryOperatorKind::Negation => -operand,
+            ASTUnaryOperatorKind::BitwiseNot => !operand,
         });
     }
 
