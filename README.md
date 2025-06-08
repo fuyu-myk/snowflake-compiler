@@ -1,4 +1,4 @@
-# Winter-Compiler
+# Snowflake-Compiler
 This project documents my journey in learning Rust and subsequently coding a compiler. I referenced Julian Hartl's video series on YouTube for the implementation of this project.
 
 ## Compiler architecture

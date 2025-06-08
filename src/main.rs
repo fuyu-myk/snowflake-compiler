@@ -7,7 +7,14 @@ mod compilation_unit;
 
 fn main() {
     let input = "
-        let a = -1 + 2 * 3 - 4 / 5 | 6 + ~6 ^ 7 ** 2
+        let a = 0
+        let b = 1
+
+        if b > a
+            a = 10
+         else 
+            a = 5
+        a
     ";
 
     // Compile the input code ^0^

@@ -1,4 +1,5 @@
-use crate::ast::{Ast, ASTVisitor, ASTLetStatement, ASTVariableExpression, ASTNumberExpression, ASTUnaryExpression};
+use crate::ast::{Ast, ASTLetStatement, ASTVariableExpression, ASTNumberExpression, ASTUnaryExpression};
+use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::DiagnosticsReportCell;
 use crate::text;

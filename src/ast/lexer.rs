@@ -20,8 +20,18 @@ pub enum TokenKind {
     Caret, // ^ for bitwise xor
     Tilde, // ~ for bitwise not
 
+    // relational operators
+    LessThan, // < for less than
+    GreaterThan, // > for greater than
+    LessThanOrEqual, // <= for less than or equal
+    GreaterThanOrEqual, // >= for greater than or equal
+    EqualsEquals, // == for equality
+    NotEquals, // != for inequality
+
     // keywords
     Let,
+    If, 
+    Else,
 
     // other
     LeftParen,
@@ -52,8 +62,18 @@ impl Display for TokenKind {
             TokenKind::Caret => write!(f, "^"),
             TokenKind::Tilde => write!(f, "~"),
 
+            // relational operators
+            TokenKind::LessThan => write!(f, "<"),
+            TokenKind::GreaterThan => write!(f, ">"),
+            TokenKind::LessThanOrEqual => write!(f, "<="),
+            TokenKind::GreaterThanOrEqual => write!(f, ">="),
+            TokenKind::EqualsEquals => write!(f, "=="),
+            TokenKind::NotEquals => write!(f, "!="),
+
             // keywords
             TokenKind::Let => write!(f, "Let"),
+            TokenKind::If => write!(f, "If"),
+            TokenKind::Else => write!(f, "Else"),
 
             // other
             TokenKind::LeftParen => write!(f, "("),
@@ -136,6 +156,8 @@ impl <'a> Lexer<'a> {
 
                 kind = match identifier.as_str() {
                     "let" => TokenKind::Let,
+                    "if" => TokenKind::If,
+                    "else" => TokenKind::Else,
                     _ => TokenKind::Identifier,
                 }
             } else {
@@ -170,26 +192,41 @@ impl <'a> Lexer<'a> {
             '+' => TokenKind::Plus,
             '-' => TokenKind::Minus,
             '*' => {
-                if let Some(next_char) = self.current_char() {
-                    if next_char == '*' {
-                        self.consume(); // consume the second '*'
-                        TokenKind::DoubleAsterisk // '**' for power
-                    } else {
-                        TokenKind::Asterisk // single '*'
-                    }
-                } else {
-                    TokenKind::Asterisk // single '*'
-                }
+                self.potential_double_char_operator('*', TokenKind::Asterisk, TokenKind::DoubleAsterisk)
             },
             '/' => TokenKind::Slash,
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
-            '=' => TokenKind::Equals,
+            '=' => {
+                self.potential_double_char_operator('=', TokenKind::Equals, TokenKind::EqualsEquals)
+            },
             '&' => TokenKind::Ampersand,
             '|' => TokenKind::Pipe,
             '^' => TokenKind::Caret,
             '~' => TokenKind::Tilde,
+            '<' => {
+                self.potential_double_char_operator('=', TokenKind::LessThan, TokenKind::LessThanOrEqual)
+            },
+            '>' => {
+                self.potential_double_char_operator('=', TokenKind::GreaterThan, TokenKind::GreaterThanOrEqual)
+            },
+            '!' => {
+                self.potential_double_char_operator('=', TokenKind::Bad, TokenKind::NotEquals)
+            },
             _ => TokenKind::Bad,
+        }
+    }
+
+    fn potential_double_char_operator(&mut self, expected: char, one_char_kind: TokenKind, double_char_kind: TokenKind) -> TokenKind {
+        if let Some(next_char) = self.current_char() {
+            if next_char == expected {
+                self.consume(); // consume the second character
+                double_char_kind // return the double character operator
+            } else {
+                one_char_kind // return the single character operator
+            }
+        } else {
+            one_char_kind // return the single character operator if no next char
         }
     }
 

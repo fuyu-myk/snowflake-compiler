@@ -1,4 +1,5 @@
-use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorAssociativity, ASTBinaryOperatorKind, ASTExpression, ASTStatement, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind};
+use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorAssociativity, ASTBinaryOperatorKind, ASTExpression, 
+    ASTStatement, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, ASTElseStatement};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::diagnostics::DiagnosticsReportCell;
 use std::cell::Cell;
@@ -61,11 +62,32 @@ impl Parser {
         match self.current().kind {
             TokenKind::Let => {
                 self.parse_let_statement()
-            },
+            }
+            TokenKind::If => {
+                self.parse_if_statement()
+            }
             _ => {
                 self.parse_expression_statement()
             }
         }
+    }
+
+    fn parse_if_statement(&mut self) -> ASTStatement {
+        let if_keyword = self.consume_and_check(TokenKind::If).clone(); // checks for 'if'
+        let condition_expr = self.parse_expression(); // parsing condition expression
+        let then = self.parse_statement(); // parsing 'then' statement
+        let else_statement = self.parse_optional_else_statement(); // if there is an 'else' statement, parse it
+
+        ASTStatement::if_statement(if_keyword, condition_expr, then, else_statement)
+    }
+
+    fn parse_optional_else_statement(&mut self) -> Option<ASTElseStatement> {
+        if self.current().kind == TokenKind::Else {
+            let else_keyword = self.consume_and_check(TokenKind::Else).clone(); // checks for 'else'
+            let else_statement = self.parse_statement(); // parsing 'else' statement
+            return Some(ASTElseStatement::new(else_keyword, else_statement));
+        }
+        None
     }
 
     fn parse_let_statement(&mut self) -> ASTStatement {
@@ -83,7 +105,20 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> ASTExpression {
-        return self.parse_binary_expression(0); // start w/ 0 precedence; no operators
+        return self.parse_assignment_expression();
+    }
+
+    fn parse_assignment_expression(&mut self) -> ASTExpression {
+        if self.current().kind == TokenKind::Identifier {
+            if self.peek(1).kind == TokenKind::Equals {
+                let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+                self.consume_and_check(TokenKind::Equals);
+                let expr = self.parse_expression();
+
+                return ASTExpression::assignment(identifier, expr);
+            }
+        }
+        return self.parse_binary_expression(0);
     }
 
     fn parse_binary_expression(&mut self, precedence: u8) -> ASTExpression {
@@ -166,6 +201,25 @@ impl Parser {
             },
             TokenKind::Caret => {
                 Some(ASTBinaryOperatorKind::BitwiseXor)
+            },
+            // relational operators
+            TokenKind::EqualsEquals => {
+                Some(ASTBinaryOperatorKind::Equals)
+            },
+            TokenKind::NotEquals => {
+                Some(ASTBinaryOperatorKind::NotEquals)
+            },
+            TokenKind::LessThan => {
+                Some(ASTBinaryOperatorKind::LessThan)
+            },
+            TokenKind::GreaterThan => {
+                Some(ASTBinaryOperatorKind::GreaterThan)
+            },
+            TokenKind::LessThanOrEqual => {
+                Some(ASTBinaryOperatorKind::LessThanOrEqual)
+            },
+            TokenKind::GreaterThanOrEqual => {
+                Some(ASTBinaryOperatorKind::GreaterThanOrEqual)
             },
             _ => None
         };
