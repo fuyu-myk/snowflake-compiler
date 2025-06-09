@@ -73,16 +73,6 @@ impl Resolver {
 }
 
 impl ASTVisitor for Resolver {
-    fn visit_block_statement(&mut self, block_statement: &crate::ast::ASTBlockStatement) {
-        self.scopes.enter_scope();
-
-        for statement in &block_statement.statements {
-            self.visit_statement(statement);
-        }
-
-        self.scopes.exit_scope();
-    }
-
     fn visit_let_statement(&mut self, statement: &ASTLetStatement) {
         let identifier = statement.identifier.span.literal.clone();
         self.visit_expression(&statement.initialiser);
@@ -104,6 +94,20 @@ impl ASTVisitor for Resolver {
 
     fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
         self.visit_expression(&unary_expression.operand);
+    }
+
+    fn visit_block_statement(&mut self, block_statement: &crate::ast::ASTBlockStatement) {
+        self.scopes.enter_scope();
+
+        for statement in &block_statement.statements {
+            self.visit_statement(statement);
+        }
+
+        self.scopes.exit_scope();
+    }
+
+    fn visit_boolean_expression(&mut self, boolean: &crate::ast::ASTBooleanExpression) {
+        
     }
 
     fn visit_error(&mut self, span: &TextSpan) {

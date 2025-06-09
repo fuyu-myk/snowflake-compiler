@@ -169,25 +169,40 @@ mod tests {
 
     #[test]
     fn test_undeclared_variable_when_variable_was_declared_in_another_scope() {
-        let input = "
-            let a = 0
-            let b = -1
+        let input = "\
+        let a = 0
+        let b = -1
 
-            if b > a {
-                a = 10
-                b = 2
-                let c = 10
-            }
-            else 
-                a = 5
-            a
-            b
-            «c»
+        if b > a {
+            a = 10
+            b = 2
+            let c = 10
+        }
+        else 
+            a = 5
+        a
+        b
+        «c»
         ";
 
         let expected = vec![
             "Undeclared variable 'c'"
         ];
+
+        let verifier = DiagnosticsVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    fn test_shadowing_variable() { // should not report errors
+        let input = "\
+        let a = 0
+        {
+            let a = 10
+        }
+        ";
+
+        let expected = vec![];
 
         let verifier = DiagnosticsVerifier::new(input, expected);
         verifier.verify();

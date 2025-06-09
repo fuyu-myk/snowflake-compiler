@@ -14,6 +14,7 @@ impl ASTPrinter {
     const TEXT_COLOUR: color::LightWhite = color::LightWhite;
     const KEYWORD_COLOUR: color::Magenta = color::Magenta;
     const VARIABLE_COLOUR: color::Green = color::Green;
+    const BOOL_COLOUR: color::Yellow = color::Yellow;
 
     pub fn new() -> Self {
         Self { indent: 0, result: String::new() }
@@ -43,6 +44,10 @@ impl ASTPrinter {
         for _ in 0..self.indent {
             self.result.push_str("  ");
         }
+    }
+
+    fn add_bool(&mut self, boolean: bool) {
+        self.result.push_str(&format!("{}{}", Self::BOOL_COLOUR.fg_str(), boolean));
     }
 }
 
@@ -138,6 +143,10 @@ impl ASTVisitor for ASTPrinter {
         self.indent -= 1;
         self.add_padding();
         self.add_text("}");
+    }
+
+    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression) {
+        self.add_bool(boolean.value);
     }
 
     fn visit_error(&mut self, span: &TextSpan) {

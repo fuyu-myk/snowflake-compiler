@@ -32,6 +32,8 @@ pub enum TokenKind {
     Let,
     If, 
     Else,
+    True,
+    False,
 
     // other
     LeftParen,
@@ -76,6 +78,8 @@ impl Display for TokenKind {
             TokenKind::Let => write!(f, "Let"),
             TokenKind::If => write!(f, "If"),
             TokenKind::Else => write!(f, "Else"),
+            TokenKind::True => write!(f, "True"),
+            TokenKind::False => write!(f, "False"),
 
             // other
             TokenKind::LeftParen => write!(f, "("),
@@ -162,6 +166,8 @@ impl <'a> Lexer<'a> {
                     "let" => TokenKind::Let,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
+                    "true" => TokenKind::True,
+                    "false" => TokenKind::False,
                     _ => TokenKind::Identifier,
                 }
             } else {

@@ -106,6 +106,10 @@ impl ASTVisitor for ASTEvaluator {
         self.variables.insert(identifier.clone(), self.last_value.unwrap());
     }
 
+    fn visit_boolean_expression(&mut self, boolean: &super::ASTBooleanExpression) {
+        self.last_value = Some(boolean.value as i64);
+    }
+
     fn visit_error(&mut self, span: &TextSpan) {
         todo!()
     }

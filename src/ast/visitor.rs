@@ -4,7 +4,7 @@
 
 use termion::color::{Fg, Reset};
 use crate::ast::{
-    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression};
+    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression};
 use crate::ast::lexer::TextSpan;
 
 
@@ -67,6 +67,9 @@ pub trait ASTVisitor {
             ASTExpressionKind::Assignment(expr) => {
                 self.visit_assignment_expression(expr);
             }
+            ASTExpressionKind::Boolean(expr) => {
+                self.visit_boolean_expression(expr);
+            }
             ASTExpressionKind::Error(span) => {
                 self.visit_error(span);
             }
@@ -95,6 +98,8 @@ pub trait ASTVisitor {
     fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression) {
         self.visit_expression(&assignment_expression.expression);
     }
+
+    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression);
 
     fn visit_error(&mut self, span: &TextSpan);
 }

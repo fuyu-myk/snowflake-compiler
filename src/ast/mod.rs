@@ -116,9 +116,18 @@ pub enum ASTExpressionKind {
     Assignment(
         ASTAssignmentExpression
     ),
+    Boolean(
+        ASTBooleanExpression
+    ),
     Error(
         TextSpan
     )
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTBooleanExpression {
+    pub value: bool,
+    pub token: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -278,6 +287,10 @@ impl ASTExpression {
         ASTExpression::new(ASTExpressionKind::Assignment(ASTAssignmentExpression { identifier, expression: Box::new(expression) }))
     }
 
+    pub fn boolean(token: Token, value: bool) -> Self {
+        ASTExpression::new(ASTExpressionKind::Boolean(ASTBooleanExpression { value, token }))
+    }
+
     pub fn error(span: TextSpan) -> Self {
         ASTExpression::new(ASTExpressionKind::Error(span))
     }
@@ -297,10 +310,13 @@ mod tests {
     #[derive(Debug, PartialEq, Eq)]
     enum TestASTNode {
         Number(i64),
+        Boolean(bool),
         Binary,
         Unary,
         Parenthesised,
         LetStatement,
+        Assignment,
+        Block,
         Variable(String),
         If,
         Else,
@@ -381,6 +397,23 @@ mod tests {
                 
                 self.visit_statement(&else_branch.else_statement);
             }
+        }
+
+        fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression) {
+            self.actual.push(TestASTNode::Boolean(boolean.value));
+        }
+
+        fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
+            self.actual.push(TestASTNode::Block);
+
+            for statement in &block_statement.statements {
+                self.visit_statement(statement);
+            }
+        }
+
+        fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression) {
+            self.actual.push(TestASTNode::Assignment);
+            self.visit_expression(&assignment_expression.expression);
         }
     }
 
@@ -585,6 +618,62 @@ mod tests {
             TestASTNode::Unary,
             TestASTNode::Unary,
             TestASTNode::Number(4),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_if_statement() {
+        let input = "\
+        let a = 1
+        
+        if a > 0 {
+            a = 86
+        }
+        ";
+
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Number(1),
+            TestASTNode::If,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Number(0),
+            TestASTNode::Block,
+            TestASTNode::Assignment,
+            TestASTNode::Number(86),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_if_else_statement() {
+        let input = "\
+        let a = 1
+        
+        if a > 0 {
+            a = 86
+        } else {
+            a = 23
+        }
+        ";
+
+        let expected = vec![
+            TestASTNode::LetStatement,
+            TestASTNode::Number(1),
+            TestASTNode::If,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Number(0),
+            TestASTNode::Block,
+            TestASTNode::Assignment,
+            TestASTNode::Number(86),
+            TestASTNode::Else,
+            TestASTNode::Block,
+            TestASTNode::Assignment,
+            TestASTNode::Number(23),
         ];
 
         assert_tree(input, expected);

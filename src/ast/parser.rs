@@ -250,13 +250,17 @@ impl Parser {
             },
             TokenKind::LeftParen => {
                 let expr = self.parse_expression(); // because another exp in paren
-                let token = self.consume_and_check(TokenKind::RightParen);
+                self.consume_and_check(TokenKind::RightParen);
                 
                 ASTExpression::parenthesised(expr)
             },
             TokenKind::Identifier => {
                 ASTExpression::identifier(token.clone())
             },
+            TokenKind::True | TokenKind::False => {
+                let value = token.kind == TokenKind::True;
+                ASTExpression::boolean(token.clone(), value)
+            }
             _ => {
                 self.diagnostics_report.borrow_mut().report_expected_expression(token);
                 ASTExpression::error(token.span.clone())
