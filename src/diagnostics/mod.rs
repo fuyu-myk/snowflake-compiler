@@ -67,7 +67,7 @@ impl DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compilation_unit::CompilationUnit, diagnostics};
+    use crate::{compilation_unit::CompilationUnit};
 
 
     struct DiagnosticsVerifier {

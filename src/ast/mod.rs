@@ -40,6 +40,13 @@ pub enum ASTStatementKind {
     Let(ASTLetStatement),
     If(ASTIfStatement),
     Block(ASTBlockStatement),
+    While(ASTWhileStatement),
+}
+
+pub struct ASTWhileStatement {
+    pub while_keyword: Token,
+    pub condition: ASTExpression,
+    pub body: Box<ASTStatement>,
 }
 
 pub struct ASTBlockStatement {
@@ -93,6 +100,10 @@ impl ASTStatement {
 
     pub fn block_statement(statements: Vec<ASTStatement>) -> Self {
         ASTStatement::new(ASTStatementKind::Block(ASTBlockStatement { statements }))
+    }
+
+    pub fn while_statement(while_keyword: Token, condition: ASTExpression, body: ASTStatement) -> Self {
+        ASTStatement::new(ASTStatementKind::While(ASTWhileStatement { while_keyword, condition, body: Box::new(body) }))
     }
 }
 
@@ -314,12 +325,13 @@ mod tests {
         Binary,
         Unary,
         Parenthesised,
-        LetStatement,
+        Let,
         Assignment,
         Block,
         Variable(String),
         If,
         Else,
+        While,
     }
 
     struct ASTVerifier {
@@ -355,7 +367,7 @@ mod tests {
 
     impl ASTVisitor for ASTVerifier {
         fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
-            self.actual.push(TestASTNode::LetStatement);
+            self.actual.push(TestASTNode::Let);
             self.visit_expression(&let_statement.initialiser);
         }
 
@@ -415,6 +427,12 @@ mod tests {
             self.actual.push(TestASTNode::Assignment);
             self.visit_expression(&assignment_expression.expression);
         }
+
+        fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+            self.actual.push(TestASTNode::While);
+            self.visit_expression(&while_statement.condition);
+            self.visit_statement(&while_statement.body);
+        }
     }
 
     fn assert_tree(input: &str, expected: Vec<TestASTNode>) {
@@ -426,7 +444,7 @@ mod tests {
     pub fn test_basic_binary_expression() {
         let input = "let a = 1 + 2";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(1),
             TestASTNode::Number(2),
@@ -439,7 +457,7 @@ mod tests {
     pub fn test_parenthesised_binary_expression() {
         let input = "let a = (6 + 9) * 42";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
             TestASTNode::Binary,
@@ -457,9 +475,9 @@ mod tests {
         let b = 2
         let a = (6 + 9) * b";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(2),
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
             TestASTNode::Binary,
@@ -479,11 +497,11 @@ mod tests {
         let a = (b + (c * 2)) / 3";
 
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(1),
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(2),
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
             TestASTNode::Binary,
@@ -505,9 +523,9 @@ mod tests {
         let a = (6 + 9) * b + 42";
 
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(1),
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
@@ -525,7 +543,7 @@ mod tests {
     pub fn test_bitwise_and() {
         let input = "let a = 6 & 9";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
             TestASTNode::Number(9),
@@ -538,7 +556,7 @@ mod tests {
     pub fn test_bitwise_or() {
         let input = "let a = 6 | 9";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
             TestASTNode::Number(9),
@@ -551,7 +569,7 @@ mod tests {
     pub fn test_bitwise_xor() {
         let input = "let a = 6 ^ 9";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
             TestASTNode::Number(9),
@@ -564,7 +582,7 @@ mod tests {
     pub fn test_bitwise_not() {
         let input = "let a = ~1";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Unary,
             TestASTNode::Number(1),
         ];
@@ -576,7 +594,7 @@ mod tests {
     pub fn test_negation() {
         let input = "let a = -1";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Unary,
             TestASTNode::Number(1),
         ];
@@ -588,7 +606,7 @@ mod tests {
     pub fn test_power() {
         let input = "let a = 2 ** 3";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(2),
             TestASTNode::Number(3),
@@ -601,7 +619,7 @@ mod tests {
     pub fn test_loooong_unary_exps() {
         let input = "let a = -1 + -2 * -3 ** ------4";
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Unary,
             TestASTNode::Number(1),
@@ -634,7 +652,7 @@ mod tests {
         ";
 
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::If,
             TestASTNode::Binary,
@@ -661,7 +679,7 @@ mod tests {
         ";
 
         let expected = vec![
-            TestASTNode::LetStatement,
+            TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::If,
             TestASTNode::Binary,
@@ -674,6 +692,33 @@ mod tests {
             TestASTNode::Block,
             TestASTNode::Assignment,
             TestASTNode::Number(23),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_while_statement() {
+        let input = "\
+        let a = 1
+
+        while a < 10 {
+            a = a + 1
+        }
+        ";
+
+        let expected = vec![
+            TestASTNode::Let,
+            TestASTNode::Number(1),
+            TestASTNode::While,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Number(10),
+            TestASTNode::Block,
+            TestASTNode::Assignment,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Number(1),
         ];
 
         assert_tree(input, expected);

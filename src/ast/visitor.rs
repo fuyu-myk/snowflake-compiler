@@ -2,9 +2,8 @@
  * This program contains the visitor implemntation for traversing the AST.
  */
 
-use termion::color::{Fg, Reset};
 use crate::ast::{
-    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression};
+    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement};
 use crate::ast::lexer::TextSpan;
 
 
@@ -23,7 +22,15 @@ pub trait ASTVisitor {
             ASTStatementKind::Block(statement) => {
                 self.visit_block_statement(statement);
             }
+            ASTStatementKind::While(statement) => {
+                self.visit_while_statement(statement);
+            }
         }
+    }
+
+    fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+        self.visit_expression(&while_statement.condition);
+        self.visit_statement(&while_statement.body);
     }
 
     fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {

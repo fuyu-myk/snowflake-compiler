@@ -1,5 +1,6 @@
 use crate::ast::{ASTBinaryExpression, ASTNumberExpression, ASTVisitor, ASTBinaryOperatorKind, ASTUnaryExpression, TextSpan,
-    ASTLetStatement, ASTExpression, ASTVariableExpression, ASTParenthesisedExpression, ASTUnaryOperatorKind, ASTIfStatement, ASTAssignmentExpression};
+    ASTLetStatement, ASTVariableExpression, ASTParenthesisedExpression, ASTUnaryOperatorKind, ASTIfStatement, 
+    ASTAssignmentExpression, ASTBooleanExpression, ASTWhileStatement};
 use std::collections::HashMap;
 
 
@@ -70,21 +71,15 @@ impl ASTVisitor for ASTEvaluator {
     }
 
     fn visit_if_statement(&mut self, if_statement: &ASTIfStatement) {
-        // self.push_frame();
         self.visit_expression(&if_statement.condition);
 
         if self.last_value.unwrap() != 0 {
-            // self.push_frame();
             self.visit_statement(&if_statement.then_branch);
-            // self.pop_frame();
         } else {
             if let Some(else_branch) = &if_statement.else_branch {
-                // self.push_frame();
                 self.visit_statement(&else_branch.else_statement);
-                // self.pop_frame();
             }
         }
-        // self.pop_frame();
     }
 
     fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
@@ -106,8 +101,17 @@ impl ASTVisitor for ASTEvaluator {
         self.variables.insert(identifier.clone(), self.last_value.unwrap());
     }
 
-    fn visit_boolean_expression(&mut self, boolean: &super::ASTBooleanExpression) {
+    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression) {
         self.last_value = Some(boolean.value as i64);
+    }
+
+    fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+        self.visit_expression(&while_statement.condition);
+
+        while self.last_value.unwrap() != 0 {
+            self.visit_statement(&while_statement.body);
+            self.visit_expression(&while_statement.condition);
+        }
     }
 
     fn visit_error(&mut self, span: &TextSpan) {

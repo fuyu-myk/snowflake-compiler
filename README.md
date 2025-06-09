@@ -1,8 +1,12 @@
 # Snowflake-Compiler
-This project documents my journey in learning Rust and subsequently coding a compiler. I referenced Julian Hartl's video series on YouTube for the implementation of this project.
+This project documents my journey in learning Rust and subsequently coding a compiler. I referenced Julian Hartl's video series on YouTube for the creation of this project.
 
 ## Compiler architecture
-TODO: Outline compiler architecture
+Thus far, the current compiler architecture is highlighted below:
+
+`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser]
+
+* At this juncture, only the front end code of the compiler is being worked on, as I implement more types and keyword statements
 
 ## Roadmap
 
@@ -25,9 +29,10 @@ TODO: Outline compiler architecture
 -1 + 2 * 3 - 4 / 5 | 6 + ~6 ^ 7 ** 2
 ```
 
-[x] Error reporting [completed 06.06.2025]
+[x] Error reporting [WIP]
 * Highlights errors in red
 * Error messages are printed in a specific format
+* Updated as more functionality is added
 
 [x] `let` statements [completed 06.06.2025]
 * Variable lexing, parsing & error checking
@@ -38,7 +43,18 @@ TODO: Outline compiler architecture
     let c = a + b
     ```
 
-[ ] `if` statements
+[x] Scoping functionality [completed 09.06.2025]
+* Variables defined in the scope only exists throughout the lifetime of the scope
+* Ability to parse and evaluate the below statement:
+    ```
+    let a = 2301
+    {
+        let a = 806
+    }
+    ```
+
+[x] `if` statements [completed 09.06.2025]
+* Inclusive of optional `else` statements
 * Ability to parse and evaluate the below statement:
     ```
     let a = 23
@@ -49,20 +65,11 @@ TODO: Outline compiler architecture
     }
     ```
 
-[ ] `while` loops
+[x] `while` loops [completed 09.06.2025]
 * Ability to parse and evaluate the below statement:
     ```
     let a = 0
     while a < 10 [
         a = a + 1
     ]
-    ```
-
-[ ] Add scoping functionality
-* Ability to parse and evaluate the below statement:
-    ```
-    let a = 2301
-    {
-        let a = 806
-    }
     ```

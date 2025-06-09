@@ -149,6 +149,16 @@ impl ASTVisitor for ASTPrinter {
         self.add_bool(boolean.value);
     }
 
+    fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+        self.add_keyword("while");
+        self.add_whitespace();
+
+        self.visit_expression(&while_statement.condition);
+        self.add_whitespace();
+
+        self.visit_statement(&while_statement.body);
+    }
+
     fn visit_error(&mut self, span: &TextSpan) {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), span.literal));
     }

@@ -1,5 +1,5 @@
-use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorAssociativity, ASTBinaryOperatorKind, ASTExpression, 
-    ASTStatement, ASTUnaryExpression, ASTUnaryOperator, ASTUnaryOperatorKind, ASTElseStatement};
+use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorKind, ASTExpression, 
+    ASTStatement, ASTUnaryOperator, ASTUnaryOperatorKind, ASTElseStatement};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::diagnostics::DiagnosticsReportCell;
 use std::cell::Cell;
@@ -69,10 +69,21 @@ impl Parser {
             TokenKind::OpenBrace => {
                 self.parse_block_statement()
             }
+            TokenKind::While => {
+                self.parse_while_statement()
+            }
             _ => {
                 self.parse_expression_statement()
             }
         }
+    }
+
+    fn parse_while_statement(&mut self) -> ASTStatement {
+        let while_keyword = self.consume_and_check(TokenKind::While).clone();
+        let condition_expr = self.parse_expression();
+        let body = self.parse_statement();
+
+        ASTStatement::while_statement(while_keyword, condition_expr, body)
     }
 
     fn parse_block_statement(&mut self) -> ASTStatement {

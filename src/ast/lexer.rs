@@ -34,6 +34,7 @@ pub enum TokenKind {
     Else,
     True,
     False,
+    While,
 
     // other
     LeftParen,
@@ -80,6 +81,7 @@ impl Display for TokenKind {
             TokenKind::Else => write!(f, "Else"),
             TokenKind::True => write!(f, "True"),
             TokenKind::False => write!(f, "False"),
+            TokenKind::While => write!(f, "While"),
 
             // other
             TokenKind::LeftParen => write!(f, "("),
@@ -168,6 +170,7 @@ impl <'a> Lexer<'a> {
                     "else" => TokenKind::Else,
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
+                    "while" => TokenKind::While,
                     _ => TokenKind::Identifier,
                 }
             } else {
