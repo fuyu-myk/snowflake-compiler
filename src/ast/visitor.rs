@@ -4,9 +4,7 @@
 
 use termion::color::{Fg, Reset};
 use crate::ast::{
-    ASTStatement, ASTStatementKind, ASTExpression, ASTExpressionKind, ASTAssignmentExpression,
-    ASTNumberExpression, ASTBinaryExpression, ASTUnaryExpression, ASTParenthesisedExpression,
-    ASTVariableExpression, ASTLetStatement, ASTIfStatement};
+    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression};
 use crate::ast::lexer::TextSpan;
 
 
@@ -22,6 +20,15 @@ pub trait ASTVisitor {
             ASTStatementKind::If(statement) => {
                 self.visit_if_statement(statement);
             }
+            ASTStatementKind::Block(statement) => {
+                self.visit_block_statement(statement);
+            }
+        }
+    }
+
+    fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
+        for statement in &block_statement.statements {
+            self.visit_statement(statement);
         }
     }
 

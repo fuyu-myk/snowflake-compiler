@@ -13,7 +13,7 @@ impl SourceText {
     }
 
     pub fn line_index(&self, position: usize) -> usize {
-        self.text[..position].lines().count() - 1
+        self.text[..=position].lines().count() - 1
     }
 
     pub fn fetch_line(&self, index: usize) -> &str {

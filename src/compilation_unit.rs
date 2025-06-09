@@ -11,29 +11,86 @@ use std::cell::RefCell;
 use crate::diagnostics;
 use crate::diagnostics::printer::DiagnosticsPrinter;
 
-struct SymbolCheck {
+struct Scope {
     symbols: HashMap<String, ()>,
+}
+
+impl Scope {
+    fn new() -> Self {
+        Scope { symbols: HashMap::new() }
+    }
+
+    fn declare(&mut self, identifier: &str) {
+        self.symbols.insert(identifier.to_string(), ());
+    }
+
+    fn lookup(&mut self, identifier:&str) -> bool {
+        self.symbols.get(identifier).is_some()
+    }
+}
+
+struct ScopeStack {
+    scopes: Vec<Scope>,
+}
+
+impl ScopeStack {
+    fn new() -> Self {
+        ScopeStack { scopes: Vec::new() }
+    }
+
+    fn enter_scope(&mut self) {
+        self.scopes.push(Scope::new());
+    }
+
+    fn exit_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn declare(&mut self, identifier: &str) {
+        self.scopes.last_mut().unwrap().declare(identifier);
+    }
+
+    fn lookup(&mut self, identifier: &str) -> bool { // top-down lookup
+        self.scopes.iter_mut().rev().any(|scope| scope.lookup(identifier))
+    }
+}
+
+struct Resolver {
+    scopes: ScopeStack,
     diagnostics: DiagnosticsReportCell,
 }
 
-impl SymbolCheck {
+impl Resolver {
     fn new(diagnostics: DiagnosticsReportCell) -> Self {
-        SymbolCheck {
-            symbols: HashMap::new(),
+        let mut scopes = ScopeStack::new();
+        scopes.enter_scope();
+
+        Resolver {
+            scopes,
             diagnostics,
         }
     }
 }
 
-impl ASTVisitor for SymbolCheck {
+impl ASTVisitor for Resolver {
+    fn visit_block_statement(&mut self, block_statement: &crate::ast::ASTBlockStatement) {
+        self.scopes.enter_scope();
+
+        for statement in &block_statement.statements {
+            self.visit_statement(statement);
+        }
+
+        self.scopes.exit_scope();
+    }
+
     fn visit_let_statement(&mut self, statement: &ASTLetStatement) {
         let identifier = statement.identifier.span.literal.clone();
         self.visit_expression(&statement.initialiser);
-        self.symbols.insert(identifier, ());
+        self.scopes.declare(&identifier);
     }
 
     fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression) {
-        if self.symbols.get(&variable_expression.identifier.span.literal).is_none() {
+        if !self.scopes.lookup(&variable_expression.identifier.span.literal) {
 
             let mut diagnostics = self.diagnostics.borrow_mut();
             
@@ -91,8 +148,8 @@ impl CompilationUnit {
         }
 
         // symbol check
-        let mut symbol_check = SymbolCheck::new(Rc::clone(&diagnostics_report));
-        ast.visit(&mut symbol_check);
+        let mut resolver = Resolver::new(Rc::clone(&diagnostics_report));
+        ast.visit(&mut resolver);
 
         if Self::check_diagnostics(&text, &diagnostics_report).is_err() {
             return Self::create_compilation_unit(ast, diagnostics_report);

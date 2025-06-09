@@ -66,10 +66,25 @@ impl Parser {
             TokenKind::If => {
                 self.parse_if_statement()
             }
+            TokenKind::OpenBrace => {
+                self.parse_block_statement()
+            }
             _ => {
                 self.parse_expression_statement()
             }
         }
+    }
+
+    fn parse_block_statement(&mut self) -> ASTStatement {
+        self.consume_and_check(TokenKind::OpenBrace);
+        let mut statements = Vec::new();
+
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            statements.push(self.parse_statement());
+        }
+
+        self.consume_and_check(TokenKind::CloseBrace);
+        ASTStatement::block_statement(statements)
     }
 
     fn parse_if_statement(&mut self) -> ASTStatement {

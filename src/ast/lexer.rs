@@ -36,6 +36,8 @@ pub enum TokenKind {
     // other
     LeftParen,
     RightParen,
+    OpenBrace,
+    CloseBrace,
     Whitespace,
     Identifier,
     Bad,
@@ -78,6 +80,8 @@ impl Display for TokenKind {
             // other
             TokenKind::LeftParen => write!(f, "("),
             TokenKind::RightParen => write!(f, ")"),
+            TokenKind::OpenBrace => write!(f, "{{"),
+            TokenKind::CloseBrace => write!(f, "}}"),
             TokenKind::Whitespace => write!(f, "Whitespace"),
             TokenKind::Identifier => write!(f, "Identifier"),
             TokenKind::Bad => write!(f, "Bad"),
@@ -213,6 +217,8 @@ impl <'a> Lexer<'a> {
             '!' => {
                 self.potential_double_char_operator('=', TokenKind::Bad, TokenKind::NotEquals)
             },
+            '{' => TokenKind::OpenBrace,
+            '}' => TokenKind::CloseBrace,
             _ => TokenKind::Bad,
         }
     }

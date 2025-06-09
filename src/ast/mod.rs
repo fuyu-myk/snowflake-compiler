@@ -39,6 +39,11 @@ pub enum ASTStatementKind {
     Expression(ASTExpression),
     Let(ASTLetStatement),
     If(ASTIfStatement),
+    Block(ASTBlockStatement),
+}
+
+pub struct ASTBlockStatement {
+    pub statements: Vec<ASTStatement>,
 }
 
 pub struct ASTElseStatement {
@@ -84,6 +89,10 @@ impl ASTStatement {
 
     pub fn if_statement(if_keyword: Token, condition: ASTExpression, then_branch: ASTStatement, else_statement: Option<ASTElseStatement>) -> Self {
         ASTStatement::new(ASTStatementKind::If(ASTIfStatement { if_keyword, condition, then_branch: Box::new(then_branch), else_branch: else_statement }))
+    }
+
+    pub fn block_statement(statements: Vec<ASTStatement>) -> Self {
+        ASTStatement::new(ASTStatementKind::Block(ASTBlockStatement { statements }))
     }
 }
 

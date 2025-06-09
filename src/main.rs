@@ -8,13 +8,18 @@ mod compilation_unit;
 fn main() {
     let input = "
         let a = 0
-        let b = 1
+        let b = -1
 
-        if b > a
+        if b > a {
             a = 10
+            b = 2
+            let c = 10
+        }
          else 
             a = 5
         a
+        b
+        c
     ";
 
     // Compile the input code ^0^

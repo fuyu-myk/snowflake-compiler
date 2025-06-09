@@ -24,8 +24,7 @@ impl ASTPrinter {
     }
 
     fn add_newline(&mut self) {
-        self.result.push_str("
-        ");
+        self.result.push_str("\n");
     }
 
     fn add_keyword(&mut self, keyword: &str) {
@@ -39,10 +38,17 @@ impl ASTPrinter {
     fn add_variable(&mut self, variable: &str) {
         self.result.push_str(&format!("{}{}", Self::VARIABLE_COLOUR.fg_str(), variable));
     }
+
+    fn add_padding(&mut self) {
+        for _ in 0..self.indent {
+            self.result.push_str("  ");
+        }
+    }
 }
 
 impl ASTVisitor for ASTPrinter {
     fn visit_statement(&mut self, statement: &ASTStatement) {
+        self.add_padding();
         Self::do_visit_statement(self, statement);
 
         self.result.push_str(&format!("{}\n", Fg(Reset)));
@@ -117,8 +123,21 @@ impl ASTVisitor for ASTPrinter {
 
         self.add_text("=");
         self.add_whitespace();
-        
         self.visit_expression(&assignment_expression.expression);
+    }
+
+    fn visit_block_statement(&mut self, block_statement: &ASTBlockStatement) {
+        self.add_text("{");
+        self.add_newline();
+        self.indent += 1;
+
+        for statement in &block_statement.statements {
+            self.visit_statement(statement);
+        }
+
+        self.indent -= 1;
+        self.add_padding();
+        self.add_text("}");
     }
 
     fn visit_error(&mut self, span: &TextSpan) {
