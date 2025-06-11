@@ -32,6 +32,7 @@ impl Diagnostic {
 pub type DiagnosticsReportCell = Rc<RefCell<DiagnosticsReport>>;
 
 // for consistent error reporting
+#[derive(Debug)]
 pub struct DiagnosticsReport {
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -62,6 +63,18 @@ impl DiagnosticsReport {
     pub fn report_undeclared_variable(&mut self, token: &Token) {
         self.report_error(format!("Undeclared variable '{}'", token.span.literal), token.span.clone());
     }
+
+    pub fn report_undeclared_function(&mut self, token: &Token) {
+        self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_invalid_arg_count(&mut self, token: &Token, expected: usize, actual: usize) {
+        self.report_error(format!("Function '{}' expects {} arguments, but only {} found", token.span.literal, expected, actual), token.span.clone());
+    }
+
+    pub fn report_function_already_declared(&mut self, token: &Token) {
+        self.report_error(format!("Function '{}' already declared", token.span.literal), token.span.clone());
+    }
 }
 
 #[cfg(test)]
@@ -77,7 +90,9 @@ mod tests {
 
     impl DiagnosticsVerifier {
         pub fn new(input: &str, messages: Vec<&str>) -> Self {
+            let msg_len = messages.len();
             let expected = Self::parse_input(input, messages);
+            assert_eq!(expected.len(), msg_len);
             let actual = Self::compile(input);
 
             Self { expected, actual }
@@ -86,8 +101,10 @@ mod tests {
         fn compile(input: &str) -> Vec<Diagnostic> {
             let raw_text = Self::get_raw_text(input);
             let compilation_unit = CompilationUnit::compile(&raw_text);
-            let diagnostics = compilation_unit.diagnostics_report.borrow();
-            diagnostics.diagnostics.clone()
+            match compilation_unit {
+                Ok(_) => vec![],
+                Err(e) => e.borrow().diagnostics.clone(),
+            }
         }
 
         fn get_raw_text(input: &str) -> String {
@@ -203,6 +220,69 @@ mod tests {
         ";
 
         let expected = vec![];
+
+        let verifier = DiagnosticsVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    fn test_undeclared_variable_when_variable_was_declared_in_if_statement() { // without block statement; should push an error
+        let input = "\
+        let b = -1
+
+        if b > 10
+            let a = 10
+        
+        «a»
+        ";
+
+        let expected = vec![
+            "Undeclared variable 'a'"
+        ];
+
+        let verifier = DiagnosticsVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    fn test_function_already_declared() {
+        let input = "\
+        fx a {}
+        fx «a» {}
+        ";
+
+        let expected = vec![
+            "Function 'a' already declared"
+        ];
+
+        let verifier = DiagnosticsVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    fn test_undeclared_function() { // should report an error
+        let input = "\
+        «a»()
+        ";
+
+        let expected = vec![
+            "Undeclared function 'a'"
+        ];
+
+        let verifier = DiagnosticsVerifier::new(input, expected);
+        verifier.verify();
+    }
+
+    #[test]
+    fn test_incorrect_no_of_arguments() { // should report an error
+        let input = "\
+        fx foo(a, b) {}
+        «foo»(1)
+        ";
+
+        let expected = vec![
+            "Function 'foo' expects 2 arguments, but only 1 found"
+        ];
 
         let verifier = DiagnosticsVerifier::new(input, expected);
         verifier.verify();

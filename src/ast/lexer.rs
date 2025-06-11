@@ -35,12 +35,17 @@ pub enum TokenKind {
     True,
     False,
     While,
+    Function,
+    Return,
 
-    // other
+    // separators
     LeftParen,
     RightParen,
     OpenBrace,
     CloseBrace,
+    Comma,
+
+    // other
     Whitespace,
     Identifier,
     Bad,
@@ -82,12 +87,17 @@ impl Display for TokenKind {
             TokenKind::True => write!(f, "True"),
             TokenKind::False => write!(f, "False"),
             TokenKind::While => write!(f, "While"),
+            TokenKind::Function => write!(f, "Function"),
+            TokenKind::Return => write!(f, "Return"),
 
-            // other
+            // separators
             TokenKind::LeftParen => write!(f, "("),
             TokenKind::RightParen => write!(f, ")"),
             TokenKind::OpenBrace => write!(f, "{{"),
             TokenKind::CloseBrace => write!(f, "}}"),
+            TokenKind::Comma => write!(f, "Comma"),
+
+            // other
             TokenKind::Whitespace => write!(f, "Whitespace"),
             TokenKind::Identifier => write!(f, "Identifier"),
             TokenKind::Bad => write!(f, "Bad"),
@@ -171,6 +181,8 @@ impl <'a> Lexer<'a> {
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
                     "while" => TokenKind::While,
+                    "fx" => TokenKind::Function,
+                    "return" => TokenKind::Return,
                     _ => TokenKind::Identifier,
                 }
             } else {
@@ -228,6 +240,7 @@ impl <'a> Lexer<'a> {
             },
             '{' => TokenKind::OpenBrace,
             '}' => TokenKind::CloseBrace,
+            ',' => TokenKind::Comma,
             _ => TokenKind::Bad,
         }
     }

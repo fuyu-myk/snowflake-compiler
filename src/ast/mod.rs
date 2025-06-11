@@ -1,4 +1,7 @@
+use std::clone;
+
 use crate::ast::lexer::{Token, TextSpan};
+use termion::clear;
 use visitor::ASTVisitor;
 use printer::ASTPrinter;
 
@@ -10,7 +13,7 @@ pub mod printer;
 
 
 pub struct Ast {
-    pub statements: Vec<ASTStatement>
+    pub statements: Vec<ASTStatement>,
 }
 
 impl Ast {
@@ -35,24 +38,48 @@ impl Ast {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ASTStatementKind {
     Expression(ASTExpression),
     Let(ASTLetStatement),
     If(ASTIfStatement),
     Block(ASTBlockStatement),
     While(ASTWhileStatement),
+    FxDeclaration(ASTFxDeclarationStatement),
+    Return(ASTReturnStatement),
 }
 
+#[derive(Debug, Clone)]
+pub struct ASTReturnStatement {
+    pub return_keyword: Token,
+    pub return_value: Option<ASTExpression>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FxDeclarationParams {
+    pub identifier: Token,
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTFxDeclarationStatement {
+    pub identifier: Token,
+    pub parameters: Vec<FxDeclarationParams>,
+    pub body: Box<ASTStatement>,
+}
+
+#[derive(Debug, Clone)]
 pub struct ASTWhileStatement {
     pub while_keyword: Token,
     pub condition: ASTExpression,
     pub body: Box<ASTStatement>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ASTBlockStatement {
     pub statements: Vec<ASTStatement>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ASTElseStatement {
     pub else_keyword: Token,
     pub else_statement: Box<ASTStatement>,
@@ -64,6 +91,7 @@ impl ASTElseStatement {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ASTIfStatement {
     pub if_keyword: Token,
     pub condition: ASTExpression,
@@ -77,6 +105,7 @@ pub struct ASTLetStatement {
     pub initialiser: ASTExpression,
 }
 
+#[derive(Debug, Clone)]
 pub struct ASTStatement {
     kind: ASTStatementKind,
 }
@@ -105,6 +134,14 @@ impl ASTStatement {
     pub fn while_statement(while_keyword: Token, condition: ASTExpression, body: ASTStatement) -> Self {
         ASTStatement::new(ASTStatementKind::While(ASTWhileStatement { while_keyword, condition, body: Box::new(body) }))
     }
+
+    pub fn return_statement(return_keyword: Token, return_value: Option<ASTExpression>) -> Self {
+        ASTStatement::new(ASTStatementKind::Return(ASTReturnStatement { return_keyword, return_value }))
+    }
+
+    pub fn func_decl_statement(identifier: Token, parameters: Vec<FxDeclarationParams>, body: ASTStatement) -> Self {
+        ASTStatement::new(ASTStatementKind::FxDeclaration(ASTFxDeclarationStatement { identifier, parameters, body: Box::new(body) }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -130,9 +167,18 @@ pub enum ASTExpressionKind {
     Boolean(
         ASTBooleanExpression
     ),
+    Call(
+        ASTCallExpression
+    ),
     Error(
         TextSpan
     )
+}
+
+#[derive(Debug, Clone)]
+pub struct ASTCallExpression {
+    pub identifier: Token,
+    pub arguments: Vec<ASTExpression>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +348,10 @@ impl ASTExpression {
         ASTExpression::new(ASTExpressionKind::Boolean(ASTBooleanExpression { value, token }))
     }
 
+    pub fn call(identifier: Token, arguments: Vec<ASTExpression>) -> Self {
+        ASTExpression::new(ASTExpressionKind::Call(ASTCallExpression { identifier, arguments }))
+    }
+
     pub fn error(span: TextSpan) -> Self {
         ASTExpression::new(ASTExpressionKind::Error(span))
     }
@@ -332,6 +382,9 @@ mod tests {
         If,
         Else,
         While,
+        Function,
+        Return,
+        Call,
     }
 
     struct ASTVerifier {
@@ -341,8 +394,7 @@ mod tests {
 
     impl ASTVerifier {
         pub fn new(input: &str, expected: Vec<TestASTNode>) -> Self {
-            let compilation_unit = CompilationUnit::compile(input);
-            assert_eq!(compilation_unit.diagnostics_report.borrow().diagnostics.len(), 0, "Expected no diagnostics, but got {:?}", compilation_unit.diagnostics_report.borrow().diagnostics);
+            let compilation_unit = CompilationUnit::compile(input).expect("Failed to compile");
 
             let mut verifier = ASTVerifier { expected, actual: Vec::new() };
             verifier.flatten_ast(&compilation_unit.ast);
@@ -365,7 +417,7 @@ mod tests {
         }
     }
 
-    impl ASTVisitor for ASTVerifier {
+    impl ASTVisitor<'_> for ASTVerifier {
         fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
             self.actual.push(TestASTNode::Let);
             self.visit_expression(&let_statement.initialiser);
@@ -432,6 +484,25 @@ mod tests {
             self.actual.push(TestASTNode::While);
             self.visit_expression(&while_statement.condition);
             self.visit_statement(&while_statement.body);
+        }
+
+        fn visit_function_declaration_statement(&mut self, fx_decl_statement: &ASTFxDeclarationStatement) {
+            self.actual.push(TestASTNode::Function);
+            self.visit_statement(&fx_decl_statement.body);
+        }
+
+        fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement) {
+            self.actual.push(TestASTNode::Return);
+            if let Some(expression) = &return_statement.return_value {
+                self.visit_expression(expression);
+            }
+        }
+
+        fn visit_call_expression(&mut self, call_expression: &ASTCallExpression) {
+            self.actual.push(TestASTNode::Call);
+            for argument in &call_expression.arguments {
+                self.visit_expression(argument);
+            }
         }
     }
 
@@ -719,6 +790,55 @@ mod tests {
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
             TestASTNode::Number(1),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_function_declaration() { // parses function declaration properly
+        let input = "\
+        fx add(a, b) {
+            return a + b
+        }
+        ";
+
+        let expected = vec![
+            TestASTNode::Function,
+            TestASTNode::Block,
+            TestASTNode::Return,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Variable("b".to_string()),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_call_expression() { // parses call expressions properly
+        let input = "\
+        fx add(a, b) {
+            return a + b
+        }
+
+        add(2 * 3, 4 + 5)
+        ";
+
+        let expected = vec![
+            TestASTNode::Function,
+            TestASTNode::Block,
+            TestASTNode::Return,
+            TestASTNode::Binary,
+            TestASTNode::Variable("a".to_string()),
+            TestASTNode::Variable("b".to_string()),
+            TestASTNode::Call,
+            TestASTNode::Binary,
+            TestASTNode::Number(2),
+            TestASTNode::Number(3),
+            TestASTNode::Binary,
+            TestASTNode::Number(4),
+            TestASTNode::Number(5),
         ];
 
         assert_tree(input, expected);

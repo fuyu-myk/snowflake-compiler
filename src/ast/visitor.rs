@@ -3,11 +3,11 @@
  */
 
 use crate::ast::{
-    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTExpression, ASTExpressionKind, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement};
+    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFxDeclarationStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement};
 use crate::ast::lexer::TextSpan;
 
 
-pub trait ASTVisitor {
+pub trait ASTVisitor<'a> {
     fn do_visit_statement(&mut self, statement: &ASTStatement) {
         match &statement.kind {
             ASTStatementKind::Expression(expr) => {
@@ -25,6 +25,20 @@ pub trait ASTVisitor {
             ASTStatementKind::While(statement) => {
                 self.visit_while_statement(statement);
             }
+            ASTStatementKind::FxDeclaration(statement) => {
+                self.visit_function_declaration_statement(statement);
+            }
+            ASTStatementKind::Return(statement) => {
+                self.visit_return_statement(statement);
+            }
+        }
+    }
+
+    fn visit_function_declaration_statement(&mut self, fx_decl_statement: &ASTFxDeclarationStatement);
+
+    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement) {
+        if let Some(expr) = &return_statement.return_value {
+            self.visit_expression(expr);
         }
     }
 
@@ -77,9 +91,18 @@ pub trait ASTVisitor {
             ASTExpressionKind::Boolean(expr) => {
                 self.visit_boolean_expression(expr);
             }
+            ASTExpressionKind::Call(expr) => {
+                self.visit_call_expression(expr);
+            }
             ASTExpressionKind::Error(span) => {
                 self.visit_error(span);
             }
+        }
+    }
+
+    fn visit_call_expression(&mut self, call_expression: &ASTCallExpression) {
+        for argument in &call_expression.arguments {
+            self.visit_expression(argument);
         }
     }
 

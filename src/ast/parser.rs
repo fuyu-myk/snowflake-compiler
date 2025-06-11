@@ -1,5 +1,4 @@
-use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorKind, ASTExpression, 
-    ASTStatement, ASTUnaryOperator, ASTUnaryOperatorKind, ASTElseStatement};
+use crate::ast::{ASTBinaryOperator, ASTBinaryOperatorKind, ASTElseStatement, ASTExpression, ASTStatement, ASTUnaryOperator, ASTUnaryOperatorKind, FxDeclarationParams};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::diagnostics::DiagnosticsReportCell;
 use std::cell::Cell;
@@ -72,10 +71,57 @@ impl Parser {
             TokenKind::While => {
                 self.parse_while_statement()
             }
+            TokenKind::Function => {
+                self.parse_function_declaration()
+            }
+            TokenKind::Return => {
+                self.parse_return_statement()
+            }
             _ => {
                 self.parse_expression_statement()
             }
         }
+    }
+
+    fn parse_function_declaration(&mut self) -> ASTStatement {
+        self.consume_and_check(TokenKind::Function); // consume 'fx'
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone(); // fx name
+
+        // parse params (optional)
+        let parameters = self.parse_optional_param_list();
+
+        // parse body
+        let body = self.parse_statement();
+        ASTStatement::func_decl_statement(identifier, parameters, body)
+    }
+
+    fn parse_optional_param_list(&mut self) -> Vec<FxDeclarationParams> {
+        if self.current().kind != TokenKind::LeftParen {
+            return Vec::new();
+        }
+
+        self.consume_and_check(TokenKind::LeftParen);
+        let mut parameters = Vec::new();
+        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+            parameters.push(FxDeclarationParams { 
+                identifier: self.consume_and_check(TokenKind::Identifier).clone()
+            });
+
+            if self.current().kind == TokenKind::Comma {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        }
+
+        self.consume_and_check(TokenKind::RightParen);
+        parameters
+    }
+
+    fn parse_return_statement(&mut self) -> ASTStatement {
+        let return_keyword = self.consume_and_check(TokenKind::Return).clone();
+        let expression = self.parse_expression();
+        // todo: allow ecmpty return statements
+
+        ASTStatement::return_statement(return_keyword, Some(expression))
     }
 
     fn parse_while_statement(&mut self) -> ASTStatement {
@@ -266,7 +312,11 @@ impl Parser {
                 ASTExpression::parenthesised(expr)
             },
             TokenKind::Identifier => {
-                ASTExpression::identifier(token.clone())
+                if self.current().kind == TokenKind::LeftParen {
+                    self.parse_call_expression(token.clone())
+                } else {
+                    ASTExpression::identifier(token.clone())
+                }
             },
             TokenKind::True | TokenKind::False => {
                 let value = token.kind == TokenKind::True;
@@ -277,6 +327,22 @@ impl Parser {
                 ASTExpression::error(token.span.clone())
             }
         }
+    }
+
+    fn parse_call_expression(&mut self, identifier: Token) -> ASTExpression {
+        self.consume_and_check(TokenKind::LeftParen);
+        let mut arguments = Vec::new();
+
+        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+            arguments.push(self.parse_expression());
+
+            if self.current().kind != TokenKind::RightParen {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        }
+
+        self.consume_and_check(TokenKind::RightParen);
+        return ASTExpression::call(identifier.clone(), arguments);
     }
 
     fn current(&self) -> &Token {

@@ -51,7 +51,7 @@ impl ASTPrinter {
     }
 }
 
-impl ASTVisitor for ASTPrinter {
+impl ASTVisitor<'_> for ASTPrinter {
     fn visit_statement(&mut self, statement: &ASTStatement) {
         self.add_padding();
         Self::do_visit_statement(self, statement);
@@ -161,5 +161,59 @@ impl ASTVisitor for ASTPrinter {
 
     fn visit_error(&mut self, span: &TextSpan) {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), span.literal));
+    }
+
+    fn visit_function_declaration_statement(&mut self, fx_decl_statement: &ASTFxDeclarationStatement) {
+        self.add_keyword("fx");
+        self.add_whitespace();
+
+        self.add_text(&fx_decl_statement.identifier.span.literal);
+
+        let are_parameters_empty = fx_decl_statement.parameters.is_empty();
+        if !are_parameters_empty {
+            self.add_text("(");
+        } else {
+            self.add_whitespace();
+        }
+        
+        for (i, parameter) in fx_decl_statement.parameters.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+
+            self.add_text(&parameter.identifier.span.literal);
+        }
+        if !are_parameters_empty {
+            self.add_text(")");
+            self.add_whitespace();
+        }
+
+        self.visit_statement(&fx_decl_statement.body);
+    }
+
+    fn visit_return_statement(&mut self, return_statement: &ASTReturnStatement) {
+        self.add_keyword("return");
+        
+        if let Some(expression) = &return_statement.return_value {
+            self.add_whitespace();
+            self.visit_expression(expression);
+        }
+    }
+
+    fn visit_call_expression(&mut self, call_expression: &ASTCallExpression) {
+        self.add_text(&call_expression.identifier.span.literal);
+        self.add_text("(");
+
+        for (i, argument) in call_expression.arguments.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+
+            self.visit_expression(argument);
+        }
+
+        self.add_text(")");
     }
 }
