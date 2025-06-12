@@ -3,12 +3,16 @@
  */
 
 use crate::ast::{
-    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpression, ASTExpressionKind, ASTFxDeclarationStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTReturnStatement, ASTStatement, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement};
+    ASTAssignmentExpression, ASTBinaryExpression, ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTExpressionId, ASTExpressionKind, ASTFxDeclarationStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTReturnStatement, ASTStatementId, ASTStatementKind, ASTUnaryExpression, ASTVariableExpression, ASTWhileStatement, Ast};
 use crate::ast::lexer::TextSpan;
 
 
-pub trait ASTVisitor<'a> {
-    fn do_visit_statement(&mut self, statement: &ASTStatement) {
+pub trait ASTVisitor {
+    fn get_ast(&self) -> &Ast;
+
+    fn do_visit_statement(&mut self, statement: &ASTStatementId) {
+        let statement = self.get_ast().query_statement(statement).clone();
+
         match &statement.kind {
             ASTStatementKind::Expression(expr) => {
                 self.visit_expression(expr);
@@ -64,11 +68,13 @@ pub trait ASTVisitor<'a> {
 
     fn visit_let_statement(&mut self, let_statement: &ASTLetStatement);
 
-    fn visit_statement(&mut self, statement: &ASTStatement) {
+    fn visit_statement(&mut self, statement: &ASTStatementId) {
         self.do_visit_statement(statement);
     }
 
-    fn do_visit_expression(&mut self, expression: &ASTExpression) {
+    fn do_visit_expression(&mut self, expression: &ASTExpressionId) {
+        let expression = self.get_ast().query_expression(expression).clone();
+
         match &expression.kind {
             ASTExpressionKind::Number(number) => {
                 self.visit_number_expression(number);
@@ -106,7 +112,7 @@ pub trait ASTVisitor<'a> {
         }
     }
 
-    fn visit_expression(&mut self, expression: &ASTExpression) {
+    fn visit_expression(&mut self, expression: &ASTExpressionId) {
         self.do_visit_expression(expression);
     }
 

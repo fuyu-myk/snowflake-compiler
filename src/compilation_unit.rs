@@ -1,7 +1,7 @@
-use crate::ast::{ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTFxDeclarationStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTStatement, ASTUnaryExpression, ASTVariableExpression, Ast};
+use crate::ast::{ASTBlockStatement, ASTBooleanExpression, ASTCallExpression, ASTFxDeclarationStatement, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTStatementId, ASTUnaryExpression, ASTVariableExpression, Ast};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
-use crate::diagnostics::{DiagnosticsReport, DiagnosticsReportCell};
+use crate::diagnostics::{DiagnosticsReportCell};
 use crate::text;
 use crate::ast::lexer::{Lexer, TextSpan};
 use crate::ast::parser::Parser;
@@ -18,7 +18,7 @@ pub struct GlobalScope {
 
 pub struct FunctionSymbol {
     pub parameters: Vec<String>,
-    pub body: ASTStatement,
+    pub body: ASTStatementId,
 }
 
 impl GlobalScope {
@@ -37,12 +37,12 @@ impl GlobalScope {
         self.variables.get(identifier).is_some()
     }
 
-    fn declare_function(&mut self, identifier: &str, function: &ASTStatement, parameters: Vec<String>) -> Result<(), ()> {
+    fn declare_function(&mut self, identifier: &str, function_body_id: &ASTStatementId, parameters: Vec<String>) -> Result<(), ()> {
         if self.functions.contains_key(identifier) { // handling similarly named functions
             return Err(())
         }
 
-        let function = FunctionSymbol { parameters: parameters, body: function.clone() };
+        let function = FunctionSymbol { parameters: parameters, body: function_body_id.clone() };
         self.functions.insert(identifier.to_string(), function);
         Ok(())
     }
@@ -121,32 +121,39 @@ impl ScopeStack {
     }
 }
 
-struct Resolver {
+struct Resolver<'a> {
     scopes: ScopeStack,
     diagnostics: DiagnosticsReportCell,
+    ast: &'a Ast,
 }
 
-impl Resolver {
-    fn new(diagnostics: DiagnosticsReportCell, scopes: ScopeStack) -> Self {
+impl <'a> Resolver<'a> {
+    fn new(diagnostics: DiagnosticsReportCell, scopes: ScopeStack, ast: &'a Ast) -> Self {
         Resolver {
             scopes,
             diagnostics,
+            ast,
         }
     }
 }
 
-struct GlobalSymbolResolver {
+struct GlobalSymbolResolver<'a> {
     diagnostics: DiagnosticsReportCell,
     global_scope: GlobalScope,
+    ast: &'a Ast,
 }
 
-impl GlobalSymbolResolver {
-    fn new(diagnostics: DiagnosticsReportCell) -> Self {
-        GlobalSymbolResolver { diagnostics, global_scope: GlobalScope::new() }
+impl <'a> GlobalSymbolResolver<'a> {
+    fn new(diagnostics: DiagnosticsReportCell, ast: &'a Ast) -> Self {
+        GlobalSymbolResolver { diagnostics, global_scope: GlobalScope::new(), ast }
     }
 }
 
-impl ASTVisitor<'_> for GlobalSymbolResolver {
+impl ASTVisitor for GlobalSymbolResolver<'_> {
+    fn get_ast(&self) -> &Ast {
+        self.ast
+    }
+
     fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
         
     }
@@ -183,7 +190,11 @@ impl ASTVisitor<'_> for GlobalSymbolResolver {
     }
 }
 
-impl ASTVisitor<'_> for Resolver {
+impl ASTVisitor for Resolver<'_> {
+    fn get_ast(&self) -> &Ast {
+        self.ast    
+    }
+
     fn visit_let_statement(&mut self, statement: &ASTLetStatement) {
         let identifier = statement.identifier.span.literal.clone();
         self.visit_expression(&statement.initialiser);
@@ -298,11 +309,10 @@ impl CompilationUnit {
         let mut parser = Parser::new(
             tokens, 
             Rc::clone(&diagnostics_report),
+            &mut ast
         );
 
-        while let Some(statement) = parser.next_statement() {
-            ast.add_statement(statement);
-        }
+        parser.parse();
 
         ast.visualise();
 
@@ -310,18 +320,18 @@ impl CompilationUnit {
         Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
 
         // symbol check
-        let mut global_symbol_resolver = GlobalSymbolResolver::new(Rc::clone(&diagnostics_report));
+        let mut global_symbol_resolver = GlobalSymbolResolver::new(Rc::clone(&diagnostics_report), &ast);
         ast.visit(&mut global_symbol_resolver);
         let global_scope = global_symbol_resolver.global_scope;
         let scopes = ScopeStack::from_global_scope(global_scope);
-        let mut resolver = Resolver::new(Rc::clone(&diagnostics_report), scopes);
+        let mut resolver = Resolver::new(Rc::clone(&diagnostics_report), scopes, &ast);
         ast.visit(&mut resolver);
 
         Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
         Ok(CompilationUnit { 
+            global_scope: resolver.scopes.global_scope,
             ast, 
             diagnostics_report,
-            global_scope: resolver.scopes.global_scope,
         })
     }
 
@@ -340,7 +350,7 @@ impl CompilationUnit {
     }
     pub fn run_compiler(&self) {
         // evaluator (temp)
-        let mut eval = ASTEvaluator::new(&self.global_scope);
+        let mut eval = ASTEvaluator::new(&self.global_scope, &self.ast);
         let main_function = self.global_scope.lookup_function("main");
 
         if let Some(function) = main_function {
@@ -348,7 +358,7 @@ impl CompilationUnit {
         } else {
             self.ast.visit(&mut eval);
         }
-        
+
         println!("Result: {:?}", eval.last_value);
     }
 

@@ -1,4 +1,4 @@
-use crate::{ast::{ASTAssignmentExpression, ASTBinaryExpression, ASTBinaryOperatorKind, ASTBooleanExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTUnaryExpression, ASTUnaryOperatorKind, ASTVariableExpression, ASTVisitor, ASTWhileStatement, TextSpan}, compilation_unit::GlobalScope};
+use crate::{ast::{ASTAssignmentExpression, ASTBinaryExpression, ASTBinaryOperatorKind, ASTBooleanExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTUnaryExpression, ASTUnaryOperatorKind, ASTVariableExpression, ASTVisitor, ASTWhileStatement, Ast, TextSpan}, compilation_unit::GlobalScope};
 use std::collections::HashMap;
 
 
@@ -66,12 +66,12 @@ fn update(&mut self, identifier: String, value: i64) {
 pub struct ASTEvaluator<'a> {
     pub last_value: Option<i64>,
     pub frames: FrameStack,
-    pub global_scope: &'a GlobalScope,
+    pub global_scope: &'a GlobalScope,pub ast: &'a Ast,
 }
 
 impl <'a> ASTEvaluator<'a> {
-    pub fn new(global_scope: &'a GlobalScope) -> Self {
-        Self { last_value: None, frames: FrameStack::new(), global_scope }
+    pub fn new(global_scope: &'a GlobalScope, ast: &'a Ast) -> Self {
+        Self { last_value: None, frames: FrameStack::new(), global_scope, ast }
     }
 
     fn eval_boolean_instruction<F>(&self, instruction: F) -> i64 where F: FnOnce() -> bool {
@@ -93,7 +93,11 @@ impl <'a> ASTEvaluator<'a> {
     }
 }
 
-impl <'a> ASTVisitor<'_> for ASTEvaluator<'a> {
+impl <'a> ASTVisitor for ASTEvaluator<'a> {
+    fn get_ast(&self) -> &Ast {
+        self.ast
+    }
+
     fn visit_number_expression(&mut self, number: &ASTNumberExpression) {
         self.last_value = Some(number.number);
     }

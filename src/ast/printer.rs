@@ -4,20 +4,21 @@ use crate::ast::*;
 use crate::ast::lexer::TextSpan;
 
 
-pub struct ASTPrinter {
+pub struct ASTPrinter<'a> {
     indent: usize,
     pub result: String,
+    pub ast: &'a Ast,
 }
 
-impl ASTPrinter {
+impl <'a> ASTPrinter<'a> {
     const NUMBER_COLOUR: color::Cyan = color::Cyan;
     const TEXT_COLOUR: color::LightWhite = color::LightWhite;
     const KEYWORD_COLOUR: color::Magenta = color::Magenta;
     const VARIABLE_COLOUR: color::Green = color::Green;
     const BOOL_COLOUR: color::Yellow = color::Yellow;
 
-    pub fn new() -> Self {
-        Self { indent: 0, result: String::new() }
+    pub fn new(ast: &'a Ast) -> Self {
+        Self { indent: 0, result: String::new(), ast }
     }
 
     fn add_whitespace(&mut self) {
@@ -51,8 +52,12 @@ impl ASTPrinter {
     }
 }
 
-impl ASTVisitor<'_> for ASTPrinter {
-    fn visit_statement(&mut self, statement: &ASTStatement) {
+impl ASTVisitor for ASTPrinter<'_> {
+    fn get_ast(&self) -> &Ast {
+        self.ast    
+    }
+
+    fn visit_statement(&mut self, statement: &ASTStatementId) {
         self.add_padding();
         Self::do_visit_statement(self, statement);
 
@@ -175,7 +180,7 @@ impl ASTVisitor<'_> for ASTPrinter {
         } else {
             self.add_whitespace();
         }
-        
+
         for (i, parameter) in fx_decl_statement.parameters.iter().enumerate() {
             if i != 0 {
                 self.add_text(",");
