@@ -127,6 +127,7 @@ Thus far, the current compiler architecture is highlighted below:
 - [ ] **Intermediate Representation (IR) Lowering**
 * Transformation of IR to lower-level representation
     * Essentially preparing the IR for efficient backend code generation
+
     ```
     let x = 10
     let y = 20
@@ -138,7 +139,6 @@ Thus far, the current compiler architecture is highlighted below:
     }
     ...
     ```
-
     ```
     fx main() {
         x = 10

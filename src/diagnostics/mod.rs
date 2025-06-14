@@ -5,7 +5,9 @@
  */
 pub mod printer;
 
-use crate::ast::lexer::{Token, TokenKind, TextSpan};
+use crate::ast::lexer::{Token, TokenKind};
+use crate::text::span::TextSpan;
+use crate::typings::Type;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -74,6 +76,18 @@ impl DiagnosticsReport {
 
     pub fn report_function_already_declared(&mut self, token: &Token) {
         self.report_error(format!("Function '{}' already declared", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_type_mismatch(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
+        self.report_error(format!("Expected type '{}', found '{}'", expected, actual), span.clone());
+    }
+
+    pub fn report_undeclared_type(&mut self, token: &Token) {
+        self.report_error(format!("Undeclared type '{}'", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_return_outside_function(&mut self, token: &Token) {
+        self.report_error(format!("Cannot use 'return' outside of a function"), token.span.clone());
     }
 }
 
@@ -151,6 +165,11 @@ mod tests {
         }
     }
 
+    fn assert_diagnostics(input: &str, expected: Vec<&str>) {
+            let verifier = DiagnosticsVerifier::new(input, expected);
+            verifier.verify();
+        }
+
     #[test]
     fn test_undeclared_variable() {
         let input = "let a = «b»";
@@ -158,8 +177,7 @@ mod tests {
             "Undeclared variable 'b'"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -169,8 +187,7 @@ mod tests {
             "Expected expression, found <+>"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -180,8 +197,7 @@ mod tests {
             "Expected expression, found <Bad>"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -206,8 +222,7 @@ mod tests {
             "Undeclared variable 'c'"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -221,8 +236,7 @@ mod tests {
 
         let expected = vec![];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -240,8 +254,7 @@ mod tests {
             "Undeclared variable 'a'"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
@@ -255,12 +268,11 @@ mod tests {
             "Function 'a' already declared"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
-    fn test_undeclared_function() { // should report an error
+    fn test_undeclared_function() { // can't call undefined functions
         let input = "\
         «a»()
         ";
@@ -269,14 +281,13 @@ mod tests {
             "Undeclared function 'a'"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
     }
 
     #[test]
-    fn test_incorrect_no_of_arguments() { // should report an error
+    fn test_incorrect_no_of_arguments() { // argument count in calls must match definition
         let input = "\
-        fx foo(a, b) {}
+        fx foo(a: int, b: int) {}
         «foo»(1)
         ";
 
@@ -284,7 +295,286 @@ mod tests {
             "Function 'foo' expects 2 arguments, but only 1 found"
         ];
 
-        let verifier = DiagnosticsVerifier::new(input, expected);
-        verifier.verify();
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_int_is_used_in_if_cond() { // int cannot be used in if conditions
+        let input = "\
+        if «1» {
+            let a = 10
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_variable_of_int_is_used_in_if_cond() { // int variable cannot be used in if conditions
+        let input = "\
+        let a = 1
+        if «a» {
+            let a = 10
+        }
+        ";
+        
+        let expected = vec![
+            "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_type_int_binary_expression_is_used_in_if_cond() { // int binary exps cannot be used in if conditions
+        let input = "\
+        let a = 1
+        if «a + 1» {
+            let a = 10
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_adding_int_with_bool() { // int cannot be added to bool
+        let input = "\
+        let a = 1
+        a + «true»
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_using_minus_unary_operator_on_bool() { // - false/true not allowed
+        let input = "\
+        let a = true
+        -«a»
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_assigning_function_call_result_to_variable_of_another_type() { // [b: bool] cannot be assigned to [fx a -> int]
+        let input = "\
+        fx a -> int {
+            return 1
+        }
+
+        let b = false
+        b = «a()»
+        ";
+
+        let expected = vec![
+            "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_using_binop_on_incompatible_types_in_function_params() { // int cannot be added with bool
+        let input = "\
+        fx a(a: int, b: bool) {
+            a + «b»
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_wrong_return_type() { // returns must match defined type
+        let input = "\
+        fx a -> int {
+            return «true»
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_when_assigning_wrong_type_to_var_with_static_type() {
+        let input = "\
+        let a: int = «true»
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_inappropriate_use_of_return() { // can't be used outside functions
+        let input = "\
+        «return» 86
+        ";
+
+        let expected = vec![
+            "Cannot use 'return' outside of a function"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_addition_with_void_type() { // addition cannot be done with void type
+        let input = "
+        let a = 1
+        a + «a()»
+        fx a {}
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'void'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_undeclared_type_in_let_assignment() {
+        let input = "\
+        let a: «b» = 1
+        ";
+
+        let expected = vec![
+            "Undeclared type 'b'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_undeclared_type_in_function_return_type() {
+        let input = "\
+        fx a -> «b» {}
+        ";
+
+        let expected = vec![
+            "Undeclared type 'b'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_undeclared_type_in_function_param_type() {
+        let input = "\
+        fx a(a: «b») {}
+        ";
+
+        let expected = vec![
+            "Undeclared type 'b'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_type_mismatch_in_args_in_function_call() {
+        let input = "\
+        fx a(a: int) {}
+        a(«true»)
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_returning_value_from_void_function() { // void functions cannot return a value
+        let input = "\
+        fx a() {
+            return «1»
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'void', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_return_without_expression_in_non_void_function() {
+        let input = "\
+        fx a() -> int {
+            «return»
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'void'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_assignment_to_undeclared_variable() {
+        let input = "\
+        «a» = 1
+        ";
+
+        let expected = vec![
+            "Undeclared variable 'a'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_while_condition_type() { // should not be non-bool
+        let input = "\
+        let a = add(1, 2)
+        fx add(a: int, b: int) -> int {
+            return a + b
+        }
+
+        while «a + 1» {
+            a = a + 1
+        }
+        ";
+
+        let expected = vec![
+            "Expected type 'bool', found 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
     }
 }

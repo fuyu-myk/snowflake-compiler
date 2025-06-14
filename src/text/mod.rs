@@ -2,6 +2,8 @@
  * this program handles fetching line no. etc for diagnostics
  * methods are useful in ast/diagnostics/printer.rs
  */
+pub mod span;
+
 
 pub struct SourceText {
     text: String,

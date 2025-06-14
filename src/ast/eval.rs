@@ -1,4 +1,4 @@
-use crate::{ast::{ASTAssignmentExpression, ASTBinaryExpression, ASTBinaryOperatorKind, ASTBooleanExpression, ASTIfStatement, ASTLetStatement, ASTNumberExpression, ASTParenthesisedExpression, ASTUnaryExpression, ASTUnaryOperatorKind, ASTVariableExpression, ASTVisitor, ASTWhileStatement, Ast, TextSpan}, compilation_unit::GlobalScope};
+use crate::{ast::{AssignExpression, BinaryExpression, BinaryOpKind, BoolExpression, CallExpression, Expression, IfStatement, LetStatement, NumberExpression, ParenExpression, UnaryExpression, UnaryOpKind, VarExpression, ASTVisitor, WhileStatement, Ast, TextSpan}, compilation_unit::GlobalScope};
 use std::collections::HashMap;
 
 
@@ -66,7 +66,8 @@ fn update(&mut self, identifier: String, value: i64) {
 pub struct ASTEvaluator<'a> {
     pub last_value: Option<i64>,
     pub frames: FrameStack,
-    pub global_scope: &'a GlobalScope,pub ast: &'a Ast,
+    pub global_scope: &'a GlobalScope,
+    pub ast: &'a Ast,
 }
 
 impl <'a> ASTEvaluator<'a> {
@@ -98,51 +99,51 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.ast
     }
 
-    fn visit_number_expression(&mut self, number: &ASTNumberExpression) {
+    fn visit_number_expression(&mut self, number: &NumberExpression, expr: &Expression) {
         self.last_value = Some(number.number);
     }
 
-    fn visit_binary_expression(&mut self, expr: &ASTBinaryExpression) {
-        self.visit_expression(&expr.left);
+    fn visit_binary_expression(&mut self, binary_expr: &BinaryExpression, expr: &Expression) {
+        self.visit_expression(&binary_expr.left);
         let left = self.last_value.unwrap();
 
-        self.visit_expression(&expr.right);
+        self.visit_expression(&binary_expr.right);
         let right = self.last_value.unwrap();
 
-        self.last_value = Some(match expr.operator.kind {
+        self.last_value = Some(match binary_expr.operator.kind {
             // classic arithmetic operators
-            ASTBinaryOperatorKind::Plus => left + right,
-            ASTBinaryOperatorKind::Minus => left - right,
-            ASTBinaryOperatorKind::Multiply => left * right,
-            ASTBinaryOperatorKind::Divide => left / right,
-            ASTBinaryOperatorKind::Power => left.pow(right as u32),
+            BinaryOpKind::Plus => left + right,
+            BinaryOpKind::Minus => left - right,
+            BinaryOpKind::Multiply => left * right,
+            BinaryOpKind::Divide => left / right,
+            BinaryOpKind::Power => left.pow(right as u32),
 
             // bitwise operators
-            ASTBinaryOperatorKind::BitwiseAnd => left & right,
-            ASTBinaryOperatorKind::BitwiseOr => left | right,
-            ASTBinaryOperatorKind::BitwiseXor => left ^ right,
+            BinaryOpKind::BitwiseAnd => left & right,
+            BinaryOpKind::BitwiseOr => left | right,
+            BinaryOpKind::BitwiseXor => left ^ right,
 
             // relation operators
-            ASTBinaryOperatorKind::Equals => if left == right { 1 } else { 0 },
-            ASTBinaryOperatorKind::NotEquals => self.eval_boolean_instruction(|| left != right),
-            ASTBinaryOperatorKind::LessThan => self.eval_boolean_instruction(|| left < right),
-            ASTBinaryOperatorKind::GreaterThan => self.eval_boolean_instruction(|| left > right),
-            ASTBinaryOperatorKind::LessThanOrEqual => self.eval_boolean_instruction(|| left <= right),
-            ASTBinaryOperatorKind::GreaterThanOrEqual => self.eval_boolean_instruction(|| left >= right),
+            BinaryOpKind::Equals => if left == right { 1 } else { 0 },
+            BinaryOpKind::NotEquals => self.eval_boolean_instruction(|| left != right),
+            BinaryOpKind::LessThan => self.eval_boolean_instruction(|| left < right),
+            BinaryOpKind::GreaterThan => self.eval_boolean_instruction(|| left > right),
+            BinaryOpKind::LessThanOrEqual => self.eval_boolean_instruction(|| left <= right),
+            BinaryOpKind::GreaterThanOrEqual => self.eval_boolean_instruction(|| left >= right),
         });
     }
 
-    fn visit_unary_expression(&mut self, unary_expression: &ASTUnaryExpression) {
+    fn visit_unary_expression(&mut self, unary_expression: &UnaryExpression, expr: &Expression) {
         self.visit_expression(&unary_expression.operand);
         let operand = self.last_value.unwrap();
 
         self.last_value = Some(match unary_expression.operator.kind {
-            ASTUnaryOperatorKind::Negation => -operand,
-            ASTUnaryOperatorKind::BitwiseNot => !operand,
+            UnaryOpKind::Negation => -operand,
+            UnaryOpKind::BitwiseNot => !operand,
         });
     }
 
-    fn visit_if_statement(&mut self, if_statement: &ASTIfStatement) {
+    fn visit_if_statement(&mut self, if_statement: &IfStatement) {
         self.push_frame();
         self.visit_expression(&if_statement.condition);
 
@@ -160,31 +161,31 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_let_statement(&mut self, let_statement: &ASTLetStatement) {
+    fn visit_let_statement(&mut self, let_statement: &LetStatement) {
         self.visit_expression(&let_statement.initialiser);
         self.frames.insert(let_statement.identifier.span.literal.clone(), self.last_value.unwrap());
     }
 
-    fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ASTParenthesisedExpression) {
+    fn visit_parenthesised_expression(&mut self, parenthesised_expression: &ParenExpression, expr: &Expression) {
         self.visit_expression(&parenthesised_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, variable_expression: &ASTVariableExpression) {
+    fn visit_variable_expression(&mut self, variable_expression: &VarExpression, expr: &Expression) {
         let identifier = &variable_expression.identifier.span.literal;
         self.last_value = Some(*self.frames.get(identifier).expect(format!("Variable {} not found", identifier).as_str()));
     }
 
-    fn visit_assignment_expression(&mut self, assignment_expression: &ASTAssignmentExpression) {
+    fn visit_assignment_expression(&mut self, assignment_expression: &AssignExpression, expr: &Expression) {
         let identifier = &assignment_expression.identifier.span.literal;
         self.visit_expression(&assignment_expression.expression);
         self.frames.update(identifier.clone(), self.last_value.unwrap());
     }
 
-    fn visit_boolean_expression(&mut self, boolean: &ASTBooleanExpression) {
+    fn visit_boolean_expression(&mut self, boolean: &BoolExpression, expr: &Expression) {
         self.last_value = Some(boolean.value as i64);
     }
 
-    fn visit_while_statement(&mut self, while_statement: &ASTWhileStatement) {
+    fn visit_while_statement(&mut self, while_statement: &WhileStatement) {
         self.push_frame();
         self.visit_expression(&while_statement.condition);
 
@@ -195,7 +196,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_call_expression(&mut self, call_expression: &super::ASTCallExpression) {
+    fn visit_call_expression(&mut self, call_expression: &CallExpression, expr: &Expression) {
         let function = self.global_scope.lookup_function(&call_expression.identifier.span.literal).unwrap();
         let mut arguments = Vec::new();
 
@@ -205,8 +206,8 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         }
 
         self.push_frame();
-        for (i, argument) in arguments.iter().enumerate() {
-            let parameter_name = function.parameters[i].clone();
+        for (argument, parameter) in arguments.iter().zip(function.parameters.iter()) {
+            let parameter_name = parameter.name.clone();
             self.frames.insert(parameter_name, *argument);
         }
 
@@ -214,7 +215,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_block_statement(&mut self, block_statement: &super::ASTBlockStatement) {
+    fn visit_block_statement(&mut self, block_statement: &super::BlockStatement) {
         self.push_frame();
 
         for statement in &block_statement.statements {
@@ -224,7 +225,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_function_declaration_statement(&mut self, fx_decl_statement: &super::ASTFxDeclarationStatement) {
+    fn visit_function_declaration_statement(&mut self, fx_decl_statement: &super::FxDeclarationStatement) {
         
     }
 
