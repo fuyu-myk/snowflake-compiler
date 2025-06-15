@@ -244,8 +244,9 @@ mod tests {
         let input = "\
         let b = -1
 
-        if b > 10
+        if b > 10 {
             let a = 10
+        }
         
         «a»
         ";
@@ -362,7 +363,7 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_using_minus_unary_operator_on_bool() { // - false/true not allowed
         let input = "\
-        let a = true
+        let a = true;
         -«a»
         ";
 

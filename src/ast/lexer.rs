@@ -48,6 +48,7 @@ pub enum TokenKind {
     Comma,
     Colon,
     Arrow,
+    SemiColon,
 
     // other
     Whitespace,
@@ -102,6 +103,7 @@ impl Display for TokenKind {
             TokenKind::Comma => write!(f, "Comma"),
             TokenKind::Colon => write!(f, "Colon"),
             TokenKind::Arrow => write!(f, "Arrow"),
+            TokenKind::SemiColon => write!(f, "Semicolon"),
 
             // other
             TokenKind::Whitespace => write!(f, "Whitespace"),
@@ -233,6 +235,7 @@ impl <'a> Lexer<'a> {
             '}' => TokenKind::CloseBrace,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
+            ';' => TokenKind::SemiColon,
             _ => TokenKind::Bad,
         }
     }

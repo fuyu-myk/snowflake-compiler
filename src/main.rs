@@ -9,20 +9,27 @@ mod typings;
 
 fn main() -> Result<(), ()> {
     let input = "\
-        let a: int = add(1, 2)
+        let a = 10
+        let b = 20
+
         fx add(a: int, b: int) -> int {
             return a + b
         }
 
-        while a + 1 {
-            a = a + 1
+        let c = add(a, b)
+
+        let d = if a == b {
+            10
+        } else {
+            20
         }
 
-        a
+        let e = c + d
+        e
     ";
 
     // Compile the input code ^0^
-    let compilation_unit = CompilationUnit::compile(input).map_err(|_| ())?;
+    let mut compilation_unit = CompilationUnit::compile(input).map_err(|_| ())?;
     compilation_unit.run_compiler();
     Ok(())
 }
