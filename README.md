@@ -88,6 +88,16 @@ Thus far, the current compiler architecture is highlighted below:
         a = 6
     }
     ```
+* `if` can also be used in a `let` statement like so:
+    ```
+    let a = 10
+    let b = 20
+    let d = if a == b {
+            10
+        } else {
+            20
+        }
+    ```
 
 - [x] **`while` loops** [completed 09.06.2025]
 * Ability to parse and evaluate the below statement:
@@ -115,7 +125,7 @@ Thus far, the current compiler architecture is highlighted below:
     }
     ```
 
-- [ ] **Types & type checking**
+- [x] **Types & type checking** [completed 14.06.2025]
 * Ability to declare and infer types
     ```
     let x: int = 86
