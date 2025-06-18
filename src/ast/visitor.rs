@@ -3,10 +3,7 @@
  */
 
 use crate::ast::{
-    self, AssignExpression, Ast, BinaryExpression, BlockExpression, BoolExpression, CallExpression, 
-    Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, 
-    NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, 
-    UnaryExpression, VarExpression, WhileStatement};
+    AssignExpression, Ast, BinaryExpression, BlockExpression, BoolExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
@@ -38,16 +35,16 @@ pub trait ASTVisitor {
         let item = ast.query_item(item).clone();
 
         match &item.kind {
-            ItemKind::Function(fx_decl) => {
-                self.visit_function_declaration(ast, &fx_decl);
-            }
             ItemKind::Statement(statement) => {
                 self.visit_statement(ast, *statement);
+            }
+            ItemKind::Function(fx_decl) => {
+                self.visit_fx_decl(ast, fx_decl, item.id);
             }
         }
     }
 
-    fn visit_function_declaration(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration);
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId);
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         if let Some(expr) = &return_statement.return_value {

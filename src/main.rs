@@ -11,12 +11,23 @@ fn main() -> Result<(), ()> {
     let input = "\
         let a = 10
         let b = 20
+        let b = b + 20
 
-        fx add(a: int, b: int) -> int {
-            return a + b
+        fx mul(a: int) -> int {
+            return 1 
+            }
+        let z = mul(a, a)
+
+        fx mul(a: int, b: int) -> int {
+            let sum = 0
+            while b > 0 {
+                sum = sum + a
+                b = b - 1
+            }
+            return sum
         }
 
-        let c = add(a, b)
+        let c = mul(a, b)
 
         let d = if a == b {
             10
@@ -25,7 +36,7 @@ fn main() -> Result<(), ()> {
         }
 
         let e = c + d
-        e
+        z
     ";
 
     // Compile the input code ^0^

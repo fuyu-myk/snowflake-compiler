@@ -114,6 +114,8 @@ Thus far, the current compiler architecture is highlighted below:
 * Functions here are defined using the `fx` keyword
 * Functions do not need to be defined with variables
     * Such functions can be defined without parentheses
+* Functions are items and not expressions
+* Function's types are checked during parsing
 * Some examples:
     ```
     fx dog {

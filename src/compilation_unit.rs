@@ -1,6 +1,6 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, CallExpression, Expression, FxDeclarationParams, FxDeclaration, IfExpression, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, CallExpression, Expression, ExpressionId, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
@@ -9,8 +9,7 @@ use crate::ast::lexer::{Lexer, Token};
 use crate::ast::parser::Parser;
 use crate::text::span::TextSpan;
 use crate::typings::Type;
-use std::any::Any;
-use std::collections::HashMap;
+
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::diagnostics;
@@ -21,11 +20,11 @@ idx!(FunctionIndex);
 idx!(VariableIndex);
 
 #[derive(Debug, Clone)]
-pub struct FunctionSymbol {
-    pub parameters: Vec<VariableIndex>,
-    pub body: StatementId,
-    pub return_type: Type,
+pub struct Function {
     pub name: String,
+    pub parameters: Vec<VariableIndex>,
+    pub body: ExpressionId,
+    pub return_type: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +35,7 @@ pub struct VariableSymbol {
 
 pub struct GlobalScope {
     pub variables: IndexVec<VariableIndex, VariableSymbol>,
-    pub functions: IndexVec<FunctionIndex, FunctionSymbol>,
+    pub functions: IndexVec<FunctionIndex, Function>,
     pub global_variables: Vec<VariableIndex>,
 }
 
@@ -49,7 +48,7 @@ impl GlobalScope {
         } 
     }
 
-    fn declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool) -> VariableIndex {
+    pub fn declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool) -> VariableIndex {
         let variable = VariableSymbol { name: identifier.to_string(), ty };
         let variable_index = self.variables.push(variable);
 
@@ -61,34 +60,38 @@ impl GlobalScope {
     }
 
     fn lookup_global_variable(&self, identifier: &str) -> Option<VariableIndex> {
-        self.global_variables.iter().map(
+        self.global_variables.iter().rev().map(
             |variable_index| (*variable_index, self.variables.get(*variable_index))
         ).find(|(_, variable)| variable.name == identifier).map(
             |(variable_index, _) | variable_index)
     }
 
-    fn declare_function(&mut self, identifier: &str, function_body_id: &StatementId, parameters: Vec<VariableIndex>, return_type: Type) -> Result<(), ()> {
-        if self.lookup_function(identifier).is_some() { // handling similarly named functions
-            return Err(())
+    pub fn create_function(&mut self, identifier: String, function_body_id: ExpressionId, parameters: Vec<VariableIndex>, return_type: Type) -> Result<FunctionIndex, FunctionIndex> {
+        if let Some(existing_fx_idx) = self.lookup_fx(&identifier) {
+            return Err(existing_fx_idx);
         }
 
-        let function = FunctionSymbol { parameters: parameters, body: *function_body_id, return_type, name: identifier.to_string() };
-        self.functions.push(function);
-        Ok(())
+        let function = Function { name: identifier, parameters: parameters, body: function_body_id, return_type };
+        return Ok(self.functions.push(function));
     }
 
-    pub fn lookup_function(&self, identifier: &str) -> Option<FunctionIndex> {
+    fn set_variable_type(&mut self, var_idx: VariableIndex, ty: Type) {
+        self.variables[var_idx].ty = ty;
+    }
+
+    pub fn lookup_fx(&self, identifier: &str) -> Option<FunctionIndex> {
         self.functions.indexed_iter().find(|(_, function)| function.name == identifier).map(|(idx, _)| idx)
     }
 }
 
 struct LocalScope {
     locals: Vec<VariableIndex>,
+    function: Option<FunctionIndex>,
 }
 
 impl LocalScope {
-    fn new() -> Self {
-        LocalScope { locals: Vec::new() }
+    fn new(function: Option<FunctionIndex>) -> Self {
+        LocalScope { locals: Vec::new(), function }
     }
 
     fn add_local_var(&mut self, local: VariableIndex) {
@@ -99,21 +102,23 @@ impl LocalScope {
 struct ScopeStack {
     local_scopes: Vec<LocalScope>,
     global_scope: GlobalScope,
-    surrounding_function: Option<FunctionIndex>,
 }
 
 impl ScopeStack {
     fn new() -> Self {
-        ScopeStack { local_scopes: Vec::new(), global_scope: GlobalScope::new(), surrounding_function: None }
+        ScopeStack { local_scopes: Vec::new(), global_scope: GlobalScope::new() }
     }
 
     fn enter_scope(&mut self) {
-        self.local_scopes.push(LocalScope::new());
+        self._enter_scope(None);
+    }
+
+    fn _enter_scope(&mut self, fx_idx: Option<FunctionIndex>) {
+        self.local_scopes.push(LocalScope::new(fx_idx));
     }
 
     fn enter_fx_scope(&mut self, fx_idx: FunctionIndex) {
-        self.surrounding_function = Some(fx_idx);
-        self.enter_scope();
+        self._enter_scope(Some(fx_idx));
     }
     
     fn exit_scope(&mut self) {
@@ -121,19 +126,23 @@ impl ScopeStack {
     }
 
     fn exit_fx_scope(&mut self) {
-        self.surrounding_function = None;
+        assert!(self.local_scopes.last().unwrap().function.is_some());
         self.exit_scope();
     }
 
     fn declare_variable(&mut self, identifier: &str, ty: Type) -> VariableIndex {
-        let is_inside_local_scope = self.is_inside_local_scope();
-        let index = self.global_scope.declare_variable(identifier, ty, !is_inside_local_scope);
+        let is_inside_global_scope = self.is_inside_local_scope();
+        let index = self._declare_variable(identifier, ty, !is_inside_global_scope);
 
-        if is_inside_local_scope {
+        if is_inside_global_scope {
             self.current_local_scope_mut().add_local_var(index);
         }
 
         return index;
+    }
+
+    fn _declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool) -> VariableIndex {
+        self.global_scope.declare_variable(identifier, ty, is_global)
     }
 
     fn lookup_variable(&mut self, identifier: &str) -> Option<VariableIndex> { // top-down lookup
@@ -148,10 +157,6 @@ impl ScopeStack {
         self.global_scope.lookup_global_variable(identifier)
     }
 
-    fn lookup_function(&mut self, identifier: &str) -> Option<FunctionIndex> {
-        self.global_scope.lookup_function(identifier)
-    }
-
     fn is_inside_local_scope(&self) -> bool { // checks if variable is in local scope
         !self.local_scopes.is_empty()
     }
@@ -160,12 +165,18 @@ impl ScopeStack {
         ScopeStack {
             local_scopes: Vec::new(),
             global_scope,
-            surrounding_function: None
         }
     }
 
-    fn surrounding_function(&self) -> Option<&FunctionSymbol> {
-        return self.surrounding_function.map(|idx| self.global_scope.functions.get(idx));
+    fn surrounding_function(&self) -> Option<&Function> {
+        return self.surrounding_function_idx()
+        .map(|fx| self.global_scope.functions.get(fx));
+    }
+
+    fn surrounding_function_idx(&self) -> Option<FunctionIndex> {
+        self.local_scopes.iter().rev().filter_map(
+            |scope| scope.function
+        ).next()
     }
 
     fn current_local_scope_mut(&mut self) -> &mut LocalScope {
@@ -252,64 +263,6 @@ pub fn resolve_type_from_string(diagnostics: &DiagnosticsReportCell, type_name: 
     };
 }
 
-struct GlobalSymbolResolver {
-    diagnostics: DiagnosticsReportCell,
-    global_scope: GlobalScope,
-}
-
-impl GlobalSymbolResolver {
-    fn new(diagnostics: DiagnosticsReportCell) -> Self {
-        GlobalSymbolResolver { diagnostics, global_scope: GlobalScope::new() }
-    }
-}
-
-impl ASTVisitor for GlobalSymbolResolver {
-    fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
-        
-    }
-
-    fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression) {
-        
-    }
-
-    fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression) {
-        
-    }
-
-    fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression) {
-        
-    }
-
-    fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression) {
-        
-    }
-
-    fn visit_function_declaration(&mut self, ast: &mut Ast, fx_decl_statement: &FxDeclaration) {
-        let parameters = fx_decl_statement.parameters.iter().map(|parameter| self.global_scope.declare_variable( 
-            &parameter.identifier.span.literal,
-            resolve_type_from_string(&self.diagnostics, &parameter.type_annotation.type_name),
-            false,
-        )).collect();
-        let literal_span = &fx_decl_statement.identifier.span;
-        let return_type = match &fx_decl_statement.return_type {
-            None => Type::Void, // each fx return type to be specified
-            Some(return_type) => {
-                resolve_type_from_string(&self.diagnostics, &return_type.type_name)
-            }
-        };
-        match self.global_scope.declare_function(literal_span.literal.as_str(), &fx_decl_statement.body, parameters, return_type) {
-            Ok(_) => {}
-            Err(_) => {
-                self.diagnostics.borrow_mut().report_function_already_declared(&fx_decl_statement.identifier);
-            }
-        }
-    }
-
-    fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan) {
-        
-    }
-}
-
 impl ASTVisitor for Resolver {
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
         let identifier = let_statement.identifier.span.literal.clone();
@@ -332,12 +285,12 @@ impl ASTVisitor for Resolver {
     }
 
     fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression) {
-        match self.scopes.lookup_variable(&variable_expression.identifier.span.literal) {
+        let variable_name = &variable_expression.identifier.span.literal;
+        match self.scopes.lookup_variable(variable_name) {
             None => {
                 let mut diagnostics = self.diagnostics.borrow_mut();
                 diagnostics.report_undeclared_variable(&variable_expression.identifier);
             }
-
             Some(variable_index) => {
                 let variable = self.scopes.global_scope.variables.get(variable_index);
                 ast.set_type(expr.id, variable.ty.clone());
@@ -431,8 +384,10 @@ impl ASTVisitor for Resolver {
         ast.set_type(expr.id, ty);
     }
     
-    fn visit_function_declaration(&mut self, ast: &mut Ast, fx_decl_statement: &FxDeclaration) {
-        let fx_idx = self.scopes.lookup_function(&fx_decl_statement.identifier.span.literal).unwrap();
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId) {;
+        // fetching fx idx
+        let fx_idx = fx_decl.index;
+
         self.scopes.enter_fx_scope(fx_idx);
 
         let function = self.scopes.global_scope.functions.get(fx_idx);
@@ -440,14 +395,14 @@ impl ASTVisitor for Resolver {
             self.scopes.current_local_scope_mut().locals.push(parameter); // TODO: parameter types
         }
 
-        self.visit_statement(ast, fx_decl_statement.body);
+        self.visit_expression(ast, fx_decl.body);
         self.scopes.exit_fx_scope();
     }
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         let return_keyword = return_statement.return_keyword.clone();
         // todo: do not clone this
-        match self.scopes.surrounding_function().map(|function| function.clone()) {
+        match self.scopes.surrounding_function().cloned() {
             None => {
                 let mut diagnostics_binding = self.diagnostics.borrow_mut();
                 diagnostics_binding.report_return_outside_function(&return_statement.return_keyword);
@@ -465,20 +420,23 @@ impl ASTVisitor for Resolver {
     }
 
     fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
-        let function = self.scopes.lookup_function(&call_expression.identifier.span.literal);
+        let function = &self.scopes.global_scope.lookup_fx(&call_expression.callee.span.literal);
+
         let ty = match function {
             None => {
                 let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                diagnostics_binding.report_undeclared_function(&call_expression.identifier);
+                diagnostics_binding.report_undeclared_function(
+                    &call_expression.callee
+                );
 
-                Type::Void
+                Type::Error
             }
             Some(function) => {
-                let function = self.scopes.global_scope.functions.get(function);
+                let function = self.scopes.global_scope.functions.get(*function);
                 if function.parameters.len() != call_expression.arguments.len() {
                     let mut diagnostics_binding = self.diagnostics.borrow_mut();
                     diagnostics_binding.report_invalid_arg_count(
-                        &call_expression.identifier,
+                        &call_expression.callee.span,
                         function.parameters.len(),
                         call_expression.arguments.len(),
                     );
@@ -554,12 +512,14 @@ impl CompilationUnit {
         }
 
         // parser & ast
+        let mut global_scope = GlobalScope::new(); // defining global scope
         let diagnostics_report: DiagnosticsReportCell = Rc::new(RefCell::new(diagnostics::DiagnosticsReport::new()));
         let mut ast = Ast::new();
         let mut parser = Parser::new(
             tokens, 
             Rc::clone(&diagnostics_report),
-            &mut ast
+            &mut ast,
+            &mut global_scope,
         );
 
         parser.parse();
@@ -570,9 +530,6 @@ impl CompilationUnit {
         Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
 
         // symbol check
-        let mut global_symbol_resolver = GlobalSymbolResolver::new(Rc::clone(&diagnostics_report));
-        ast.visit(&mut global_symbol_resolver);
-        let global_scope = global_symbol_resolver.global_scope;
         let scopes = ScopeStack::from_global_scope(global_scope);
         let mut resolver = Resolver::new(Rc::clone(&diagnostics_report), scopes);
         resolver.resolve(&mut ast);
@@ -596,11 +553,11 @@ impl CompilationUnit {
     pub fn run_compiler(&mut self) {
         // evaluator (temp)
         let mut eval = ASTEvaluator::new(&self.global_scope);
-        let main_function = self.global_scope.lookup_function("main");
+        let main_function_ref = self.global_scope.lookup_fx("main");
 
-        if let Some(function) = main_function {
+        if let Some(function) = main_function_ref {
             let function = self.global_scope.functions.get(function);
-            eval.visit_statement(&mut self.ast, function.body);
+            eval.visit_expression(&mut self.ast, function.body);
         } else {
             self.ast.visit(&mut eval);
         }

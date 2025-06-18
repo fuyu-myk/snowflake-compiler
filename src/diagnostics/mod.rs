@@ -66,12 +66,17 @@ impl DiagnosticsReport {
         self.report_error(format!("Undeclared variable '{}'", token.span.literal), token.span.clone());
     }
 
-    pub fn report_undeclared_function(&mut self, token: &Token) {
-        self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
+    pub fn report_uncallable_expression(&mut self, callee_span: &TextSpan, callee_type: &Type) {
+        self.report_error(format!("Unable to call non-callable expression of type '{}'", callee_type), callee_span.clone());
     }
 
-    pub fn report_invalid_arg_count(&mut self, token: &Token, expected: usize, actual: usize) {
-        self.report_error(format!("Function '{}' expects {} arguments, but only {} found", token.span.literal, expected, actual), token.span.clone());
+    pub fn report_invalid_arg_count(&mut self, callee_span: &TextSpan, expected: usize, actual: usize) {
+        self.report_error(
+            format!("Function '{}' expects {} {}, but{} {} {} found",
+            callee_span.literal,
+            expected, if expected == 1 {"argument"} else {"arguments"},
+            if actual < expected {" only"} else {""},
+            actual, if actual == 1 {"was"} else {"were"}), callee_span.clone());
     }
 
     pub fn report_function_already_declared(&mut self, token: &Token) {
@@ -88,6 +93,14 @@ impl DiagnosticsReport {
 
     pub fn report_return_outside_function(&mut self, token: &Token) {
         self.report_error(format!("Cannot use 'return' outside of a function"), token.span.clone());
+    }
+
+    pub fn report_rec_outside_function(&mut self, token: &Token) {
+        self.report_error(format!("Cannot use 'rec' outside of a function"), token.span.clone());
+    }
+
+    pub fn report_undeclared_function(&mut self, token: &Token) {
+        self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
     }
 }
 

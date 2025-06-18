@@ -1,4 +1,4 @@
-use crate::{ast::{lexer::Token}, compilation_unit::VariableIndex, text::span::TextSpan, typings::Type};
+use crate::{ast::lexer::Token, compilation_unit::{FunctionIndex, VariableIndex}, text::span::TextSpan, typings::Type};
 use snowflake_compiler::{idx, Idx, IndexVec};
 use visitor::ASTVisitor;
 use printer::ASTPrinter;
@@ -154,8 +154,8 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }))
     }
 
-    pub fn call_expression(&mut self, identifier: Token, left_paren:Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Call(CallExpression { identifier, left_paren, arguments, right_paren }))
+    pub fn call_expression(&mut self, callee: Token, left_paren:Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren }))
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
@@ -171,8 +171,8 @@ impl Ast {
         &self.items[id]
     }
 
-    pub fn func_decl(&mut self, identifier: Token, parameters: Vec<FxDeclarationParams>, body: StatementId, return_type: Option<FxReturnType>) -> &Item {
-        self.item_from_kind(ItemKind::Function(FxDeclaration { identifier, parameters, body, return_type }))
+    pub fn func_item(&mut self, fx_keyword: Token, identifier: Token, parameters: Vec<FxDeclarationParams>, body: ExpressionId, return_type: Option<FxReturnType>, index: FunctionIndex) -> &Item {
+        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }))
     }
 
     pub fn visit(&mut self, visitor: &mut dyn ASTVisitor) {
@@ -202,8 +202,8 @@ impl Item {
 
 #[derive(Debug, Clone)]
 pub enum ItemKind {
-    Function(FxDeclaration),
     Statement(StatementId),
+    Function(FxDeclaration),
 }
 
 #[derive(Debug, Clone)]
@@ -252,10 +252,12 @@ impl FxReturnType {
 
 #[derive(Debug, Clone)]
 pub struct FxDeclaration {
+    pub fx_keyword: Token,
     pub identifier: Token,
     pub parameters: Vec<FxDeclarationParams>,
-    pub body: StatementId,
+    pub body: ExpressionId,
     pub return_type: Option<FxReturnType>,
+    pub index: FunctionIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -381,10 +383,16 @@ pub enum ExpressionKind {
 
 #[derive(Debug, Clone)]
 pub struct CallExpression {
-    pub identifier: Token,
+    pub callee: Token,
     pub left_paren: Token,
     pub arguments: Vec<ExpressionId>,
     pub right_paren: Token,
+}
+
+impl CallExpression {
+    pub fn fx_name(&self) -> &str {
+        &self.callee.span.literal
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -567,10 +575,10 @@ impl Expression {
             },
             ExpressionKind::Boolean(expr) => expr.token.span.clone(),
             ExpressionKind::Call(expr) => {
-                let identifier = expr.identifier.span.clone();
+                let callee_span = expr.callee.span.clone();
                 let left_paren = expr.left_paren.span.clone();
                 let right_paren = expr.right_paren.span.clone();
-                let mut spans = vec![identifier, left_paren, right_paren];
+                let mut spans = vec![callee_span, left_paren, right_paren];
 
                 for arg in &expr.arguments {
                     spans.push(ast.query_expression(*arg).span(ast));
@@ -738,9 +746,9 @@ mod tests {
             self.visit_expression(ast, while_statement.body);
         }
 
-        fn visit_function_declaration(&mut self, ast: &mut Ast, fx_decl_statement: &FxDeclaration) {
+        fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId) {
             self.actual.push(TestASTNode::Function);
-            self.visit_statement(ast, fx_decl_statement.body);
+            self.visit_item(ast, item_id);
         }
 
         fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {

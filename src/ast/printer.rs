@@ -180,20 +180,20 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), span.literal));
     }
 
-    fn visit_function_declaration(&mut self, ast: &mut Ast, fx_decl_statement: &FxDeclaration) {
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId) {
         self.add_keyword("fx");
         self.add_whitespace();
-
-        self.add_text(&fx_decl_statement.identifier.span.literal);
-
-        let are_parameters_empty = fx_decl_statement.parameters.is_empty();
+        self.add_text(&fx_decl.identifier.span.literal);
+        self.add_whitespace();
+;
+        let are_parameters_empty = fx_decl.parameters.is_empty();
         if !are_parameters_empty {
             self.add_text("(");
         } else {
             self.add_whitespace();
         }
 
-        for (i, parameter) in fx_decl_statement.parameters.iter().enumerate() {
+        for (i, parameter) in fx_decl.parameters.iter().enumerate() {
             if i != 0 {
                 self.add_text(",");
                 self.add_whitespace();
@@ -207,7 +207,7 @@ impl ASTVisitor for ASTPrinter {
             self.add_whitespace();
         }
 
-        self.visit_statement(ast, fx_decl_statement.body);
+        self.visit_expression(ast, fx_decl.body);
     }
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
@@ -220,7 +220,7 @@ impl ASTVisitor for ASTPrinter {
     }
 
     fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
-        self.add_text(&call_expression.identifier.span.literal);
+        self.add_text(&call_expression.callee.span.literal);
         self.add_text("(");
 
         for (i, argument) in call_expression.arguments.iter().enumerate() {
