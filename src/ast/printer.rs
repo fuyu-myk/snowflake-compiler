@@ -208,6 +208,7 @@ impl ASTVisitor for ASTPrinter {
         }
 
         self.visit_expression(ast, fx_decl.body);
+        self.add_newline();
     }
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
