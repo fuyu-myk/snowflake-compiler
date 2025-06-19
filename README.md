@@ -4,9 +4,10 @@ This project documents my journey in learning Rust and subsequently coding a com
 ## Compiler architecture
 Thus far, the current compiler architecture is highlighted below:
 
-`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [`compilation_unit.rs`]
+`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [C transpiler]
 
-* At this juncture, only the front end code of the compiler is being worked on, as I implement more types and keyword statements
+* A C transpiler backend is used for this compiler for now
+* The final goal will be to adopt an LLVM backend 
 
 ## Current features
 
@@ -27,6 +28,9 @@ Thus far, the current compiler architecture is highlighted below:
 - [x] **Evaluator** [WIP]
 * Updated as more functionality is added
 * Used in place of a backend for now
+
+- [x] **C transpiler** [WIP]
+* A basic C transpiler has been implemented as a temporary backend
 
 ### Types supported
 * Integers
