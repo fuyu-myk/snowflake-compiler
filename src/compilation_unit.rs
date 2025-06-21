@@ -1,6 +1,6 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, CallExpression, Expression, ExpressionId, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
@@ -23,18 +23,19 @@ idx!(VariableIndex);
 pub struct Function {
     pub name: String,
     pub parameters: Vec<VariableIndex>,
-    pub body: ExpressionId,
+    pub body: Body,
     pub return_type: Type,
 }
 
 #[derive(Debug, Clone)]
-pub struct VariableSymbol {
+pub struct Variable {
     pub name: String,
     pub ty: Type,
+    pub is_shadowing: bool,
 }
 
 pub struct GlobalScope {
-    pub variables: IndexVec<VariableIndex, VariableSymbol>,
+    pub variables: IndexVec<VariableIndex, Variable>,
     pub functions: IndexVec<FunctionIndex, Function>,
     pub global_variables: Vec<VariableIndex>,
 }
@@ -48,8 +49,8 @@ impl GlobalScope {
         } 
     }
 
-    pub fn declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool) -> VariableIndex {
-        let variable = VariableSymbol { name: identifier.to_string(), ty };
+    pub fn declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool, is_shadowing: bool) -> VariableIndex {
+        let variable = Variable { name: identifier.to_string(), ty, is_shadowing };
         let variable_index = self.variables.push(variable);
 
         if is_global {
@@ -60,18 +61,18 @@ impl GlobalScope {
     }
 
     fn lookup_global_variable(&self, identifier: &str) -> Option<VariableIndex> {
-        self.global_variables.iter().rev().map(
-            |variable_index| (*variable_index, self.variables.get(*variable_index))
-        ).find(|(_, variable)| variable.name == identifier).map(
-            |(variable_index, _) | variable_index)
+        self.global_variables.iter().rev()
+            .map(|variable_index| (*variable_index, self.variables.get(*variable_index)))
+            .find(|(_, variable)| variable.name == identifier)
+            .map(|(variable_index, _) | variable_index)
     }
 
-    pub fn create_function(&mut self, identifier: String, function_body_id: ExpressionId, parameters: Vec<VariableIndex>, return_type: Type) -> Result<FunctionIndex, FunctionIndex> {
+    pub fn create_function(&mut self, identifier: String, function_body: Body, parameters: Vec<VariableIndex>, return_type: Type) -> Result<FunctionIndex, FunctionIndex> {
         if let Some(existing_fx_idx) = self.lookup_fx(&identifier) {
             return Err(existing_fx_idx);
         }
 
-        let function = Function { name: identifier, parameters: parameters, body: function_body_id, return_type };
+        let function = Function { name: identifier, parameters: parameters, body: function_body, return_type };
         return Ok(self.functions.push(function));
     }
 
@@ -142,14 +143,23 @@ impl ScopeStack {
     }
 
     fn _declare_variable(&mut self, identifier: &str, ty: Type, is_global: bool) -> VariableIndex {
-        self.global_scope.declare_variable(identifier, ty, is_global)
+        let is_shadowing = match self.current_local_scope() {
+            None => false,
+            Some(scope) => scope.locals.iter().any(|local| {
+                let local = self.global_scope.variables.get(*local);
+                local.name == identifier
+            }),
+        };
+
+        self.global_scope.declare_variable(identifier, ty, is_global, is_shadowing)
     }
 
     fn lookup_variable(&mut self, identifier: &str) -> Option<VariableIndex> { // top-down lookup
         for scope in self.local_scopes.iter_mut().rev() {
-            if let Some((index, _variable)) = scope.locals.iter().map( // loop local var idxs
-                |idx| (*idx, self.global_scope.variables.get(*idx)) // lookup idx in global_scope
-            ).find(|(_idx, variable)| variable.name == identifier) { // use name to lookup var
+            if let Some((index, _variable)) = scope.locals.iter() // loop local var idxs
+                .map(|idx| (*idx, self.global_scope.variables.get(*idx))) // lookup idx in global_scope
+                .find(|(_idx, variable)| variable.name == identifier) { // use name to lookup var
+
                 return Some(index)
             }
         }
@@ -174,9 +184,13 @@ impl ScopeStack {
     }
 
     fn surrounding_function_idx(&self) -> Option<FunctionIndex> {
-        self.local_scopes.iter().rev().filter_map(
-            |scope| scope.function
-        ).next()
+        self.local_scopes.iter().rev()
+            .filter_map(|scope| scope.function)
+            .next()
+    }
+
+    fn current_local_scope(&self) -> Option<&LocalScope> {
+        self.local_scopes.last()
     }
 
     fn current_local_scope_mut(&mut self) -> &mut LocalScope {
@@ -224,6 +238,7 @@ impl Resolver {
             BinaryOpKind::LessThanOrEqual => (Type::Int, Type::Int, Type::Bool),
             BinaryOpKind::GreaterThanOrEqual => (Type::Int, Type::Int, Type::Bool),
             BinaryOpKind::Power => (Type::Int, Type::Int, Type::Int),
+            BinaryOpKind::Modulo => (Type::Int, Type::Int, Type::Int),
             BinaryOpKind::Multiply => (Type::Int, Type::Int, Type::Int),
             BinaryOpKind::Divide => (Type::Int, Type::Int, Type::Int),
             BinaryOpKind::Plus => (Type::Int, Type::Int, Type::Int),
@@ -275,9 +290,7 @@ impl ASTVisitor for Resolver {
                 self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
                 ty
             }
-            None => {
-                initialiser_expression.ty.clone()
-            }
+            None => initialiser_expression.ty.clone(),
         };
 
         let variable = self.scopes.declare_variable(&identifier, ty);
@@ -299,7 +312,7 @@ impl ASTVisitor for Resolver {
         };
     }
 
-    fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression) {
+    fn visit_number_expression(&mut self, ast: &mut Ast, _number: &NumberExpression, expr: &Expression) {
         ast.set_type(expr.id, Type::Int);
     }
 
@@ -353,7 +366,7 @@ impl ASTVisitor for Resolver {
         ast.set_type(expr.id, ty);
     }
 
-    fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression) {
+    fn visit_boolean_expression(&mut self, ast: &mut Ast, _boolean: &BoolExpression, expr: &Expression) {
         ast.set_type(expr.id, Type::Bool);
     }
 
@@ -365,18 +378,19 @@ impl ASTVisitor for Resolver {
         let conditional_expression = ast.query_expression(if_statement.condition);
         self.expect_type(Type::Bool, &conditional_expression.ty, &conditional_expression.span(&ast));
 
-        self.visit_expression(ast, if_statement.then_branch);
+        self.visit_body(ast, &if_statement.then_branch);
         let mut ty = Type::Void;
         self.scopes.exit_scope();
 
         if let Some(else_branch) = &if_statement.else_branch {
             self.scopes.enter_scope();
 
-            self.visit_expression(ast, else_branch.else_expression);
+            self.visit_body(ast, &else_branch.body);
 
-            let then_expression = ast.query_expression(if_statement.then_branch);
-            let else_expression = ast.query_expression(else_branch.else_expression);
-            ty = self.expect_type(then_expression.ty.clone(), &else_expression.ty, &else_expression.span(&ast));
+            let then_expression_type = if_statement.then_branch.type_or_void(ast);
+            let else_expression_type = else_branch.body.type_or_void(ast);
+            let else_span = else_branch.body.span(ast);
+            ty = self.expect_type(then_expression_type, &else_expression_type, &else_span);
 
             self.scopes.exit_scope();
         }
@@ -384,7 +398,7 @@ impl ASTVisitor for Resolver {
         ast.set_type(expr.id, ty);
     }
     
-    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId) {;
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemId) {
         // fetching fx idx
         let fx_idx = fx_decl.index;
 
@@ -395,7 +409,10 @@ impl ASTVisitor for Resolver {
             self.scopes.current_local_scope_mut().locals.push(parameter); // TODO: parameter types
         }
 
-        self.visit_expression(ast, fx_decl.body);
+        let function = self.scopes.global_scope.functions.get(fx_idx);
+        for statement in (*function.body).clone() {
+            self.visit_statement(ast, statement);
+        }
         self.scopes.exit_fx_scope();
     }
 
@@ -420,19 +437,18 @@ impl ASTVisitor for Resolver {
     }
 
     fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
-        let function = &self.scopes.global_scope.lookup_fx(&call_expression.callee.span.literal);
+        let function = self.scopes.global_scope.lookup_fx(&call_expression.callee.span.literal);
 
         let ty = match function {
             None => {
                 let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                diagnostics_binding.report_undeclared_function(
-                    &call_expression.callee
-                );
+                diagnostics_binding.report_undeclared_function(&call_expression.callee);
 
                 Type::Error
             }
-            Some(function) => {
-                let function = self.scopes.global_scope.functions.get(*function);
+            Some(fx_idx) => {
+                let function = self.scopes.global_scope.functions.get(fx_idx);
+                ast.set_function(expr.id, fx_idx);
                 if function.parameters.len() != call_expression.arguments.len() {
                     let mut diagnostics_binding = self.diagnostics.borrow_mut();
                     diagnostics_binding.report_invalid_arg_count(
@@ -485,10 +501,10 @@ impl ASTVisitor for Resolver {
         let condition = ast.query_expression(while_statement.condition);
         self.expect_type(Type::Bool, &condition.ty, &condition.span(&ast));
 
-        self.visit_expression(ast, while_statement.body);
+        self.visit_body(ast, &while_statement.body);
     }
 
-    fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan) {
+    fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
 
     }
 }
@@ -557,7 +573,9 @@ impl CompilationUnit {
 
         if let Some(function) = main_function_ref {
             let function = self.global_scope.functions.get(function);
-            eval.visit_expression(&mut self.ast, function.body);
+            for statement in &*function.body {
+                eval.visit_statement(&mut self.ast, *statement);
+            }
         } else {
             self.ast.visit(&mut eval);
         }

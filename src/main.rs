@@ -1,6 +1,6 @@
-use std::{fs::File, io::Write, process::Command};
+use crate::{compilation_unit::CompilationUnit};
 
-use crate::{codegen::CTranspiler, compilation_unit::CompilationUnit};
+use anyhow::{anyhow, Result};
 
 mod ast;
 mod diagnostics;
@@ -10,7 +10,7 @@ mod typings;
 mod codegen;
 
 
-fn main() -> Result<(), ()> {
+fn main() -> Result<()> {
     let input = "\
         let a = 10
         let b = 20
@@ -40,28 +40,14 @@ fn main() -> Result<(), ()> {
     ";
 
     // Compile the input code ^0^
-    let mut compilation_unit = CompilationUnit::compile(input).map_err(|_| ())?;
+    let mut compilation_unit = CompilationUnit::compile(input).map_err(|_err| anyhow!("Compilation failed"))?;
     compilation_unit.run_compiler();
 
-    // GCC codegen
-    let mut c_transpiler = CTranspiler::new(&compilation_unit.global_scope);
-    let transpiled_code = c_transpiler.transpile(&mut compilation_unit.ast);
-    println!("{}", transpiled_code);
-
-    // C file creation
-    let mut c_file = File::create("out.c").unwrap();
-    c_file.write_all(transpiled_code.as_bytes()).unwrap();
-
-    // Compile with clang
-    Command::new("clang")
-        .arg("out.c")
-        .arg("-o")
-        .arg("out")
-        .status()
-        .unwrap();
-
-    // Run compilied binary
-    Command::new("./out").status().unwrap();
-
+    /* // GCC codegen
+    let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);
+    let c_return_value = program.run()?;
+    println!("C program returned {}", c_return_value);
+    */
+    
     Ok(())
 }

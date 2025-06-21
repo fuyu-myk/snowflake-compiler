@@ -1,3 +1,5 @@
+use std::{fmt::{Display, Formatter}, ops::Deref};
+
 use crate::{ast::lexer::Token, compilation_unit::{FunctionIndex, VariableIndex}, text::span::TextSpan, typings::Type};
 use snowflake_compiler::{idx, Idx, IndexVec};
 use visitor::ASTVisitor;
@@ -79,6 +81,16 @@ impl Ast {
         }
     }
 
+    pub fn set_function(&mut self, expr_id: ExpressionId, fx_idx: FunctionIndex) {
+        let expr = self.query_expression_mut(expr_id);
+        match &mut expr.kind {
+            ExpressionKind::Call(call_expr) => {
+                call_expr.fx_idx = fx_idx;
+            }
+            _ => unreachable!("Unable to set function of non-call expression"),
+        }
+    }
+
     pub fn set_type(&mut self, expr_id: ExpressionId, ty: Type) {
         let expr = &mut self.expressions[expr_id];
         expr.ty = ty;
@@ -97,11 +109,11 @@ impl Ast {
         self.statement_from_kind(StatementKind::Expression(expr_id))
     }
 
-    pub fn let_statement(&mut self, identifier: Token, expr_id: ExpressionId, type_annotation: Option<StaticTypeAnnotation>) -> &Statement {
-        self.statement_from_kind(StatementKind::Let(LetStatement { identifier, initialiser: expr_id, type_annotation, variable_index: VariableIndex::new(0) }))
+    pub fn let_statement(&mut self, identifier: Token, initialiser: ExpressionId, type_annotation: Option<StaticTypeAnnotation>) -> &Statement {
+        self.statement_from_kind(StatementKind::Let(LetStatement { identifier, initialiser, type_annotation, variable_index: VariableIndex::new(0) }))
     }
 
-    pub fn if_expression(&mut self, if_keyword: Token, condition: ExpressionId, then_branch: ExpressionId, else_statement: Option<ElseBranch>) -> &Expression {
+    pub fn if_expression(&mut self, if_keyword: Token, condition: ExpressionId, then_branch: Body, else_statement: Option<ElseBranch>) -> &Expression {
         self.expression_from_kind(ExpressionKind::If(IfExpression { if_keyword, condition, then_branch, else_branch: else_statement }))
     }
 
@@ -109,7 +121,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace }))
     }
 
-    pub fn while_statement(&mut self, while_keyword: Token, condition: ExpressionId, body: ExpressionId) -> &Statement {
+    pub fn while_statement(&mut self, while_keyword: Token, condition: ExpressionId, body: Body) -> &Statement {
         self.statement_from_kind(StatementKind::While(WhileStatement { while_keyword, condition, body }))
     }
 
@@ -154,8 +166,8 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }))
     }
 
-    pub fn call_expression(&mut self, callee: Token, left_paren:Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren }))
+    pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() }))
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
@@ -171,7 +183,7 @@ impl Ast {
         &self.items[id]
     }
 
-    pub fn func_item(&mut self, fx_keyword: Token, identifier: Token, parameters: Vec<FxDeclarationParams>, body: ExpressionId, return_type: Option<FxReturnType>, index: FunctionIndex) -> &Item {
+    pub fn func_item(&mut self, fx_keyword: Token, identifier: Token, parameters: Vec<FxDeclarationParams>, body: Body, return_type: Option<FxReturnType>, index: FunctionIndex) -> &Item {
         self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }))
     }
 
@@ -215,6 +227,51 @@ pub enum StatementKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct Body {
+    pub open_brace: Token,
+    pub statements: Vec<StatementId>,
+    pub close_brace: Token,
+}
+
+impl Body {
+    pub fn new(open_brace: Token, statements: Vec<StatementId>, close_brace: Token) -> Self {
+        Self { open_brace, statements, close_brace }
+    }
+
+    pub fn span(&self, ast: &Ast) -> TextSpan {
+        TextSpan::combine(
+            self.statements.iter().map(|statement| ast.query_statement(*statement).span(ast)
+            ).collect::<Vec<TextSpan>>()
+        )
+    }
+
+    pub fn last_statement_type(&self, ast: &Ast) -> Option<Type> {
+        match self.statements.last() {
+            Some(statement) => {
+                let statement = ast.query_statement(*statement);
+                match &statement.kind {
+                    StatementKind::Expression(expr_id) => Some(ast.query_expression(*expr_id).ty.clone()),
+                    _ => None,
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn type_or_void(&self, ast: &Ast) -> Type {
+        self.last_statement_type(ast).unwrap_or(Type::Void)
+    }
+}
+
+impl Deref for Body {
+    type Target = Vec<StatementId>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.statements
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub return_keyword: Token,
     pub return_value: Option<ExpressionId>,
@@ -255,7 +312,7 @@ pub struct FxDeclaration {
     pub fx_keyword: Token,
     pub identifier: Token,
     pub parameters: Vec<FxDeclarationParams>,
-    pub body: ExpressionId,
+    pub body: Body,
     pub return_type: Option<FxReturnType>,
     pub index: FunctionIndex,
 }
@@ -264,7 +321,7 @@ pub struct FxDeclaration {
 pub struct WhileStatement {
     pub while_keyword: Token,
     pub condition: ExpressionId,
-    pub body: ExpressionId,
+    pub body: Body,
 }
 
 #[derive(Debug, Clone)]
@@ -274,15 +331,28 @@ pub struct BlockExpression {
     pub right_brace: Token,
 }
 
+impl BlockExpression {
+    pub fn returning_expression(&self, ast: &Ast) -> Option<ExpressionId> {
+        if let Some(last_statement) = self.statements.last() {
+            let statement = ast.query_statement(*last_statement);
+
+            if let StatementKind::Expression(expr_id) = &statement.kind {
+                return Some(*expr_id);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ElseBranch {
     pub else_keyword: Token,
-    pub else_expression: ExpressionId,
+    pub body: Body,
 }
 
 impl ElseBranch {
-    pub fn new(else_keyword: Token, else_expression: ExpressionId) -> Self {
-        ElseBranch { else_keyword, else_expression }
+    pub fn new(else_keyword: Token, body: Body) -> Self {
+        ElseBranch { else_keyword, body }
     }
 }
 
@@ -290,7 +360,7 @@ impl ElseBranch {
 pub struct IfExpression {
     pub if_keyword: Token,
     pub condition: ExpressionId,
-    pub then_branch: ExpressionId,
+    pub then_branch: Body,
     pub else_branch: Option<ElseBranch>,
 }
 
@@ -328,7 +398,7 @@ impl Statement {
             StatementKind::While(while_statement) => {
                 let mut spans = vec![while_statement.while_keyword.span.clone()];
                 spans.push(ast.query_expression(while_statement.condition).span(ast));
-                spans.push(ast.query_expression(while_statement.body).span(ast));
+                spans.push(while_statement.body.span(ast));
                 
                 TextSpan::combine(spans)
             }
@@ -346,39 +416,17 @@ impl Statement {
 
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
-    Number(
-        NumberExpression
-    ),
-    Binary(
-        BinaryExpression
-    ),
-    Unary(
-        UnaryExpression
-    ),
-    Parenthesised(
-        ParenExpression
-    ),
-    Variable(
-        VarExpression
-    ),
-    Assignment(
-        AssignExpression
-    ),
-    Boolean(
-        BoolExpression
-    ),
-    Call(
-        CallExpression
-    ),
-    If(
-        IfExpression
-    ),
-    Block(
-        BlockExpression
-    ),
-    Error(
-        TextSpan
-    )
+    Number(NumberExpression),
+    Binary(BinaryExpression),
+    Unary(UnaryExpression),
+    Parenthesised(ParenExpression),
+    Variable(VarExpression),
+    Assignment(AssignExpression),
+    Boolean(BoolExpression),
+    Call(CallExpression),
+    If(IfExpression),
+    Block(BlockExpression),
+    Error(TextSpan),
 }
 
 #[derive(Debug, Clone)]
@@ -387,6 +435,7 @@ pub struct CallExpression {
     pub left_paren: Token,
     pub arguments: Vec<ExpressionId>,
     pub right_paren: Token,
+    pub fx_idx: FunctionIndex,
 }
 
 impl CallExpression {
@@ -409,10 +458,19 @@ pub struct AssignExpression {
     pub variable_index: VariableIndex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnaryOpKind {
     Negation, // unary minus
     BitwiseNot, // ~
+}
+
+impl Display for UnaryOpKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            UnaryOpKind::Negation => write!(f, "-"),
+            UnaryOpKind::BitwiseNot => write!(f, "~"),
+        };
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -445,7 +503,7 @@ impl VarExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum BinaryOpKind {
     // arithmentic
     Plus,
@@ -453,6 +511,7 @@ pub enum BinaryOpKind {
     Multiply,
     Divide,
     Power,
+    Modulo,
     // bitwise
     BitwiseAnd, // &
     BitwiseOr,  // |
@@ -464,6 +523,28 @@ pub enum BinaryOpKind {
     GreaterThan,
     LessThanOrEqual,
     GreaterThanOrEqual,
+}
+
+impl Display for BinaryOpKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            BinaryOpKind::Plus => write!(f, "+"),
+            BinaryOpKind::Minus => write!(f, "-"),
+            BinaryOpKind::Multiply => write!(f, "*"),
+            BinaryOpKind::Divide => write!(f, "/"),
+            BinaryOpKind::Power => write!(f, "**"),
+            BinaryOpKind::Modulo => write!(f, "%"),
+            BinaryOpKind::BitwiseAnd => write!(f, "&"),
+            BinaryOpKind::BitwiseOr => write!(f, "|"),
+            BinaryOpKind::BitwiseXor => write!(f, "^"),
+            BinaryOpKind::Equals => write!(f, "=="),
+            BinaryOpKind::NotEquals => write!(f, "!="),
+            BinaryOpKind::LessThan => write!(f, "<"),
+            BinaryOpKind::GreaterThan => write!(f, ">"),
+            BinaryOpKind::LessThanOrEqual => write!(f, "<="),
+            BinaryOpKind::GreaterThanOrEqual => write!(f, ">="),
+        };
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -494,6 +575,7 @@ impl BinaryOp {
             BinaryOpKind::Power => 20,
             BinaryOpKind::Multiply => 19,
             BinaryOpKind::Divide => 19,
+            BinaryOpKind::Modulo => 19,
             BinaryOpKind::Plus => 18,
             BinaryOpKind::Minus => 18,
             BinaryOpKind::BitwiseAnd => 17,
@@ -589,13 +671,13 @@ impl Expression {
             ExpressionKind::If(expr) => {
                 let if_span = expr.if_keyword.span.clone();
                 let condition = ast.query_expression(expr.condition).span(ast);
-                let then_branch = ast.query_expression(expr.then_branch).span(ast);
+                let then_branch = expr.then_branch.span(ast);
                 let mut spans = vec![if_span, condition, then_branch];
 
                 if let Some(else_branch) = &expr.else_branch {
                     let else_span = else_branch.else_keyword.span.clone();
                     spans.push(else_span);
-                    spans.push(ast.query_expression(else_branch.else_expression).span(ast));
+                    spans.push(else_branch.body.span(ast));
                 }
 
                 TextSpan::combine(spans)
@@ -678,56 +760,56 @@ mod tests {
     }
 
     impl ASTVisitor for ASTVerifier {
-        fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
+        fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
             self.actual.push(TestASTNode::Let);
             self.visit_expression(ast, let_statement.initialiser);
         }
 
-        fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression) {
+        fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Variable(variable_expression.identifier().to_string()));
         }
 
-        fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression) {
+        fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Number(number.number));
         }
 
-        fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan) {
+        fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
             // do nothing
         }
 
-        fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression:&ParenExpression, expr: &Expression) {
+        fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression:&ParenExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Parenthesised);
             self.visit_expression(ast, parenthesised_expression.expression);
         }
 
-        fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, expr: &Expression) {
+        fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Binary);
             self.visit_expression(ast, binary_expression.left);
             self.visit_expression(ast, binary_expression.right);
         }
 
-        fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression) {
+        fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Unary);
             self.visit_expression(ast, unary_expression.operand);
         }
 
-        fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, expr: &Expression) {
+        fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::If);
             self.visit_expression(ast, if_statement.condition);
-            self.visit_expression(ast, if_statement.then_branch);
+            self.visit_body(ast, &if_statement.then_branch);
 
             if let Some(else_branch) = &if_statement.else_branch {
                 self.actual.push(TestASTNode::Else);
                 
-                self.visit_expression(ast, else_branch.else_expression);
+                self.visit_body(ast, &else_branch.body);
             }
         }
 
-        fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression) {
+        fn visit_boolean_expression(&mut self, _ast: &mut Ast, boolean: &BoolExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Boolean(boolean.value));
         }
 
-        fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &BlockExpression, expr: &Expression) {
+        fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &BlockExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Block);
 
             for statement in &block_statement.statements {
@@ -735,7 +817,7 @@ mod tests {
             }
         }
 
-        fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, expr: &Expression) {
+        fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Assignment);
             self.visit_expression(ast, assignment_expression.expression);
         }
@@ -743,12 +825,14 @@ mod tests {
         fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
             self.actual.push(TestASTNode::While);
             self.visit_expression(ast, while_statement.condition);
-            self.visit_expression(ast, while_statement.body);
+            self.visit_body(ast, &while_statement.body);
         }
 
-        fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId) {
+        fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemId) {
             self.actual.push(TestASTNode::Function);
-            self.visit_item(ast, item_id);
+            for statement in fx_decl.body.iter() {
+                self.visit_statement(ast, *statement);
+            }
         }
 
         fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
@@ -758,7 +842,7 @@ mod tests {
             }
         }
 
-        fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
+        fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Call);
             for argument in &call_expression.arguments {
                 self.visit_expression(ast, *argument);

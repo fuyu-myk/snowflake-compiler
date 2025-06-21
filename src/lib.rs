@@ -18,9 +18,18 @@ macro_rules! idx {
     };
 }
 
-pub trait Idx {
+pub trait Idx: Copy + Clone + Sized {
     fn as_index(&self) -> usize;
+
     fn new(index: usize) -> Self;
+
+    fn unreachable() -> Self {
+        Self::new(usize::MAX)
+    }
+
+    fn first() -> Self {
+        Self::new(0)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

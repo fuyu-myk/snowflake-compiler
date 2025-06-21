@@ -1,6 +1,6 @@
 use snowflake_compiler::Idx;
 
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BoolExpression, CallExpression, Expression, ExpressionId, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, typings::Type};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
 use std::{collections::HashMap};
 
 
@@ -121,11 +121,11 @@ impl <'a> ASTEvaluator<'a> {
 }
 
 impl <'a> ASTVisitor for ASTEvaluator<'a> {
-    fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression) {
+    fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
         self.last_value = Some(Value::Number(number.number));
     }
 
-    fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expr: &BinaryExpression, expr: &Expression) {
+    fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expr: &BinaryExpression, _expr: &Expression) {
         self.visit_expression(ast, binary_expr.left);
         let left = self.expect_last_value();
 
@@ -138,6 +138,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             BinaryOpKind::Minus => Value::Number(left.expect_number() - right.expect_number()),
             BinaryOpKind::Multiply => Value::Number(left.expect_number() * right.expect_number()),
             BinaryOpKind::Divide => Value::Number(left.expect_number() / right.expect_number()),
+            BinaryOpKind::Modulo => Value::Number(left.expect_number() % right.expect_number()),
             BinaryOpKind::Power => Value::Number(left.expect_number().pow(right.expect_number() as u32)),
 
             // bitwise operators
@@ -155,7 +156,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         });
     }
 
-    fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression) {
+    fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, _expr: &Expression) {
         self.visit_expression(ast, unary_expression.operand);
         let operand = self.expect_last_value().expect_number();
 
@@ -165,42 +166,59 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         }));
     }
 
-    fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, expr: &Expression) {
+    fn visit_body(&mut self, ast: &mut Ast, body: &Body) {
+        self.push_frame();
+
+        for statement in body.iter() {
+            self.visit_statement(ast, *statement);
+        }
+
+        self.pop_frame();
+    }
+
+    fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, _expr: &Expression) {
         self.push_frame();
         self.visit_expression(ast, if_statement.condition);
 
         if self.expect_last_value().expect_boolean() {
             self.push_frame();
-            self.visit_expression(ast, if_statement.then_branch);
+            for statement in if_statement.then_branch.iter() {
+                self.visit_statement(ast, *statement);
+            }
             self.pop_frame();
         } else if let Some(else_branch) = &if_statement.else_branch {
             self.push_frame();
-            self.visit_expression(ast, else_branch.else_expression);
+            for statement in else_branch.body.iter() {
+                self.visit_statement(ast, *statement);
+            }
             self.pop_frame();
         }
         self.pop_frame();
     }
 
-    fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
+    fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
         self.visit_expression(ast, let_statement.initialiser);
         self.frames.insert(let_statement.variable_index, self.expect_last_value());
     }
 
-    fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, expr: &Expression) {
+    fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
         self.visit_expression(ast, parenthesised_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression) {
+    fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
         let identifier = &variable_expression.identifier.span.literal;
-        self.last_value = Some(*self.frames.get(&variable_expression.variable_index).expect(format!("Variable {} '{}' not found", variable_expression.variable_index.as_index(), identifier).as_str()));
+        self.last_value = Some(
+            *self.frames.get(&variable_expression.variable_index)
+            .expect(format!("Variable {} '{}' not found", variable_expression.variable_index.as_index(), identifier)
+            .as_str()));
     }
 
-    fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, expr: &Expression) {
+    fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
         self.visit_expression(ast, assignment_expression.expression);
         self.frames.update(assignment_expression.variable_index, self.last_value.unwrap());
     }
 
-    fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression) {
+    fn visit_boolean_expression(&mut self, _ast: &mut Ast, boolean: &BoolExpression, _expr: &Expression) {
         self.last_value = Some(Value::Boolean(boolean.value));
     }
 
@@ -209,13 +227,13 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.visit_expression(ast, while_statement.condition);
 
         while self.expect_last_value().expect_boolean() {
-            self.visit_expression(ast, while_statement.body);
+            self.visit_body(ast, &while_statement.body);
             self.visit_expression(ast, while_statement.condition);
         }
         self.pop_frame();
     }
 
-    fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
+    fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, _expr: &Expression) {
         let fx_name = &call_expression.fx_name();
         let function = self.global_scope.lookup_fx(fx_name)
             .map(|f| self.global_scope.functions.get(f))
@@ -232,11 +250,13 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             self.frames.insert(*parameter, *argument);
         }
 
-        self.visit_expression(ast, function.body);
+        for statement in &*function.body {
+            self.visit_statement(ast, *statement);
+        }
         self.pop_frame();
     }
 
-    fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &super::BlockExpression, expr: &Expression) {
+    fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &super::BlockExpression, _expr: &Expression) {
         self.push_frame();
 
         for statement in &block_statement.statements {
@@ -246,10 +266,10 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_expr: &FxDeclaration, item_id: ItemId) {
+    fn visit_fx_decl(&mut self, _ast: &mut Ast, _fx_expr: &FxDeclaration, _item_id: ItemId) {
     }
 
-    fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan) {
+    fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
         panic!("Unable to evaluate error expression")
     }
 }

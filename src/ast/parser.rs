@@ -1,4 +1,4 @@
-use crate::ast::{Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, ElseBranch, Expression, ExpressionId, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, UnaryOp, UnaryOpKind};
+use crate::ast::{Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, UnaryOp, UnaryOpKind};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, GlobalScope};
 use crate::diagnostics::DiagnosticsReportCell;
@@ -44,9 +44,9 @@ impl <'a> Parser<'a> {
         global_scope: &'a mut GlobalScope,
     ) -> Self {
         Self { 
-            tokens: tokens.iter().filter(
-                |token| token.kind != TokenKind::Whitespace
-            ).map(|token| token.clone()).collect(), // filter whitespaces
+            tokens: tokens.iter()
+                .filter(|token| token.kind != TokenKind::Whitespace)
+                .map(|token| token.clone()).collect(), // filter whitespaces
             current: Counter::new(),
             diagnostics_report,
             ast,
@@ -74,18 +74,10 @@ impl <'a> Parser<'a> {
 
     fn parse_statement(&mut self) -> StatementId {
         let statement = match self.current().kind {
-            TokenKind::Let => {
-                self.parse_let_statement().id
-            }
-            TokenKind::While => {
-                self.parse_while_statement().id
-            }
-            TokenKind::Return => {
-                self.parse_return_statement().id
-            }
-            _ => {
-                self.parse_expression_statement().id
-            }
+            TokenKind::Let => self.parse_let_statement().id,
+            TokenKind::While => self.parse_while_statement().id,
+            TokenKind::Return => self.parse_return_statement().id,
+            _ => self.parse_expression_statement().id,
         };
 
         self.consume_if(TokenKind::SemiColon);
@@ -94,14 +86,23 @@ impl <'a> Parser<'a> {
 
     fn parse_item(&mut self) -> &Item {
         return match &self.current().kind {
-            TokenKind::Function => {
-                self.parse_fx_item()
-            }
+            TokenKind::Function => self.parse_fx_item(),
             _ => {
                 let id = self.parse_statement();
                 self.ast.item_from_kind(ItemKind::Statement(id))
             }
         };
+    }
+
+    fn parse_body(&mut self) -> Body {
+        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        let mut body = Vec::new();
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            body.push(self.parse_statement());
+        }
+        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+
+        Body::new(open_brace, body, close_brace)
     }
 
     fn parse_fx_item(&mut self) -> &Item {
@@ -115,16 +116,22 @@ impl <'a> Parser<'a> {
         // params as idx
         let params_idx = parameters.iter().map(|parameter| {
             let ty = resolve_type_from_string(&self.diagnostics_report, &parameter.type_annotation.type_name);
-            self.global_scope.declare_variable(&parameter.identifier.span.literal, ty, false)
+            self.global_scope.declare_variable(&parameter.identifier.span.literal, ty, false, false)
         }).collect();
 
         // parse body
-        let return_type = self.parse_option_return_type();
-        let body = self.parse_expression();
+        let return_type = self.parse_optional_return_type();
+        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        let mut body = Vec::new();
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            body.push(self.parse_statement());
+        }
+        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
 
+        let body = Body::new(open_brace, body.clone(), close_brace);
         let fx_idx_result = self.global_scope.create_function(
             identifier.span.literal.clone(),
-            body,
+            body.clone(),
             params_idx,
             return_type.clone().map(|return_type| resolve_type_from_string(&self.diagnostics_report, &return_type.type_name)).unwrap_or(Type::Void)
         );
@@ -140,7 +147,7 @@ impl <'a> Parser<'a> {
         self.ast.func_item(fx_keyword, identifier, parameters, body, return_type, fx_idx)
     }
 
-    fn parse_option_return_type(&mut self) -> Option<FxReturnType> {
+    fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
         if self.current().kind == TokenKind::Arrow {
             let arrow = self.consume_and_check(TokenKind::Arrow).clone();
             let type_name = self.consume_and_check(TokenKind::Identifier).clone();
@@ -183,7 +190,7 @@ impl <'a> Parser<'a> {
     fn parse_while_statement(&mut self) -> &Statement {
         let while_keyword = self.consume_and_check(TokenKind::While).clone();
         let condition_expr = self.parse_expression();
-        let body = self.parse_expression();
+        let body = self.parse_body();
 
         self.ast.while_statement(while_keyword, condition_expr, body)
     }
@@ -201,7 +208,7 @@ impl <'a> Parser<'a> {
 
     fn parse_if_expression(&mut self, if_keyword: Token) -> &Expression {
         let condition_expr = self.parse_expression(); // parsing condition expression
-        let then = self.parse_expression(); // parsing 'then' statement
+        let then = self.parse_body(); // parsing 'then' statement
         let else_statement = self.parse_optional_else_statement(); // if there is an 'else' statement, parse it
 
         self.ast.if_expression(if_keyword, condition_expr, then, else_statement)
@@ -210,7 +217,7 @@ impl <'a> Parser<'a> {
     fn parse_optional_else_statement(&mut self) -> Option<ElseBranch> {
         if self.current().kind == TokenKind::Else {
             let else_keyword = self.consume_and_check(TokenKind::Else).clone(); // checks for 'else'
-            let else_expression = self.parse_expression(); // parsing 'else' statement
+            let else_expression = self.parse_body(); // parsing 'else' statement
             return Some(ElseBranch::new(else_keyword, else_expression));
         }
 
@@ -316,15 +323,9 @@ impl <'a> Parser<'a> {
         let token = self.current();
 
         let kind = match token.kind {
-            TokenKind::Minus => {
-                Some(UnaryOpKind::Negation)
-            },
-            TokenKind::Tilde => {
-                Some(UnaryOpKind::BitwiseNot)
-            },
-            _ => {
-                None
-            }
+            TokenKind::Minus => Some(UnaryOpKind::Negation),
+            TokenKind::Tilde => Some(UnaryOpKind::BitwiseNot),
+            _ => None,
         };
 
         return kind.map(|kind| UnaryOp::new(kind, token.clone()));
@@ -335,51 +336,25 @@ impl <'a> Parser<'a> {
 
         let kind = match token.kind {
             // arithmetic operators
-            TokenKind::Plus => {
-                Some(BinaryOpKind::Plus)
-            },
-            TokenKind::Minus => {
-                Some(BinaryOpKind::Minus)
-            },
-            TokenKind::Asterisk => {
-                Some(BinaryOpKind::Multiply)
-            },
-            TokenKind::Slash => {
-                Some(BinaryOpKind::Divide)
-            },
-            TokenKind::DoubleAsterisk => {
-                Some(BinaryOpKind::Power)
-            },
+            TokenKind::Plus => Some(BinaryOpKind::Plus),
+            TokenKind::Minus => Some(BinaryOpKind::Minus),
+            TokenKind::Asterisk => Some(BinaryOpKind::Multiply),
+            TokenKind::Slash => Some(BinaryOpKind::Divide),
+            TokenKind::DoubleAsterisk => Some(BinaryOpKind::Power),
+
             // bitwise operators
-            TokenKind::Ampersand => {
-                Some(BinaryOpKind::BitwiseAnd)
-            },
-            TokenKind::Pipe => {
-                Some(BinaryOpKind::BitwiseOr)
-            },
-            TokenKind::Caret => {
-                Some(BinaryOpKind::BitwiseXor)
-            },
+            TokenKind::Ampersand => Some(BinaryOpKind::BitwiseAnd),
+            TokenKind::Pipe => Some(BinaryOpKind::BitwiseOr),
+            TokenKind::Caret => Some(BinaryOpKind::BitwiseXor),
+
             // relational operators
-            TokenKind::EqualsEquals => {
-                Some(BinaryOpKind::Equals)
-            },
-            TokenKind::NotEquals => {
-                Some(BinaryOpKind::NotEquals)
-            },
-            TokenKind::LessThan => {
-                Some(BinaryOpKind::LessThan)
-            },
-            TokenKind::GreaterThan => {
-                Some(BinaryOpKind::GreaterThan)
-            },
-            TokenKind::LessThanOrEqual => {
-                Some(BinaryOpKind::LessThanOrEqual)
-            },
-            TokenKind::GreaterThanOrEqual => {
-                Some(BinaryOpKind::GreaterThanOrEqual)
-            },
-            _ => None
+            TokenKind::EqualsEquals => Some(BinaryOpKind::Equals),
+            TokenKind::NotEquals => Some(BinaryOpKind::NotEquals),
+            TokenKind::LessThan => Some(BinaryOpKind::LessThan),
+            TokenKind::GreaterThan => Some(BinaryOpKind::GreaterThan),
+            TokenKind::LessThanOrEqual => Some(BinaryOpKind::LessThanOrEqual),
+            TokenKind::GreaterThanOrEqual => Some(BinaryOpKind::GreaterThanOrEqual),
+            _ => None,
         };
         return kind.map(|kind| BinaryOp::new(kind, token.clone()));
     }
@@ -388,9 +363,7 @@ impl <'a> Parser<'a> {
         let token = self.consume().clone();
 
         return match token.kind {
-            TokenKind::Number(number) => {
-                self.ast.number_expression(token, number)
-            },
+            TokenKind::Number(number) => self.ast.number_expression(token, number),
             TokenKind::LeftParen => {
                 let left_paren = token;
                 let expr = self.parse_expression(); // because another exp in paren
@@ -408,12 +381,8 @@ impl <'a> Parser<'a> {
                 let value = token.kind == TokenKind::True;
                 self.ast.boolean_expression(token.clone(), value)
             }
-            TokenKind::If => {
-                self.parse_if_expression(token)
-            },
-            TokenKind::OpenBrace => {
-                self.parse_block_expression(token)
-            },
+            TokenKind::If => self.parse_if_expression(token),
+            TokenKind::OpenBrace => self.parse_block_expression(token),
             _ => {
                 self.diagnostics_report.borrow_mut().report_expected_expression(&token);
                 self.ast.error_expression(token.span)
