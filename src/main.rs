@@ -1,4 +1,4 @@
-use crate::{compilation_unit::CompilationUnit};
+use crate::{compilation_unit::CompilationUnit, ir::hir::{HIRBuilder, HIRWriter}};
 
 use anyhow::{anyhow, Result};
 
@@ -8,35 +8,22 @@ mod text;
 mod compilation_unit;
 mod typings;
 mod codegen;
+mod ir;
 
 
 fn main() -> Result<()> {
-    let input = "\
-        let a = 10
-        let b = 20
-        b = b + 20
+    let input = "
+        fx main() -> int {
+            let result = 0;
+            let counter = 10;
 
-        let z = mul(a, a)
-
-        fx mul(a: int, b: int) -> int {
-            let sum = 0
-            while b > 0 {
-                sum = sum + a
-                b = b - 1
+            while (counter > 0) {
+                result = result + 2;
+                counter = counter - 1;
             }
-            return sum
+
+            return result;
         }
-
-        let c = mul(a, b)
-
-        let d = if a == b {
-            10
-        } else {
-            20
-        }
-
-        let e = c + d
-        z
     ";
 
     // Compile the input code ^0^
@@ -47,7 +34,34 @@ fn main() -> Result<()> {
     let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);
     let c_return_value = program.run()?;
     println!("C program returned {}", c_return_value);
+    fx mul(a: int, b: int) -> int {
+            let result = 0;
+            let counter = b;
+
+            while (counter > 0) {
+                result = result + a;
+                counter = counter - 1;
+            }
+
+            return result;
+        }
+
+        fx main() -> int {
+            let a = 23;
+            let b = 86;
+
+            let c = mul(a, b);
+            
+            return c;
     */
-    
+
+    // HIR
+    let hir_builder = HIRBuilder::new();
+    let hir = hir_builder.build(&compilation_unit.ast, &mut compilation_unit.global_scope);
+    let mut hir_output = String::new();
+
+    HIRWriter::write(&mut hir_output, &hir, &compilation_unit.global_scope, 0)?;
+    println!("{}", hir_output); // display HIR output
+
     Ok(())
 }

@@ -1,0 +1,246 @@
+use std::{cell::Cell, collections::HashMap};
+
+use snowflake_compiler::bug_report;
+
+use crate::{ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind}, compilation_unit::{GlobalScope, VariableIndex}, ir::hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, typings::Type};
+
+
+struct Ctx {
+    statements: Vec<HIRStatement>,
+}
+
+impl Ctx {
+    fn new() -> Self {
+        Self { statements: vec![] }
+    }
+
+    fn with_capacity(capacity: usize) -> Self {
+        Self { statements: Vec::with_capacity(capacity) }
+    }
+}
+
+pub struct HIRBuilder {
+    hir: HIR,
+    temp_var_count: Cell<usize>,
+}
+
+impl HIRBuilder {
+    pub fn new() -> Self {
+        Self {
+            hir: HIR { functions: HashMap::new() },
+            temp_var_count: Cell::new(0)
+        }
+    }
+
+    pub fn build(mut self, ast: &Ast, global_scope: &mut GlobalScope) -> HIR {
+        for item in ast.items.iter() {
+            match &item.kind {
+                ItemKind::Statement(_) => unimplemented!(),
+                ItemKind::Function(fx_decl) => {
+                    let mut ctx = Ctx::new();
+                    for stmt_id in fx_decl.body.iter() {
+                        self.build_statement(*stmt_id, ast, global_scope, &mut ctx);
+                    }
+                    self.hir.functions.insert(fx_decl.index, ctx.statements);
+                }
+            }
+        }
+
+        self.hir
+    }
+
+    fn build_statement(&self, stmt_id: StatementId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx) {
+        let statement = ast.query_statement(stmt_id);
+        let kind = match &statement.kind {
+            StatementKind::Expression(expr) => {
+                let expr = self.build_expression(*expr, ast, global_scope, ctx);
+                HIRStmtKind::Expression { expr }
+            }
+            StatementKind::Let(let_statement) => {
+                let expr = self.build_expression(let_statement.initialiser, ast, global_scope, ctx);
+                HIRStmtKind::Declaration { var_idx: let_statement.variable_index, init: Some(expr) }
+            }
+            StatementKind::While(while_statement) => {
+                let condition = self.build_expression(while_statement.condition, ast, global_scope, ctx);
+                let mut body_ctx = Ctx::with_capacity(while_statement.body.len());
+
+                for stmt_id in while_statement.body.iter() {
+                    self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx);
+                }
+
+                let body = vec![
+                    HIRStatement {
+                        kind: HIRStmtKind::If {
+                            condition,
+                            then_block: body_ctx.statements,
+                            else_block: vec![HIRStatement { kind: HIRStmtKind::Break }]
+                        }
+                    }
+                ];
+
+                HIRStmtKind::Loop { body }
+            }
+            StatementKind::Return(return_statement) => {
+                let expr = return_statement.return_value.as_ref().copied()
+                    .map(|expr_id| self.build_expression(expr_id, ast, global_scope, ctx))
+                    .unwrap_or(HIRExpression {
+                        kind: HIRExprKind::Unit,
+                        ty: Type::Void,
+                    });
+                
+                HIRStmtKind::Return { expr }
+            }
+        };
+
+        ctx.statements.push(HIRStatement { kind });
+    }
+
+    fn build_expression(&self, expr_id: ExpressionId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx) -> HIRExpression {
+        let expr = ast.query_expression(expr_id);
+        let kind = match &expr.kind {
+            ExpressionKind::Number(number_expr) => HIRExprKind::Number(number_expr.number),
+            ExpressionKind::Boolean(bool_expr) => HIRExprKind::Bool(bool_expr.value),
+            ExpressionKind::Binary(bin_expr) => {
+                let left = self.build_expression(bin_expr.left, ast, global_scope, ctx);
+                let right = self.build_expression(bin_expr.right, ast, global_scope, ctx);
+
+                HIRExprKind::Binary {
+                    operator: bin_expr.operator.kind.clone(),
+                    left: Box::new(left),
+                    right: Box::new(right)
+                }
+            },
+            ExpressionKind::Unary(un_expr) => {
+                let operand = self.build_expression(un_expr.operand, ast, global_scope, ctx);
+
+                HIRExprKind::Unary {
+                    operator: un_expr.operator.kind.clone(),
+                    operand: Box::new(operand)
+                }
+            },
+            ExpressionKind::Parenthesised(paren_expr) => {
+                self.build_expression(paren_expr.expression, ast, global_scope, ctx).kind
+            },
+            ExpressionKind::Variable(var_expr) => HIRExprKind::Var(var_expr.variable_index),
+            ExpressionKind::Assignment(assign_expr) => {
+                let statement = HIRStatement {
+                    kind: HIRStmtKind::Assignment {
+                        var_idx: assign_expr.variable_index,
+                        expr: self.build_expression(assign_expr.expression, ast, global_scope, ctx),
+                    }
+                };
+
+                ctx.statements.push(statement);
+                HIRExprKind::Var(assign_expr.variable_index)
+            },
+            ExpressionKind::If(if_expr) => {
+                let condition = self.build_expression(if_expr.condition, ast, global_scope, ctx);
+                let mut then_ctx = Ctx::new();
+
+                for stmt_id in &if_expr.then_branch.statements {
+                    self.build_statement(*stmt_id, ast, global_scope, &mut then_ctx);
+                }
+
+                let mut else_ctx = Ctx::new();
+                if let Some(else_branch) = &if_expr.else_branch {
+                    for stmt_id in else_branch.body.iter() {
+                        self.build_statement(*stmt_id, ast, global_scope, &mut else_ctx);
+                    }
+                }
+
+                let expr_kind = if matches!(expr.ty, Type::Void) {
+                    HIRExprKind::Unit
+                } else {
+                    let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
+                    ctx.statements.push(HIRStatement {
+                        kind: HIRStmtKind::Declaration { var_idx: temp_var_idx, init: None }
+                    });
+
+                    let then_expr = match then_ctx.statements.last_mut().unwrap().kind {
+                        HIRStmtKind::Expression { ref mut expr } => expr.clone(),
+                        _ => bug_report!("Last statement in then branch of if expression is not an expression"),
+                    };
+
+                    let else_expr = match else_ctx.statements.last_mut().unwrap().kind {
+                        HIRStmtKind::Expression { ref mut expr } => expr.clone(),
+                        _ => bug_report!("Last statement in else branch of if expression is not an expression"),
+                    };
+
+                    *then_ctx.statements.last_mut().unwrap() = HIRStatement {
+                        kind: HIRStmtKind::Assignment { var_idx: temp_var_idx, expr: then_expr }
+                    };
+                    *else_ctx.statements.last_mut().unwrap() = HIRStatement {
+                        kind: HIRStmtKind::Assignment { var_idx: temp_var_idx, expr: else_expr }
+                    };
+
+                    HIRExprKind::Var(temp_var_idx)
+                };
+
+                ctx.statements.push(HIRStatement {
+                    kind: HIRStmtKind::If {
+                        condition,
+                        then_block: then_ctx.statements,
+                        else_block: else_ctx.statements
+                    }
+                });
+
+                expr_kind
+            },
+            ExpressionKind::Block(block_expr) => {
+                let mut block_ctx = Ctx::new();
+
+                for stmt_id in block_expr.statements.iter() {
+                    self.build_statement(*stmt_id, ast, global_scope, &mut block_ctx);
+                }
+
+                let expr_kind = if matches!(expr.ty, Type::Void) {
+                    HIRExprKind::Unit
+                } else {
+                    let last_stmt = block_ctx.statements.last_mut().unwrap();
+                    let expr = match &last_stmt.kind {
+                        HIRStmtKind::Expression { expr } => expr.clone(),
+                        _ => bug_report!("Last statement in block expression is not an expression")
+                    };
+                    let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
+                    ctx.statements.push(HIRStatement {
+                        kind: HIRStmtKind::Declaration { var_idx: temp_var_idx, init: None },
+                    });
+
+                    *last_stmt = HIRStatement {
+                        kind: HIRStmtKind::Assignment { var_idx: temp_var_idx, expr: expr },
+                    };
+
+                    HIRExprKind::Var(temp_var_idx)
+                };
+
+                ctx.statements.push(HIRStatement {
+                    kind: HIRStmtKind::Block { body: block_ctx.statements }
+                });
+
+                expr_kind
+            },
+            ExpressionKind::Call(call_expr) => {
+                let args = call_expr.arguments.iter()
+                    .map(|expr_id| self.build_expression(*expr_id, ast, global_scope, ctx))
+                    .collect();
+
+
+                HIRExprKind::Call { fx_idx: call_expr.fx_idx, args: args }
+            },
+            ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
+        };
+
+        HIRExpression { kind: kind, ty: expr.ty.clone() }
+    }
+
+    fn declare_next_temp_var(&self, global_scope: &mut GlobalScope, ty: Type) -> VariableIndex {
+        global_scope.declare_variable(&self.next_temp_var(), ty, false, false)
+    }
+
+    fn next_temp_var(&self) -> String {
+        let temp_var_idx = self.temp_var_count.get();
+        self.temp_var_count.set(temp_var_idx + 1);
+
+        format!("%{}", temp_var_idx)
+    }
+}

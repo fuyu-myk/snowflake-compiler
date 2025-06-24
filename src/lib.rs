@@ -18,6 +18,13 @@ macro_rules! idx {
     };
 }
 
+#[macro_export]
+macro_rules! bug_report {
+    ($( $arg:tt )*) => {
+        panic!("There seems to be a bug with the compiler.\n {}", format_args!($($arg)*));
+    };
+}
+
 pub trait Idx: Copy + Clone + Sized {
     fn as_index(&self) -> usize;
 
