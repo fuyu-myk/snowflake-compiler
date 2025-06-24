@@ -4,7 +4,7 @@ This project documents my journey in learning Rust and subsequently coding a com
 ## Compiler architecture
 Thus far, the current compiler architecture is highlighted below:
 
-`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [C transpiler]
+`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [IR Lowering + optimisations] -> [x86_64 backend]
 
 * A C transpiler backend is used for this compiler for now
 * The final goal will be to adopt an LLVM backend 
@@ -31,6 +31,47 @@ Thus far, the current compiler architecture is highlighted below:
 
 - [x] **C transpiler** [WIP]
 * A basic C transpiler has been implemented as a temporary backend
+
+- [ ] **Intermediate Representation (IR) Lowering**
+* Transformation of IR to lower-level representation
+    * Essentially preparing the IR for efficient backend code generation
+
+    - [x] *High-level IR (HIR)* [completed 24.06.2025]
+    * Removal/change of certain structures to facilitate type and syntax analyses
+        * One such example are loops as shown:
+
+        ```
+        while a > 0 {
+            a = a - 1
+        }
+        ```
+        ```
+        loop {
+            if a > 0 {
+                a = a - 1
+            } else {
+                break
+            }
+        }
+        ```
+
+    - [ ] *Mid-level IR (MIR)*
+    * Based on a control-flow graph (CFG)
+    * No nested expressions
+    * Explicit types
+    * Consists of:
+        * Basic blocks - nodes of the CFG
+        ```
+        bb0: {
+            statement0; // one successor each
+            statement1;
+            ...
+            terminator; // potential multiple successors; always at end of bb
+        }
+        ```
+        * Locals - function arguments, local variables etc.
+        * Places - identifiers of a location in memory
+        * Rvalues - expressions that yield a value
 
 ### Types supported
 * Integers
@@ -139,33 +180,3 @@ Thus far, the current compiler architecture is highlighted below:
     let z: string = "Hello World"
     let a = 10 // type inference => int
     ```  
-
-- [ ] **Intermediate Representation (IR) Lowering**
-* Transformation of IR to lower-level representation
-    * Essentially preparing the IR for efficient backend code generation
-
-    ```
-    let x = 10
-    let y = 20
-
-    if x > y {
-        x = 20
-    } else {
-        x = 10
-    }
-    ...
-    ```
-    ```
-    fx main() {
-        x = 10
-        y = 20
-        gotoIfFalse x > y else
-
-        x = 20
-        goto end
-        else:
-        x = 10
-        end:
-    }
-    ...
-    ```
