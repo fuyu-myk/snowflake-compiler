@@ -54,8 +54,8 @@ pub enum HIRStmtKind {
 
 #[derive(Debug, Clone)]
 pub struct HIRExpression {
-    kind: HIRExprKind,
-    ty: Type,
+    pub kind: HIRExprKind,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]

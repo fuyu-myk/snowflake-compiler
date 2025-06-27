@@ -21,7 +21,7 @@ macro_rules! idx {
 #[macro_export]
 macro_rules! bug_report {
     ($( $arg:tt )*) => {
-        panic!("There seems to be a bug with the compiler.\n {}", format_args!($($arg)*));
+        panic!("There seems to be a bug with the compiler.\n {}", format_args!($($arg)*))
     };
 }
 
@@ -45,7 +45,7 @@ pub struct IndexVec<Index, T> where Index: Idx {
     _marker: std::marker::PhantomData<Index>,
 }
 
-impl <Index, T> IndexVec<Index, T> where Index: Idx {
+impl<Index, T> IndexVec<Index, T> where Index: Idx {
     pub fn new() -> Self {
         Self { vec: vec![], _marker: std::marker::PhantomData }
     }
@@ -55,6 +55,13 @@ impl <Index, T> IndexVec<Index, T> where Index: Idx {
         self.vec.push(value);
 
         return Index::new(next_index);
+    }
+
+    pub fn push_with_index(&mut self, value: impl FnOnce(Index) -> T) -> Index {
+        let next_index = Index::new(self.vec.len());
+        self.vec.push(value(next_index));
+
+        next_index
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
@@ -72,9 +79,13 @@ impl <Index, T> IndexVec<Index, T> where Index: Idx {
     pub fn get(&self, index: Index) -> &T {
         return &self[index];
     }
+
+    pub fn get_mut(&mut self, index: Index) -> &mut T {
+        &mut self[index]
+    }
 }
 
-impl <Index, T> std::ops::Index<Index> for IndexVec<Index, T> where Index: Idx {
+impl<Index: Idx, T> std::ops::Index<Index> for IndexVec<Index, T> {
     type Output = T;
 
     fn index(&self, index: Index) -> &T {
@@ -82,8 +93,32 @@ impl <Index, T> std::ops::Index<Index> for IndexVec<Index, T> where Index: Idx {
     }
 }
 
-impl <Index, T> std::ops::IndexMut<Index> for IndexVec<Index, T> where Index: Idx {
+impl<Index: Idx, T> std::ops::IndexMut<Index> for IndexVec<Index, T> {
     fn index_mut(&mut self, index: Index) -> &mut T {
         return &mut self.vec[index.as_index()]
+    }
+}
+
+impl<I: Idx, T> IndexVec<I, Option<T>> {
+    #[inline]
+    pub fn get_or_panic(&self, index: I) -> &T {
+        self.get(index).as_ref().unwrap_or_else(|| crate::bug_report!("Index {} does not exist", index.as_index()))
+    }
+
+    #[inline]
+    pub fn get_mut_or_panic(&mut self, index: I) -> &mut T {
+        self.get_mut(index).as_mut().unwrap_or_else(|| crate::bug_report!("Index {} does not exist", index.as_index()))
+    }
+
+    #[inline]
+    pub fn indexed_iter_as_option(&self) -> impl Iterator<Item = Option<(I, &T)>> {
+        self.vec.iter().enumerate()
+            .map(|(index, value)| value.as_ref()
+            .map(|value| (I::new(index), value)))
+    }
+
+    #[inline]
+    pub fn remove(&mut self, index: I) -> Option<T> {
+        self.vec[index.as_index()].take()
     }
 }

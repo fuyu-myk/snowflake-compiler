@@ -8,7 +8,7 @@ use crate::text;
 use crate::ast::lexer::{Lexer, Token};
 use crate::ast::parser::Parser;
 use crate::text::span::TextSpan;
-use crate::typings::Type;
+pub use crate::typings::Type;
 
 use std::rc::Rc;
 use std::cell::RefCell;

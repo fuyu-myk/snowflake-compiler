@@ -1,4 +1,6 @@
-use crate::{compilation_unit::CompilationUnit, ir::hir::{HIRBuilder, HIRWriter}};
+use std::{fs::File, io::Write};
+
+use crate::{compilation_unit::CompilationUnit, ir::{hir::{HIRBuilder, HIRWriter}, mir::{MIRBuilder, MIRWriter}}};
 
 use anyhow::{anyhow, Result};
 
@@ -14,15 +16,13 @@ mod ir;
 fn main() -> Result<()> {
     let input = "
         fx main() -> int {
-            let result = 0;
-            let counter = 10;
+            let a = 10;
 
-            while (counter > 0) {
-                result = result + 2;
-                counter = counter - 1;
+            while (a > 0) {
+                a = a - 1;
             }
 
-            return result;
+            return a;
         }
     ";
 
@@ -34,25 +34,6 @@ fn main() -> Result<()> {
     let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);
     let c_return_value = program.run()?;
     println!("C program returned {}", c_return_value);
-    fx mul(a: int, b: int) -> int {
-            let result = 0;
-            let counter = b;
-
-            while (counter > 0) {
-                result = result + a;
-                counter = counter - 1;
-            }
-
-            return result;
-        }
-
-        fx main() -> int {
-            let a = 23;
-            let b = 86;
-
-            let c = mul(a, b);
-            
-            return c;
     */
 
     // HIR
@@ -62,6 +43,17 @@ fn main() -> Result<()> {
 
     HIRWriter::write(&mut hir_output, &hir, &compilation_unit.global_scope, 0)?;
     println!("{}", hir_output); // display HIR output
+
+    // MIR unoptimised
+    let mir_builder = MIRBuilder::new();
+    let mut mir = mir_builder.build(&hir, &compilation_unit.global_scope);
+    let mut mir_output = String::new();
+    let mut mir_graphviz = String::new();
+
+    MIRWriter::write_graphviz(&mut mir_graphviz, &mir)?;
+    File::create("mir.dot")?.write_all(mir_graphviz.as_bytes())?;
+    MIRWriter::write_txt(&mut mir_output, &mir)?;
+    println!("{}", mir_output);
 
     Ok(())
 }
