@@ -55,7 +55,7 @@ Thus far, the current compiler architecture is highlighted below:
         }
         ```
 
-    - [ ] *Mid-level IR (MIR)*
+    - [x] *Mid-level IR (MIR)* [completed 28.04.2025]
     * Based on a control-flow graph (CFG)
     * No nested expressions
     * Explicit types
@@ -70,8 +70,16 @@ Thus far, the current compiler architecture is highlighted below:
         }
         ```
         * Locals - function arguments, local variables etc.
-        * Places - identifiers of a location in memory
-        * Rvalues - expressions that yield a value
+    
+    - [ ] *MIR Optimisations*
+    * Optimisations that aims to enhance the performance and efficiency of the executed code
+    * The optimisations implemented are as follows:
+        * Dead Code Elimination - Eg: removal of unused declared variables
+        * Unreachable Code Elimination - Eg: blocks with no incoming edges are eliminated
+        * Branch Elimination - Removal of unneeded branches
+        * Copy Propagation - Reduces compile time by reducing copying
+        * Constant Folding - Variables that can be computed at compile time are computed
+        * Algebraic Simplification - Using mathematical properties to reduce complexity of expressions in the code
 
 ### Types supported
 * Integers
