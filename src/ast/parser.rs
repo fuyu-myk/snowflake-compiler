@@ -370,10 +370,11 @@ impl <'a> Parser<'a> {
     fn parse_primary_expression(&mut self) -> ExpressionId { // for string literals, numbers, function calls
         let token = self.consume().clone();
 
-        return match token.kind {
-            TokenKind::Number(number) => self.ast.number_expression(token, number),
+        return match &token.kind {
+            TokenKind::Number(number) => self.ast.number_expression(token.clone(), *number),
+            TokenKind::String(value) => self.ast.string_expression(token.clone(), value.clone()),
             TokenKind::LeftParen => {
-                let left_paren = token;
+                let left_paren = token.clone();
                 let expr = self.parse_expression(); // because another exp in paren
                 let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
                 
@@ -381,16 +382,16 @@ impl <'a> Parser<'a> {
             },
             TokenKind::Identifier => {
                 if matches!(self.current().kind, TokenKind::LeftParen) {
-                    return self.parse_call_expression(token);
+                    return self.parse_call_expression(token.clone());
                 }
-                self.ast.variable_expression(token)
+                self.ast.variable_expression(token.clone())
             },
             TokenKind::True | TokenKind::False => {
                 let value = token.kind == TokenKind::True;
                 self.ast.boolean_expression(token.clone(), value)
             }
-            TokenKind::If => self.parse_if_expression(token),
-            TokenKind::OpenBrace => self.parse_block_expression(token),
+            TokenKind::If => self.parse_if_expression(token.clone()),
+            TokenKind::OpenBrace => self.parse_block_expression(token.clone()),
             _ => {
                 self.diagnostics_report.borrow_mut().report_expected_expression(&token);
                 self.ast.error_expression(token.span)

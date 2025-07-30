@@ -181,6 +181,9 @@ impl CCodegen {
             CExpr::Number(number) => {
                 self.write(format!("{}", number.value).as_str());
             }
+            CExpr::String(string) => {
+                self.write(format!("\"{}\"", string).as_str());
+            }
             CExpr::Bool(bool) => {
                 self.write(format!("{}", bool.value).as_str());
             }

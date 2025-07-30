@@ -23,15 +23,32 @@ impl MIRBuilder {
 
         // Building every function
         for (fx_idx, fx_body) in hir.functions.iter() {
-            let fx = global_scope.functions.get(*fx_idx);
-            let function_builder = FunctionBuilder::new(Function {
-                name: fx.name.clone(),
-                params: fx.parameters.clone(),
-                basic_blocks: Vec::new(),
-                instructions: IndexVec::new(),
-                locals: HashMap::new(),
-                return_type: fx.return_type.clone().into()
-            });
+            // Check if this function exists in global scope (skip synthetic functions)
+            let fx_opt = global_scope.functions.indexed_iter()
+                .find(|(idx, _)| *idx == *fx_idx)
+                .map(|(_, fx)| fx);
+            
+            let function_builder = if let Some(fx) = fx_opt {
+                // Regular function with declaration
+                FunctionBuilder::new(Function {
+                    name: fx.name.clone(),
+                    params: fx.parameters.clone(),
+                    basic_blocks: Vec::new(),
+                    instructions: IndexVec::new(),
+                    locals: HashMap::new(),
+                    return_type: fx.return_type.clone().into()
+                })
+            } else {
+                // Synthetic function (e.g., global init), create a default one
+                FunctionBuilder::new(Function {
+                    name: "__global_init".to_string(),
+                    params: Vec::new(),
+                    basic_blocks: Vec::new(),
+                    instructions: IndexVec::new(),
+                    locals: HashMap::new(),
+                    return_type: crate::ir::mir::Type::Void
+                })
+            };
 
             let (fx, to_be_resolved) = function_builder.build(&mut self.mir.basic_blocks, global_scope, fx_body);
             let mir_fx_idx = self.mir.functions.push(fx);
@@ -326,6 +343,7 @@ impl FunctionBuilder {
     pub fn build_expr(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, expr: &HIRExpression) -> Value {
         match &expr.kind {
             HIRExprKind::Number(value) => Value::ConstantInt(*value as i32),
+            HIRExprKind::String(value) => Value::ConstantString(value.clone()),
             HIRExprKind::Bool(value) => Value::ConstantInt(if *value { 1 } else { 0 }),
             HIRExprKind::Unit => Value::Void,
             HIRExprKind::Var(var_idx) => {

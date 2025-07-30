@@ -86,7 +86,7 @@ Thus far, the current compiler architecture is highlighted below:
 ### Types supported
 * Integers
 * Boolean
-* TODO: Strings
+* Strings
 
 ### Operators
 - [x] **Basic arithmetic support** [completed 05.06.2025]

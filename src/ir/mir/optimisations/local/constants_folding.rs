@@ -28,6 +28,7 @@ impl ComputedConstants {
     fn get_constant_value(&self, value: &Value) -> Option<Value> {
         match value {
             Value::ConstantInt(value) => Some(Value::ConstantInt(*value)),
+            Value::ConstantString(value) => Some(Value::ConstantString(value.clone())),
             Value::InstructionRef(idx) => match self.0.get(idx) {
                 Some(value) => self.get_constant_value(value),
                 None => None,
@@ -95,7 +96,7 @@ impl MIRPassLocal for ConstantsFolding {
                         let new_value = Value::ConstantInt(result);
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
-                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty);
+                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
                     }
                 }
                 InstructionKind::Unary { operand, operator } => {
@@ -109,7 +110,7 @@ impl MIRPassLocal for ConstantsFolding {
                         let new_value = Value::ConstantInt(result);
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
-                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty);
+                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
                     }
                 }
                 InstructionKind::Call { args, .. } => {

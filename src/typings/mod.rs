@@ -5,6 +5,7 @@ use std::fmt::{Display, Formatter, Result};
 pub enum Type {
     Int,
     Bool,
+    String,
     Void,
     Unresolved, // used as a default
     Error,
@@ -15,6 +16,7 @@ impl Display for Type {
         let type_name = match self {
             Type::Int => "int",
             Type::Bool => "bool",
+            Type::String => "string",
             Type::Void => "void",
             Type::Unresolved => "unresolved",
             Type::Error => "???",

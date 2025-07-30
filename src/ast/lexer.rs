@@ -7,6 +7,7 @@ use crate::text::span::TextSpan;
 pub enum TokenKind {
     // literals
     Number(i64),
+    String(String),
 
     // classic arithmetic operators
     Plus,
@@ -51,6 +52,7 @@ pub enum TokenKind {
     Colon,
     Arrow,
     SemiColon,
+    DoubleQuote,
 
     // other
     Whitespace,
@@ -64,6 +66,7 @@ impl Display for TokenKind {
         match self {
             // literals
             TokenKind::Number(_) => write!(f, "Number"),
+            TokenKind::String(_) => write!(f, "String"),
 
             // classic arithmetic operators
             TokenKind::Plus => write!(f, "+"),
@@ -108,6 +111,7 @@ impl Display for TokenKind {
             TokenKind::Colon => write!(f, "Colon"),
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::SemiColon => write!(f, "Semicolon"),
+            TokenKind::DoubleQuote => write!(f, "\""),
 
             // other
             TokenKind::Whitespace => write!(f, "Whitespace"),
@@ -163,7 +167,12 @@ impl <'a> Lexer<'a> {
             if Self::is_number_start(&c) {
                 let number: i64 = self.consume_number();
                 kind = TokenKind::Number(number);
-            } else if Self::is_whitespace(&c) { // Handling whitespaces, else it'd be 'Bad token'
+            } else if c == '"' {
+                self.consume();
+                let string_value = self.consume_string_literal();
+                self.consume();
+                kind = TokenKind::String(string_value);
+            } else if Self::is_whitespace(&c) {
                 self.consume();
                 kind = TokenKind::Whitespace;
             } else if Self::is_identifier_start(&c) {
@@ -205,6 +214,38 @@ impl <'a> Lexer<'a> {
         number
     }
 
+    fn consume_string_literal(&mut self) -> String {
+        let mut string_value = String::new();
+        while let Some(c) = self.current_char() {
+            if c == '"' {
+                break;
+            }
+            if c == '\\' {
+                // Handle escape sequences
+                self.consume();
+                if let Some(escaped_char) = self.current_char() {
+                    match escaped_char {
+                        'n' => string_value.push('\n'),
+                        't' => string_value.push('\t'),
+                        'r' => string_value.push('\r'),
+                        '\\' => string_value.push('\\'),
+                        '"' => string_value.push('"'),
+                        _ => {
+                            // For unrecognized escape sequences, just include both characters
+                            string_value.push('\\');
+                            string_value.push(escaped_char);
+                        }
+                    }
+                    self.consume();
+                }
+            } else {
+                string_value.push(c);
+                self.consume();
+            }
+        }
+        string_value
+    }
+
     fn consume_punctuation(&mut self) -> TokenKind {
         let c = self.consume().unwrap();
 
@@ -228,6 +269,7 @@ impl <'a> Lexer<'a> {
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             ';' => TokenKind::SemiColon,
+            '"' => TokenKind::DoubleQuote,
             _ => TokenKind::Bad,
         }
     }

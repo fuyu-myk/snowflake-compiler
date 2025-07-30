@@ -66,10 +66,11 @@ fn update(&mut self, index: VariableIndex, value: Value) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(i64),
     Boolean(bool),
+    String(String),
     Function(FunctionIndex),
 }
 
@@ -115,8 +116,8 @@ impl <'a> ASTEvaluator<'a> {
         self.frames.pop();
     }
 
-    fn expect_last_value(&self) -> Value {
-        *self.last_value.as_ref().expect("Expected last value to be set")
+    fn expect_last_value(&self) -> &Value {
+        self.last_value.as_ref().expect("Expected last value to be set")
     }
 }
 
@@ -125,12 +126,16 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.last_value = Some(Value::Number(number.number));
     }
 
+    fn visit_string_expression(&mut self, _ast: &mut Ast, string: &super::StringExpression, _expr: &Expression) {
+        self.last_value = Some(Value::String(string.value.clone()));
+    }
+
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expr: &BinaryExpression, _expr: &Expression) {
         self.visit_expression(ast, binary_expr.left);
-        let left = self.expect_last_value();
+        let left = self.expect_last_value().clone();
 
         self.visit_expression(ast, binary_expr.right);
-        let right = self.expect_last_value();
+        let right = self.expect_last_value().clone();
 
         self.last_value = Some(match binary_expr.operator.kind {
             // classic arithmetic operators
@@ -200,7 +205,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
         self.visit_expression(ast, let_statement.initialiser);
-        self.frames.insert(let_statement.variable_index, self.expect_last_value());
+        self.frames.insert(let_statement.variable_index, self.expect_last_value().clone());
     }
 
     fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
@@ -210,14 +215,15 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
     fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
         let identifier = &variable_expression.identifier.span.literal;
         self.last_value = Some(
-            *self.frames.get(&variable_expression.variable_index)
+            self.frames.get(&variable_expression.variable_index)
             .expect(format!("Variable {} '{}' not found", variable_expression.variable_index.as_index(), identifier)
-            .as_str()));
+            .as_str())
+            .clone());
     }
 
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
         self.visit_expression(ast, assignment_expression.expression);
-        self.frames.update(assignment_expression.variable_index, self.last_value.unwrap());
+        self.frames.update(assignment_expression.variable_index, self.last_value.clone().unwrap());
     }
 
     fn visit_boolean_expression(&mut self, _ast: &mut Ast, boolean: &BoolExpression, _expr: &Expression) {
@@ -244,12 +250,12 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
         for argument in &call_expression.arguments {
             self.visit_expression(ast, *argument);
-            arguments.push(self.last_value.unwrap());
+            arguments.push(self.last_value.clone().unwrap());
         }
 
         self.push_frame();
         for (argument, parameter) in arguments.iter().zip(function.parameters.iter()) {
-            self.frames.insert(*parameter, *argument);
+            self.frames.insert(*parameter, argument.clone());
         }
 
         for statement in &*function.body {

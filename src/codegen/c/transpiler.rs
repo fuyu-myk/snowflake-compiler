@@ -116,6 +116,10 @@ impl <'a> CTranspiler<'a> {
                 None, 
                 CExpr::Number(CNumber { value: number.number }),
             ),
+            ExpressionKind::String(string) => (
+                None,
+                CExpr::String(string.value.clone()),
+            ),
             ExpressionKind::Boolean(bool_expr) => (
                 None,
                 CExpr::Bool(CBool { value: bool_expr.value }),
@@ -285,6 +289,7 @@ impl <'a> CTranspiler<'a> {
     fn transpile_type(ty: &Type) -> String {
         return match ty {
             Type::Int => "int".to_string(),
+            Type::String => "char*".to_string(),
             Type::Bool => "int".to_string(),
             Type::Void => "void".to_string(),
             Type::Unresolved => panic!("Unresolved type"),
@@ -326,6 +331,7 @@ impl <'a> CTranspiler<'a> {
 
         return match &expr.kind {
             ExpressionKind::Number(_) => true,
+            ExpressionKind::String(_) => true,
             ExpressionKind::Boolean(_) => true,
             ExpressionKind::Unary(_) => self.is_valid_r_value(ast, expr.id),
             ExpressionKind::Variable(_) => true,

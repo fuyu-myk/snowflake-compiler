@@ -17,6 +17,7 @@ impl CAst {
 #[derive(Debug, Clone)]
 pub enum CType {
     Int,
+    String,
     Bool,
     Void,
 }
@@ -25,6 +26,7 @@ impl Display for CType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         return match self {
             CType::Int => write!(f, "int"),
+            CType::String => write!(f, "char*"),
             CType::Bool => write!(f, "bool"),
             CType::Void => write!(f, "void"),
         };
@@ -37,6 +39,7 @@ impl TryFrom<&Type> for CType {
     fn try_from(value: &Type) -> Result<Self, Self::Error> {
         return match value {
             Type::Int => Ok(CType::Int),
+            Type::String => Ok(CType::String),
             Type::Bool => Ok(CType::Bool),
             Type::Void => Ok(CType::Void),
             Type::Unresolved => Err(()),
@@ -114,6 +117,7 @@ pub struct CBlockStatement {
 #[derive(Debug, Clone)]
 pub enum CExpr {
     Number(CNumber),
+    String(String),
     Bool(CBool),
     Unary(CUnaryExpr),
     Binary(CBinExpr),

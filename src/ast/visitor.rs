@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, UnaryExpression, VarExpression, WhileStatement};
+    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
@@ -99,6 +99,9 @@ pub trait ASTVisitor {
             ExpressionKind::Number(number) => {
                 self.visit_number_expression(ast, number, &expression);
             }
+            ExpressionKind::String(string) => {
+                self.visit_string_expression(ast, string, &expression);
+            }
             ExpressionKind::Binary(expr) => {
                 self.visit_binary_expression(ast, expr, &expression);
             }
@@ -143,6 +146,8 @@ pub trait ASTVisitor {
     }
 
     fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression);
+
+    fn visit_string_expression(&mut self, ast: &mut Ast, string: &StringExpression, expr: &Expression);
 
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {
         self.visit_expression(ast, binary_expression.left);

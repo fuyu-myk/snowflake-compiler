@@ -1,8 +1,8 @@
 use std::{cell::Cell, collections::HashMap};
 
-use snowflake_compiler::bug_report;
+use snowflake_compiler::{bug_report, Idx};
 
-use crate::{ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind}, compilation_unit::{GlobalScope, VariableIndex}, ir::hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, typings::Type};
+use crate::{ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, typings::Type};
 
 
 struct Ctx {
@@ -35,7 +35,18 @@ impl HIRBuilder {
     pub fn build(mut self, ast: &Ast, global_scope: &mut GlobalScope) -> HIR {
         for item in ast.items.iter() {
             match &item.kind {
-                ItemKind::Statement(_) => unimplemented!(),
+                ItemKind::Statement(stmt_id) => {
+                    // Handle top-level statements
+                    // These could be global initializations, module-level expressions, etc.
+                    let global_init_idx = FunctionIndex::new(0); // Use a reserved index for global init
+                    
+                    let mut temp_ctx = Ctx::new();
+                    self.build_statement(*stmt_id, ast, global_scope, &mut temp_ctx, false);
+                    
+                    let ctx = self.hir.functions.entry(global_init_idx)
+                        .or_insert_with(Vec::new);
+                    ctx.extend(temp_ctx.statements);
+                },
                 ItemKind::Function(fx_decl) => {
                     let mut ctx = Ctx::new();
                     for stmt_id in fx_decl.body.iter() {
@@ -99,6 +110,7 @@ impl HIRBuilder {
         let expr = ast.query_expression(expr_id);
         let kind = match &expr.kind {
             ExpressionKind::Number(number_expr) => HIRExprKind::Number(number_expr.number),
+            ExpressionKind::String(string_expr) => HIRExprKind::String(string_expr.value.clone()),
             ExpressionKind::Boolean(bool_expr) => HIRExprKind::Bool(bool_expr.value),
             ExpressionKind::Binary(bin_expr) => {
                 let left = self.build_expression(bin_expr.left, ast, global_scope, ctx, true);

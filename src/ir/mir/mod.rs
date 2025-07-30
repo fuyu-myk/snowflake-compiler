@@ -75,9 +75,10 @@ impl DerefMut for BasicBlocks {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int,
+    String,
     Bool,
     Void,
 }
@@ -86,6 +87,7 @@ impl From<compilation_unit::Type> for Type {
     fn from(value: crate::typings::Type) -> Self {
         match value {
             compilation_unit::Type::Int => Self::Int,
+            compilation_unit::Type::String => Self::String,
             compilation_unit::Type::Bool => Self::Bool,
             compilation_unit::Type::Void => Self::Void,
             compilation_unit::Type::Unresolved | compilation_unit::Type::Error => {
@@ -198,13 +200,14 @@ pub enum Value {
     InstructionRef(InstructionIdx),
     ParamRef(usize),
     ConstantInt(i32),
+    ConstantString(String),
     Void,
 }
 
 impl Value {
     /// Checks if `Value` is a constant.
     pub fn is_const(&self) -> bool {
-        matches!(self, Self::ConstantInt(_) | Self::Void)
+        matches!(self, Self::ConstantInt(_) | Self::ConstantString(_) | Self::Void)
     }
 
     /// Returns `InstructionIdx` if `Value` is an instruction reference, `InstructionRef`.

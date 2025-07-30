@@ -15,24 +15,39 @@ pub struct HIRWriter<W> {
 impl <W> HIRWriter<W> where W: Write {
     pub fn write(writer: &mut W, hir: &HIR, global_scope: &GlobalScope, indent: usize) -> Result<()> {
         for (fx_idx, body) in &hir.functions {
-            let fx = global_scope.functions.get(*fx_idx);
-            write!(writer, "fx {}(", fx.name)?;
+            // Check if this function exists in global scope (skip synthetic functions)
+            let fx_opt = global_scope.functions.indexed_iter()
+                .find(|(idx, _)| *idx == *fx_idx)
+                .map(|(_, fx)| fx);
+            
+            if let Some(fx) = fx_opt {
+                // Regular function with declaration
+                write!(writer, "fx {}(", fx.name)?;
 
-            for param_id in fx.parameters.iter() {
-                let param = global_scope.variables.get(*param_id);
-                write!(writer, "{}: {}", param.name, param.ty)?;
-                
-                if param_id.as_index() != fx.parameters.len() - 1 {
-                    write!(writer, ", ")?;
+                for param_id in fx.parameters.iter() {
+                    let param = global_scope.variables.get(*param_id);
+                    write!(writer, "{}: {}", param.name, param.ty)?;
+                    
+                    if param_id.as_index() != fx.parameters.len() - 1 {
+                        write!(writer, ", ")?;
+                    }
                 }
+                writeln!(writer, ") -> {} {{", fx.return_type)?;
+            } else {
+                // Synthetic function (e.g., global init), handle it specially
+                writeln!(writer, "// Global initialization statements")?;
             }
-            writeln!(writer, ") -> {} {{", fx.return_type)?;
 
             for statement in body {
                 Self::write_indent(writer, indent + 1)?;
                 Self::write_statement(writer, statement, global_scope, indent + 1)?;
             }
-            writeln!(writer, "}}")?;
+            
+            if fx_opt.is_some() {
+                writeln!(writer, "}}")?;
+            } else {
+                writeln!(writer)?;
+            }
         }
 
         Ok(())
@@ -119,6 +134,9 @@ impl <W> HIRWriter<W> where W: Write {
         match &expression.kind {
             HIRExprKind::Number(number) => {
                 write!(writer, "{}", number)?;
+            }
+            HIRExprKind::String(string) => {
+                write!(writer, "\"{}\"", string)?;
             }
             HIRExprKind::Bool(bool) => {
                 write!(writer, "{}", bool)?;

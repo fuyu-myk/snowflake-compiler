@@ -142,6 +142,10 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Number(NumberExpression { token, number }))
     }
 
+    pub fn string_expression(&mut self, token: Token, value: String) -> &Expression {
+        self.expression_from_kind(ExpressionKind::String(StringExpression { token, value }))
+    }
+
     pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId) -> &Expression {
         self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right }))
     }
@@ -417,6 +421,7 @@ impl Statement {
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     Number(NumberExpression),
+    String(StringExpression),
     Binary(BinaryExpression),
     Unary(UnaryExpression),
     Parenthesised(ParenExpression),
@@ -623,6 +628,12 @@ pub struct NumberExpression {
 }
 
 #[derive(Debug, Clone)]
+pub struct StringExpression {
+    pub token: Token,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ParenExpression {
     pub left_paren: Token,
     pub expression: ExpressionId,
@@ -644,6 +655,7 @@ impl Expression {
     pub fn span(&self, ast: &Ast) -> TextSpan {
         match &self.kind {
             ExpressionKind::Number(expr) => expr.token.span.clone(),
+            ExpressionKind::String(expr) => expr.token.span.clone(),
             ExpressionKind::Binary(expr) => {
                 let left = ast.query_expression(expr.left).span(ast);
                 let operator = expr.operator.token.span.clone();
@@ -728,6 +740,7 @@ mod tests {
     enum TestASTNode {
         Number(i64),
         Boolean(bool),
+        String(String),
         Binary,
         Unary,
         Parenthesised,
@@ -790,11 +803,15 @@ mod tests {
             self.actual.push(TestASTNode::Number(number.number));
         }
 
+        fn visit_string_expression(&mut self, _ast: &mut Ast, string: &StringExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::String(string.value.clone()));
+        }
+
         fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
             // do nothing
         }
 
-        fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression:&ParenExpression, _expr: &Expression) {
+        fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Parenthesised);
             self.visit_expression(ast, parenthesised_expression.expression);
         }
@@ -870,6 +887,28 @@ mod tests {
     fn assert_tree(input: &str, expected: Vec<TestASTNode>) {
         let verifier = ASTVerifier::new(input, expected);
         verifier.verify();
+    }
+
+    #[test]
+    pub fn test_string_literal() {
+        let input = r#"let message = "hello world""#;
+        let expected = vec![
+            TestASTNode::Let,
+            TestASTNode::String("hello world".to_string()),
+        ];
+
+        assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_string_literal_with_escapes() {
+        let input = r#"let message = "hello\nworld\t!""#;
+        let expected = vec![
+            TestASTNode::Let,
+            TestASTNode::String("hello\nworld\t!".to_string()),
+        ];
+
+        assert_tree(input, expected);
     }
 
     #[test]

@@ -61,6 +61,7 @@ pub struct HIRExpression {
 #[derive(Debug, Clone)]
 pub enum HIRExprKind {
     Number(i64),
+    String(String),
     Bool(bool),
     Unit,
     Var(VariableIndex),

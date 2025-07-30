@@ -15,6 +15,7 @@ impl ASTPrinter {
     const VARIABLE_COLOUR: color::Green = color::Green;
     const BOOL_COLOUR: color::Yellow = color::Yellow;
     const TYPE_COLOUR: color::LightBlue = color::LightBlue;
+    const STRING_COLOUR: color::LightGreen = color::LightGreen;
 
     pub fn new() -> Self {
         Self { indent: 0, result: String::new() }
@@ -72,6 +73,11 @@ impl ASTVisitor for ASTPrinter {
 
     fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
         self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), number.number));
+    }
+
+    fn visit_string_expression(&mut self, _ast: &mut Ast, string: &StringExpression, _expr: &Expression) {
+        self.result.push_str(&format!("{}\"{}\"", Self::STRING_COLOUR.fg_str(), string.value));
+        self.result.push_str(&format!("{}", Fg(Reset)));
     }
 
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {

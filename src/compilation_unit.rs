@@ -1,6 +1,6 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
@@ -316,6 +316,10 @@ impl ASTVisitor for Resolver {
 
     fn visit_number_expression(&mut self, ast: &mut Ast, _number: &NumberExpression, expr: &Expression) {
         ast.set_type(expr.id, Type::Int);
+    }
+
+    fn visit_string_expression(&mut self, ast: &mut Ast, _string: &StringExpression, expr: &Expression) {
+        ast.set_type(expr.id, Type::String);
     }
 
     fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression) {

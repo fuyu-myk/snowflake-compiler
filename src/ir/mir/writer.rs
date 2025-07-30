@@ -172,6 +172,9 @@ impl<W> MIRWriter<W> where W: Write {
             Value::ConstantInt(value) => {
                 write!(writer, "{}", value)?;
             }
+            Value::ConstantString(value) => {
+                write!(writer, "\"{}\"", value)?;
+            }
             Value::Void => {
                 write!(writer, "()")?;
             }
