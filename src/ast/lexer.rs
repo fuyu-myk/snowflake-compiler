@@ -346,7 +346,7 @@ impl <'a> Lexer<'a> {
         let mut identifier = String::new();
 
         while let Some(c) = self.current_char() {
-            if Self::is_identifier_start(&c) {
+            if Self::is_identifier_continue(&c) {
                 self.consume().unwrap();
                 identifier.push(c);
             } else {
@@ -380,6 +380,10 @@ impl <'a> Lexer<'a> {
     }
 
     fn is_identifier_start(c: &char) -> bool {
-        c.is_alphabetic()
+        c.is_alphabetic() || *c == '_'
+    }
+
+    fn is_identifier_continue(c: &char) -> bool {
+        c.is_alphanumeric() || *c == '_'
     }
 }
