@@ -68,8 +68,16 @@ impl<Index, T> IndexVec<Index, T> where Index: Idx {
         self.vec.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.vec.iter_mut()
+    }
+
     pub fn indexed_iter(&self) -> impl Iterator<Item = (Index, &T)> {
         self.vec.iter().enumerate().map(|(index, value)| (Index::new(index), value))
+    }
+
+    pub fn indices(&self) -> impl Iterator<Item = Index> {
+        (0..self.vec.len()).map(|idx| Index::new(idx))
     }
 
     pub fn cloned_indices(&self) -> Vec<Index> {
