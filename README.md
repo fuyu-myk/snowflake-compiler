@@ -97,7 +97,6 @@ Thus far, the current compiler architecture is highlighted below:
 
 - [x] **Bitwise operations support** [completed 08.06.2025]
 * Ability to apply bitwise operations to evaluate the below statement:
-    * TODO: Shift operations
 ```
 -1 + 2 * 3 - 4 / 5 | 6 + ~6 ^ 7 ** 2
 ```
