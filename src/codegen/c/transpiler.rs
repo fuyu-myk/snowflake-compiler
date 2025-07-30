@@ -309,6 +309,8 @@ impl <'a> CTranspiler<'a> {
             BinaryOpKind::BitwiseAnd => "&",
             BinaryOpKind::BitwiseOr => "|",
             BinaryOpKind::BitwiseXor => "^",
+            BinaryOpKind::ShiftLeft => "<<",
+            BinaryOpKind::ShiftRight => ">>",
         }
     }
 

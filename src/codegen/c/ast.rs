@@ -188,6 +188,8 @@ pub enum CBinOp {
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
+    ShiftLeft,
+    ShiftRight,
 }
 
 impl Display for CBinOp {
@@ -201,6 +203,8 @@ impl Display for CBinOp {
             CBinOp::BitwiseAnd => write!(f, "&"),
             CBinOp::BitwiseOr => write!(f, "|"),
             CBinOp::BitwiseXor => write!(f, "^"),
+            CBinOp::ShiftLeft => write!(f, "<<"),
+            CBinOp::ShiftRight => write!(f, ">>"),
             CBinOp::Equals => write!(f, "=="),
             CBinOp::NotEquals => write!(f, "!="),
             CBinOp::LessThan => write!(f, "<"),
@@ -226,6 +230,8 @@ impl TryFrom<&BinaryOp> for CBinOp {
             BinaryOpKind::BitwiseAnd => Ok(CBinOp::BitwiseAnd),
             BinaryOpKind::BitwiseOr => Ok(CBinOp::BitwiseOr),
             BinaryOpKind::BitwiseXor => Ok(CBinOp::BitwiseXor),
+            BinaryOpKind::ShiftLeft => Ok(CBinOp::ShiftLeft),
+            BinaryOpKind::ShiftRight => Ok(CBinOp::ShiftRight),
             BinaryOpKind::LessThan => Ok(CBinOp::LessThan),
             BinaryOpKind::GreaterThan => Ok(CBinOp::GreaterThan),
             BinaryOpKind::LessThanOrEqual => Ok(CBinOp::LessThanOrEqual),
