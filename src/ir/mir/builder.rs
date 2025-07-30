@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use snowflake_compiler::{bug_report, Idx, IndexVec};
 
-use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, Function, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Value, MIR}}};
+use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, Function, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
 
 
 pub struct MIRBuilder {
@@ -124,6 +124,31 @@ impl FunctionBuilder {
         // Statement building logic
         for statement in body.iter() {
             self.build_statement(basic_blocks, &mut bb_builder, global_scope, statement)
+        }
+
+        // Add implicit return if the current basic block isn't terminated
+        if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+            // Only add implicit return for void functions
+            // Non-void functions without explicit returns should get a default value return
+            let return_value = match self.function.return_type {
+                Type::Void => Value::Void,
+                Type::Int => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
+                                 self.function.name, self.function.return_type);
+                    Value::ConstantInt(0)
+                }
+                Type::String => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty string return", 
+                                 self.function.name, self.function.return_type);
+                    Value::ConstantString(String::new())
+                }
+                Type::Bool => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return false", 
+                                 self.function.name, self.function.return_type);
+                    Value::ConstantInt(0) // false
+                }
+            };
+            bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: return_value });
         }
 
         // Ensuring no incomplete phis
