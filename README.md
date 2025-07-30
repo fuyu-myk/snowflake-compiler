@@ -71,7 +71,7 @@ Thus far, the current compiler architecture is highlighted below:
         ```
         * Locals - function arguments, local variables etc.
     
-    - [ ] *MIR Optimisations*
+    - [x] *MIR Optimisations* [completed 30.07.2025]
     * Optimisations that aims to enhance the performance and efficiency of the executed code
     * The optimisations implemented are as follows:
         * Dead Code Elimination - Eg: removal of unused declared variables
@@ -80,6 +80,8 @@ Thus far, the current compiler architecture is highlighted below:
         * Copy Propagation - Reduces compile time by reducing copying
         * Constant Folding - Variables that can be computed at compile time are computed
         * Algebraic Simplification - Using mathematical properties to reduce complexity of expressions in the code
+    
+    -[ ] *Low-level IR (LIR)*
 
 ### Types supported
 * Integers
