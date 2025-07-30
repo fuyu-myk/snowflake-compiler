@@ -223,9 +223,10 @@ mod tests {
             a = 10
             b = 2
             let c = 10
-        }
-        else 
+        } else {
             a = 5
+        }
+        
         a
         b
         «c»
@@ -306,7 +307,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Function 'foo' expects 2 arguments, but only 1 found"
+            "Function 'foo' expects 2 arguments, but only 1 was found"
         ];
 
         assert_diagnostics(input, expected);

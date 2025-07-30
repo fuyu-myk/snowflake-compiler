@@ -21,6 +21,8 @@ pub enum TokenKind {
     Pipe, // | for bitwise or
     Caret, // ^ for bitwise xor
     Tilde, // ~ for bitwise not
+    ShiftLeft, // << for left shift
+    ShiftRight, // >> for right shift
 
     // relational operators
     LessThan, // < for less than
@@ -76,6 +78,8 @@ impl Display for TokenKind {
             TokenKind::Pipe => write!(f, "|"),
             TokenKind::Caret => write!(f, "^"),
             TokenKind::Tilde => write!(f, "~"),
+            TokenKind::ShiftLeft => write!(f, "<<"),
+            TokenKind::ShiftRight => write!(f, ">>"),
 
             // relational operators
             TokenKind::LessThan => write!(f, "<"),
@@ -206,31 +210,19 @@ impl <'a> Lexer<'a> {
 
         match c {
             '+' => TokenKind::Plus,
-            '-' => {
-                self.potential_double_char_operator('>', TokenKind::Minus, TokenKind::Arrow)
-            },
-            '*' => {
-                self.potential_double_char_operator('*', TokenKind::Asterisk, TokenKind::DoubleAsterisk)
-            },
+            '-' => self.potential_multi_char_operator('-'),
+            '*' => self.potential_multi_char_operator('*'),
             '/' => TokenKind::Slash,
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
-            '=' => {
-                self.potential_double_char_operator('=', TokenKind::Equals, TokenKind::EqualsEquals)
-            },
+            '=' => self.potential_multi_char_operator('='),
             '&' => TokenKind::Ampersand,
             '|' => TokenKind::Pipe,
             '^' => TokenKind::Caret,
             '~' => TokenKind::Tilde,
-            '<' => {
-                self.potential_double_char_operator('=', TokenKind::LessThan, TokenKind::LessThanOrEqual)
-            },
-            '>' => {
-                self.potential_double_char_operator('=', TokenKind::GreaterThan, TokenKind::GreaterThanOrEqual)
-            },
-            '!' => {
-                self.potential_double_char_operator('=', TokenKind::Bad, TokenKind::NotEquals)
-            },
+            '<' => self.potential_multi_char_operator('<'),
+            '>' => self.potential_multi_char_operator('>'),
+            '!' => self.potential_multi_char_operator('!'),
             '{' => TokenKind::OpenBrace,
             '}' => TokenKind::CloseBrace,
             ',' => TokenKind::Comma,
@@ -240,16 +232,71 @@ impl <'a> Lexer<'a> {
         }
     }
 
-    fn potential_double_char_operator(&mut self, expected: char, one_char_kind: TokenKind, double_char_kind: TokenKind) -> TokenKind {
-        if let Some(next_char) = self.current_char() {
-            if next_char == expected {
-                self.consume(); // consume the second character
-                double_char_kind // return the double character operator
-            } else {
-                one_char_kind // return the single character operator
-            }
-        } else {
-            one_char_kind // return the single character operator if no next char
+    fn potential_multi_char_operator(&mut self, first_char: char) -> TokenKind {
+        match first_char {
+            '>' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::GreaterThanOrEqual
+                    },
+                    Some('>') => {
+                        self.consume();
+                        TokenKind::ShiftRight
+                    },
+                    _ => TokenKind::GreaterThan,
+                }
+            },
+            '<' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::LessThanOrEqual
+                    },
+                    Some('<') => {
+                        self.consume();
+                        TokenKind::ShiftLeft
+                    },
+                    _ => TokenKind::LessThan,
+                }
+            },
+            '=' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::EqualsEquals
+                    },
+                    _ => TokenKind::Equals,
+                }
+            },
+            '*' => {
+                match self.current_char() {
+                    Some('*') => {
+                        self.consume();
+                        TokenKind::DoubleAsterisk
+                    },
+                    _ => TokenKind::Asterisk,
+                }
+            },
+            '-' => {
+                match self.current_char() {
+                    Some('>') => {
+                        self.consume();
+                        TokenKind::Arrow
+                    },
+                    _ => TokenKind::Minus,
+                }
+            },
+            '!' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::NotEquals
+                    },
+                    _ => TokenKind::Bad,
+                }
+            },
+            _ => TokenKind::Bad,
         }
     }
 

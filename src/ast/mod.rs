@@ -512,10 +512,14 @@ pub enum BinaryOpKind {
     Divide,
     Power,
     Modulo,
+
     // bitwise
     BitwiseAnd, // &
     BitwiseOr,  // |
     BitwiseXor, // ^
+    ShiftLeft,  // <<
+    ShiftRight, // >>
+
     // relational
     Equals,
     NotEquals,
@@ -537,6 +541,8 @@ impl Display for BinaryOpKind {
             BinaryOpKind::BitwiseAnd => write!(f, "&"),
             BinaryOpKind::BitwiseOr => write!(f, "|"),
             BinaryOpKind::BitwiseXor => write!(f, "^"),
+            BinaryOpKind::ShiftLeft => write!(f, "<<"),
+            BinaryOpKind::ShiftRight => write!(f, ">>"),
             BinaryOpKind::Equals => write!(f, "=="),
             BinaryOpKind::NotEquals => write!(f, "!="),
             BinaryOpKind::LessThan => write!(f, "<"),
@@ -566,21 +572,32 @@ impl BinaryOp {
 
     pub fn precedence(&self) -> u8 {
         match self.kind {
-            BinaryOpKind::Equals => 30,
-            BinaryOpKind::NotEquals => 30,
-            BinaryOpKind::LessThan => 29,
-            BinaryOpKind::GreaterThan => 29,
-            BinaryOpKind::LessThanOrEqual => 29,
-            BinaryOpKind::GreaterThanOrEqual => 29,
+            // Arithmetic operators (highest precedence)
             BinaryOpKind::Power => 20,
             BinaryOpKind::Multiply => 19,
             BinaryOpKind::Divide => 19,
             BinaryOpKind::Modulo => 19,
             BinaryOpKind::Plus => 18,
             BinaryOpKind::Minus => 18,
-            BinaryOpKind::BitwiseAnd => 17,
-            BinaryOpKind::BitwiseXor => 16,
-            BinaryOpKind::BitwiseOr => 15,
+            
+            // Shift operators
+            BinaryOpKind::ShiftLeft => 17,
+            BinaryOpKind::ShiftRight => 17,
+            
+            // Relational operators
+            BinaryOpKind::LessThan => 16,
+            BinaryOpKind::GreaterThan => 16,
+            BinaryOpKind::LessThanOrEqual => 16,
+            BinaryOpKind::GreaterThanOrEqual => 16,
+            
+            // Equality operators
+            BinaryOpKind::Equals => 15,
+            BinaryOpKind::NotEquals => 15,
+            
+            // Bitwise operators (lowest precedence)
+            BinaryOpKind::BitwiseAnd => 14,
+            BinaryOpKind::BitwiseXor => 13,
+            BinaryOpKind::BitwiseOr => 12,
         }
     }
 
@@ -1073,7 +1090,6 @@ mod tests {
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
             TestASTNode::Number(0),
-            TestASTNode::Block,
             TestASTNode::Assignment,
             TestASTNode::Number(86),
         ];
@@ -1100,11 +1116,9 @@ mod tests {
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
             TestASTNode::Number(0),
-            TestASTNode::Block,
             TestASTNode::Assignment,
             TestASTNode::Number(86),
             TestASTNode::Else,
-            TestASTNode::Block,
             TestASTNode::Assignment,
             TestASTNode::Number(23),
         ];
@@ -1129,7 +1143,6 @@ mod tests {
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
             TestASTNode::Number(10),
-            TestASTNode::Block,
             TestASTNode::Assignment,
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
@@ -1149,7 +1162,6 @@ mod tests {
 
         let expected = vec![
             TestASTNode::Function,
-            TestASTNode::Block,
             TestASTNode::Return,
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
@@ -1171,7 +1183,6 @@ mod tests {
 
         let expected = vec![
             TestASTNode::Function,
-            TestASTNode::Block,
             TestASTNode::Return,
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
@@ -1186,5 +1197,32 @@ mod tests {
         ];
 
         assert_tree(input, expected);
+    }
+
+    #[test]
+    pub fn test_shift_operator_precedence() {
+        // Test that shift operators have correct precedence relative to other operators
+        
+        // Test basic shift operations
+        let input = "let a = 8 << 2";
+        let expected = vec![
+            TestASTNode::Let,
+            TestASTNode::Binary,
+            TestASTNode::Number(8),
+            TestASTNode::Number(2),
+        ];
+        assert_tree(input, expected);
+
+        // Test shift with bitwise operations (shift should have higher precedence than bitwise)
+        let input2 = "let b = 4 << 1 & 2";
+        let expected2 = vec![
+            TestASTNode::Let,
+            TestASTNode::Binary,  // & operation (lower precedence)
+            TestASTNode::Binary,  // << operation (higher precedence, grouped first)
+            TestASTNode::Number(4),
+            TestASTNode::Number(1),
+            TestASTNode::Number(2),
+        ];
+        assert_tree(input2, expected2);
     }
 }

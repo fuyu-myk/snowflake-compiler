@@ -145,6 +145,8 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             BinaryOpKind::BitwiseAnd => Value::Number(left.expect_number() & right.expect_number()),
             BinaryOpKind::BitwiseOr => Value::Number(left.expect_number() | right.expect_number()),
             BinaryOpKind::BitwiseXor => Value::Number(left.expect_number() ^ right.expect_number()),
+            BinaryOpKind::ShiftLeft => Value::Number(left.expect_number() << right.expect_number()),
+            BinaryOpKind::ShiftRight => Value::Number(left.expect_number() >> right.expect_number()),
 
             // relation operators
             BinaryOpKind::Equals => Value::Boolean(left == right),

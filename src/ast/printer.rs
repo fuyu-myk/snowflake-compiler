@@ -200,7 +200,6 @@ impl ASTVisitor for ASTPrinter {
         self.add_keyword("fx");
         self.add_whitespace();
         self.add_text(&fx_decl.identifier.span.literal);
-        self.add_whitespace();
 
         let are_parameters_empty = fx_decl.parameters.is_empty();
         if !are_parameters_empty {
@@ -218,6 +217,7 @@ impl ASTVisitor for ASTPrinter {
             self.add_text(&parameter.identifier.span.literal);
             self.add_type_annot(&parameter.type_annotation);
         }
+
         if !are_parameters_empty {
             self.add_text(")");
             self.add_whitespace();

@@ -181,10 +181,16 @@ impl <'a> Parser<'a> {
 
     fn parse_return_statement(&mut self) -> &Statement {
         let return_keyword = self.consume_and_check(TokenKind::Return).clone();
-        let expression = self.parse_expression();
-        // todo: allow ecmpty return statements
+        
+        let expression = if self.current().kind == TokenKind::SemiColon || 
+                           self.current().kind == TokenKind::CloseBrace ||
+                           self.is_at_end() {
+            None
+        } else {
+            Some(self.parse_expression())
+        };
 
-        self.ast.return_statement(return_keyword, Some(expression))
+        self.ast.return_statement(return_keyword, expression)
     }
 
     fn parse_while_statement(&mut self) -> &Statement {
@@ -346,6 +352,8 @@ impl <'a> Parser<'a> {
             TokenKind::Ampersand => Some(BinaryOpKind::BitwiseAnd),
             TokenKind::Pipe => Some(BinaryOpKind::BitwiseOr),
             TokenKind::Caret => Some(BinaryOpKind::BitwiseXor),
+            TokenKind::ShiftLeft => Some(BinaryOpKind::ShiftLeft),
+            TokenKind::ShiftRight => Some(BinaryOpKind::ShiftRight),
 
             // relational operators
             TokenKind::EqualsEquals => Some(BinaryOpKind::Equals),

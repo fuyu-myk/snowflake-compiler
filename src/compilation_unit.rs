@@ -246,6 +246,8 @@ impl Resolver {
             BinaryOpKind::BitwiseAnd => (Type::Int, Type::Int, Type::Int),
             BinaryOpKind::BitwiseXor => (Type::Int, Type::Int, Type::Int),
             BinaryOpKind::BitwiseOr => (Type::Int, Type::Int, Type::Int),
+            BinaryOpKind::ShiftLeft => (Type::Int, Type::Int, Type::Int),
+            BinaryOpKind::ShiftRight => (Type::Int, Type::Int, Type::Int),
         };
 
         self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
@@ -389,8 +391,14 @@ impl ASTVisitor for Resolver {
 
             let then_expression_type = if_statement.then_branch.type_or_void(ast);
             let else_expression_type = else_branch.body.type_or_void(ast);
-            let else_span = else_branch.body.span(ast);
-            ty = self.expect_type(then_expression_type, &else_expression_type, &else_span);
+            
+            // Only perform type unification if both branches return non-void types
+            if !matches!(then_expression_type, Type::Void) && !matches!(else_expression_type, Type::Void) {
+                let else_span = else_branch.body.span(ast);
+                ty = self.expect_type(then_expression_type, &else_expression_type, &else_span);
+            } else {
+                ty = Type::Void;
+            }
 
             self.scopes.exit_scope();
         }
@@ -430,7 +438,7 @@ impl ASTVisitor for Resolver {
                     let return_expression = ast.query_expression(*return_expression);
                     self.expect_type(function.return_type.clone(), &return_expression.ty, &return_expression.span(&ast));
                 } else {
-                    self.expect_type(Type::Void, &function.return_type, &return_keyword.span);
+                    self.expect_type(function.return_type.clone(), &Type::Void, &return_keyword.span);
                 }
             }
         }
