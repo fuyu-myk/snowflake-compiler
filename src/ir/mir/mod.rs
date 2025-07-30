@@ -23,6 +23,7 @@ pub use writer::MIRWriter;
 mod basic_block;
 mod builder;
 mod writer;
+pub mod optimisations;
 
 
 pub type Functions = IndexVec<FunctionIndex, Function>;
@@ -104,6 +105,34 @@ pub struct Function {
     pub return_type: Type,
 }
 
+impl Function {
+    /// Adds an instruction to the function and returns its index
+    pub fn add_instruction(&mut self, instruction: Instruction) -> InstructionIdx {
+        self.instructions.push(instruction)
+    }
+
+    /// Adds an instruction with automatic trivial phi elimination during construction
+    /// Returns either the new instruction index or an existing instruction that should be used instead
+    pub fn add_instruction_with_phi_elimination(&mut self, instruction: Instruction) -> InstructionIdx {
+        match &instruction.kind {
+            InstructionKind::Phi(phi_node) => {
+                // Check if this phi node would be trivial
+                if let Some(replacement_idx) = PhiNode::check_trivial(&phi_node.operands) {
+                    // Don't create the phi node, return the replacement instruction
+                    replacement_idx
+                } else {
+                    // Not trivial, add the phi node normally
+                    self.instructions.push(instruction)
+                }
+            }
+            _ => {
+                // Not a phi node, add normally
+                self.instructions.push(instruction)
+            }
+        }
+    }
+}
+
 pub type Instructions = IndexVec<InstructionIdx, Instruction>;
 pub type Locals = HashMap<InstructionIdx, VariableIndex>;
 
@@ -116,6 +145,16 @@ pub struct Instruction {
 impl Instruction {
     pub fn new(kind: InstructionKind, ty: Type) -> Self {
         Self { kind, ty }
+    }
+
+    pub fn is_pure(&self) -> bool {
+        match &self.kind {
+            InstructionKind::Value(_) => true,
+            InstructionKind::Binary { .. } => true,
+            InstructionKind::Unary { .. } => true,
+            InstructionKind::Call { .. } => false,
+            InstructionKind::Phi(_) => false,
+        }
     }
 }
 
@@ -162,7 +201,61 @@ pub enum Value {
     Void,
 }
 
-#[derive(Debug)]
+impl Value {
+    /// Checks if `Value` is a constant.
+    pub fn is_const(&self) -> bool {
+        matches!(self, Self::ConstantInt(_) | Self::Void)
+    }
+
+    /// Returns `InstructionIdx` if `Value` is an instruction reference, `InstructionRef`.
+    pub fn as_instruct_ref(&self) -> Option<InstructionIdx> {
+        match self {
+            Self::InstructionRef(idx) => Some(*idx),
+            _ => None,
+        }
+    }
+
+    /// Returns 'i32' if `Value` is a constant integer, `ConstantInt`.
+    /// Returns `None` if it is not a constant integer.
+    pub fn as_i32(&self) -> Option<i32> {
+        match self {
+            Self::ConstantInt(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Replaces the current value if it is not equal to the new value.
+    /// 
+    /// Returns `true` if the value was replaced.
+    pub fn replace_if_unequal(&mut self, value: Value) -> bool {
+        if value != *self {
+            *self = value;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Used in copy propagation.
+    /// 
+    /// Replaces irrelevant variable assignments with previously calculated values.
+    /// Returns `true` if an instruction is replaced.
+    pub fn replace_with_copied_ref(&mut self, copies: &HashMap<InstructionIdx, InstructionIdx>) -> bool {
+        match self {
+            Self::InstructionRef(idx) => {
+                if let Some(new_ref) = copies.get(idx) {
+                    *self = Self::InstructionRef(*new_ref);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum BinOp {
     Add,
     Sub,
@@ -194,6 +287,8 @@ impl From<ast::BinaryOpKind> for BinOp {
             ast::BinaryOpKind::BitwiseAnd => Self::BitAnd,
             ast::BinaryOpKind::BitwiseOr => Self::BitOr,
             ast::BinaryOpKind::BitwiseXor => Self::BitXor,
+            ast::BinaryOpKind::ShiftLeft => Self::BitShl,
+            ast::BinaryOpKind::ShiftRight => Self::BitShr,
             ast::BinaryOpKind::Equals => Self::Eq,
             ast::BinaryOpKind::NotEquals => Self::Neq,
             ast::BinaryOpKind::LessThan => Self::Lt,
@@ -261,6 +356,84 @@ pub struct PhiNode {
 impl PhiNode {
     pub fn operandless() -> Self {
         Self { operands: Operands::new() }
+    }
+
+    /// Creates a new phi node with the given operands
+    pub fn new(operands: Operands) -> Self {
+        Self { operands }
+    }
+
+    /// Creates a new phi node with the given operands, automatically eliminating trivial cases
+    /// Returns either a new phi node or the instruction index that should be used instead
+    pub fn new_with_elimination(operands: Operands) -> Result<Self, InstructionIdx> {
+        // Check if the phi node would be trivial
+        if let Some(trivial_result) = Self::check_trivial(&operands) {
+            // Return the instruction that should be used instead of creating a phi
+            Err(trivial_result)
+        } else {
+            // Not trivial, create the phi node
+            Ok(Self { operands })
+        }
+    }
+
+    /// Adds an operand to the phi node
+    pub fn add_operand(&mut self, bb: BasicBlockIdx, inst: InstructionIdx) {
+        self.operands.push((bb, inst));
+    }
+
+    /// Adds an operand to the phi node and checks if it becomes trivial
+    /// Returns Some(instruction_idx) if the phi becomes trivial and should be replaced
+    pub fn add_operand_with_elimination(&mut self, bb: BasicBlockIdx, inst: InstructionIdx) -> Option<InstructionIdx> {
+        self.operands.push((bb, inst));
+        Self::check_trivial(&self.operands)
+    }
+
+    /// Checks if the given operands would form a trivial phi node
+    fn check_trivial(operands: &Operands) -> Option<InstructionIdx> {
+        if operands.is_empty() {
+            return None;
+        }
+
+        let mut unique_operand: Option<InstructionIdx> = None;
+
+        for &(_, operand_idx) in operands {
+            match unique_operand {
+                None => unique_operand = Some(operand_idx),
+                Some(existing) if existing != operand_idx => return None, // Not trivial
+                _ => {} // Same as existing, continue
+            }
+        }
+
+        unique_operand
+    }
+
+    /// Checks if this phi node is trivial (all operands are the same, ignoring self-references)
+    pub fn is_trivial(&self, self_idx: InstructionIdx) -> Option<InstructionIdx> {
+        if self.operands.is_empty() {
+            return None;
+        }
+
+        let mut unique_operand: Option<InstructionIdx> = None;
+
+        for &(_, operand_idx) in &self.operands {
+            // Skip self-references
+            if operand_idx == self_idx {
+                continue;
+            }
+
+            match unique_operand {
+                None => unique_operand = Some(operand_idx),
+                Some(existing) if existing != operand_idx => return None,
+                _ => {} // Same as existing, continue
+            }
+        }
+
+        unique_operand
+    }
+
+    /// Removes operands coming from a specific basic block
+    pub fn remove_operands_from_block(&mut self, bb: BasicBlockIdx) {
+        self.operands.retain(|(block, _)| *block != bb);
     }
 }
 

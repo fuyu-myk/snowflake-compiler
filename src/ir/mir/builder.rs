@@ -384,13 +384,20 @@ impl FunctionBuilder {
             let predecessors = self.function.predecessors(basic_blocks);
 
             for (incomplete_phi, var_idx) in incomplete_phis.iter().copied() {
-                self.add_phi_operands(
+                if let Some(replacement_idx) = self.add_phi_operands(
                     basic_blocks,
                     incomplete_phi,
                     var_idx,
                     predecessors.get(bb_idx).unwrap(),
                     global_scope,
-                );
+                ) {
+                    // The phi became trivial, update the variable mapping
+                    tracing::debug!("Replacing trivial phi {:?} with {:?} for variable {:?}", 
+                                  incomplete_phi, replacement_idx, var_idx);
+                    self.write_variable(var_idx, bb_idx, replacement_idx);
+                    
+                    self.function.instructions[incomplete_phi].kind = InstructionKind::Value(Value::Void);
+                }
             }
         }
 
@@ -409,9 +416,10 @@ impl FunctionBuilder {
         var_idx: VariableIndex,
         preds: &Vec<BasicBlockIdx>,
         global_scope: &GlobalScope,
-    ) {
+    ) -> Option<InstructionIdx> {
         tracing::debug!("Adding phi operands for {:?} with predecessors {:?}", phi, preds);
 
+        let mut operands_added = false;
         for pred in preds.iter().copied() {
             let already_exists = {
                 let phi_node = self.function.instructions[phi].kind.as_phi_mut().unwrap();
@@ -424,9 +432,21 @@ impl FunctionBuilder {
 
             let var_ref = self.latest_variable_def(basic_blocks, var_idx, pred, global_scope)
                 .unwrap_or_else(|| bug_report!("No definition for variable {:?} in block {:?}", var_idx, pred));
+            
+            // Check if adding this operand would make the phi trivial
             let phi_node = self.function.instructions[phi].kind.as_phi_mut().unwrap();
+            if let Some(replacement_idx) = phi_node.add_operand_with_elimination(pred, var_ref) {
+                tracing::debug!("Phi node {:?} became trivial, replacing with {:?}", phi, replacement_idx);
+                return Some(replacement_idx);
+            }
+            operands_added = true;
+        }
 
-            phi_node.push((pred, var_ref));
+        if operands_added {
+            None
+        } else {
+            let phi_node = &self.function.instructions[phi].kind.as_phi().unwrap();
+            phi_node.is_trivial(phi)
         }
     }
 
@@ -476,8 +496,16 @@ impl FunctionBuilder {
                 bb_idx,
             );
 
-            self.add_phi_operands(basic_blocks, instruct_ref, var_idx, preceding_bbs, global_scope);
-            instruct_ref
+            if let Some(replacement_idx) = self.add_phi_operands(basic_blocks, instruct_ref, var_idx, preceding_bbs, global_scope) {
+                tracing::debug!("Phi {:?} became trivial, replacing with {:?} for variable {:?}", 
+                              instruct_ref, replacement_idx, var_idx);
+                self.write_variable(var_idx, bb_idx, replacement_idx);
+                
+                self.function.instructions[instruct_ref].kind = InstructionKind::Value(Value::Void);
+                replacement_idx
+            } else {
+                instruct_ref
+            }
         };
 
         self.write_variable(var_idx, bb_idx, instruct_ref);
@@ -576,6 +604,7 @@ impl BasicBlockBuilder {
             }
             TerminatorKind::Return { .. } | TerminatorKind::Unresolved => {}
         };
+        
         bb.set_terminator(terminator);
         self.current
     }
@@ -717,5 +746,64 @@ impl Successors {
 
         visited.remove(&bb);
         visited
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Dominators(HashMap<BasicBlockIdx, BasicBlockIdx>);
+
+impl Dominators {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    #[inline]
+    /// Returns all blocks dominated by the given basic block.
+    pub fn get_dominated_bbs(&self, bb_idx: BasicBlockIdx) -> HashSet<BasicBlockIdx> {
+        let mut unvisited_bbs = vec![bb_idx];
+        let mut visited = HashSet::new();
+
+        while let Some(bb_idx) = unvisited_bbs.pop() {
+            if visited.contains(&bb_idx) {
+                continue;
+            }
+
+            visited.insert(bb_idx);
+
+            for (bb, idom) in self.0.iter() {
+                if *idom == bb_idx {
+                    unvisited_bbs.push(*bb);
+                }
+            }
+        }
+
+        visited
+    }
+
+    /// Returns `true` if `a` is dominated by `b`.
+    pub fn dominates(&self, a: BasicBlockIdx, b: BasicBlockIdx) -> bool {
+        self.get_dominated_bbs(b).contains(&a)
+    }
+
+    /// Similar to the method `dominates`, but with the additional restriction that `a != b`.
+    pub fn strictly_dominates(&self, a: BasicBlockIdx, b: BasicBlockIdx) -> bool {
+        a != b && self.dominates(a, b)
+    }
+
+    /// Fetches the immediate dominator for the queried basic block.
+    pub fn get_idom(&self, bb: BasicBlockIdx) -> Option<BasicBlockIdx> {
+        self.0.get(&bb).copied()
+    }
+
+    /// Returns all immediate dominators.
+    /// 
+    /// The entry block does not possess an immediate dominator.
+    pub fn get_all_idoms(&self) -> &HashMap<BasicBlockIdx, BasicBlockIdx> {
+        &self.0
+    }
+
+    /// Sets `idom` as the immediate dominator for basic block `bb`.
+    pub fn set_idom(&mut self, bb: BasicBlockIdx, idom: BasicBlockIdx) {
+        self.0.insert(bb, idom);
     }
 }

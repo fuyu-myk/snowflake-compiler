@@ -1,6 +1,6 @@
 use std::{fs::File, io::Write};
 
-use crate::{compilation_unit::CompilationUnit, ir::{hir::{HIRBuilder, HIRWriter}, mir::{MIRBuilder, MIRWriter}}};
+use crate::{compilation_unit::CompilationUnit, ir::{hir::{HIRBuilder, HIRWriter}, mir::{optimisations::Optimiser, MIRBuilder, MIRWriter}}};
 
 use anyhow::{anyhow, Result};
 
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
         fx main() -> int {
             let a = 10;
 
-            while (a > 0) {
+            while a > 0 {
                 a = a - 1;
             }
 
@@ -54,6 +54,15 @@ fn main() -> Result<()> {
     File::create("mir.dot")?.write_all(mir_graphviz.as_bytes())?;
     MIRWriter::write_txt(&mut mir_output, &mir)?;
     println!("{}", mir_output);
+
+    // MIR optimisations
+    let mut optimiser = Optimiser::new();
+    optimiser.optimise(&mut mir);
+    let mut optimised_mir_graphviz = String::new();
+    MIRWriter::write_graphviz(&mut optimised_mir_graphviz, &mir)?;
+    File::create("optimised-mir.dot")?.write_all(optimised_mir_graphviz.as_bytes())?;
+
+    // LIR (todo)
 
     Ok(())
 }
