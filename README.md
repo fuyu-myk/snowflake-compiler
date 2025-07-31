@@ -29,7 +29,7 @@ Thus far, the current compiler architecture is highlighted below:
 * Updated as more functionality is added
 * Used in place of a backend for now
 
-- [x] **C transpiler** [WIP]
+- [x] **C transpiler**
 * A basic C transpiler has been implemented as a temporary backend
 
 - [ ] **Intermediate Representation (IR) Lowering**
@@ -103,7 +103,18 @@ Thus far, the current compiler architecture is highlighted below:
 
 - [x] **Relational operators** [completed 09.06.2025]
 
-- [ ] **Assignment operators**
+- [x] **Assignment operators** [completed 01.08.2025]
+* Handled by desugaring
+    * For example, `a += 5` becomes `a = (a + 5)`
+* Such assignment expressions return a void type; thereby disallowing expressions such as:
+```
+a += 5 -= 1 // lhs must have same type (int) as rhs
+```
+* On the other hand, expressions such as below are valid
+```
+a += a * 2 + 3
+```
+* Todo: Perhaps find a better way of handling spans
 
 ### Functionalities
 - [x] **Error reporting** [WIP]
@@ -176,7 +187,7 @@ Thus far, the current compiler architecture is highlighted below:
 
     }
 
-    fx foo(a, b) {
+    fx foo(a: int, b: int) -> int {
         return a + b
     }
     ```
