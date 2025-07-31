@@ -1,11 +1,11 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, CompoundBinaryExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
 use crate::text;
-use crate::ast::lexer::{Lexer, Token};
+use crate::ast::lexer::{Lexer, Token, TokenKind};
 use crate::ast::parser::Parser;
 use crate::text::span::TextSpan;
 pub use crate::typings::Type;
@@ -257,6 +257,51 @@ impl Resolver {
         type_matrix.2
     }
 
+    pub fn resolve_compound_binary_expression(&self, ast: &Ast, left: &Expression, right: &Expression, operator: &AssignmentOpKind) -> Type {
+        // First, validate that the left-hand side is a valid l-value (variable)
+        // If it's not, we'll let the type checker catch it when we return void
+        // This will generate errors like "binary operation '+=' cannot be applied to type 'int' and 'void'"
+        match &left.kind {
+            ExpressionKind::Variable(_) => {
+                // Valid l-value, proceed with normal type checking
+                let type_matrix: (Type, Type) = match operator {
+                    AssignmentOpKind::PlusAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::MinusAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::MultiplyAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::DivideAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::ModuloAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::BitwiseAndAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::BitwiseOrAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::BitwiseXorAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::ShiftLeftAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::ShiftRightAs => (Type::Int, Type::Int),
+                };
+
+                self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
+                self.expect_type(type_matrix.1, &right.ty, &right.span(&ast));
+            }
+            _ => {
+                // Invalid l-value (like another assignment expression)
+                // Still check the right side for completeness, but left side will have void type
+                // This will naturally cause the intended error message when this void type
+                // is used in subsequent operations
+                let expected_right_type = match operator {
+                    AssignmentOpKind::PlusAs | AssignmentOpKind::MinusAs | 
+                    AssignmentOpKind::MultiplyAs | AssignmentOpKind::DivideAs | 
+                    AssignmentOpKind::ModuloAs | AssignmentOpKind::BitwiseAndAs | 
+                    AssignmentOpKind::BitwiseOrAs | AssignmentOpKind::BitwiseXorAs | 
+                    AssignmentOpKind::ShiftLeftAs | AssignmentOpKind::ShiftRightAs => Type::Int,
+                };
+                
+                self.expect_type(expected_right_type, &right.ty, &right.span(&ast));
+            }
+        }
+
+        // Compound assignment expressions always return void
+        // This is key for generating the intended error messages
+        Type::Void
+    }
+
     pub fn resolve_unary_expression(&self, ast: &Ast, operand: &Expression, operator: &UnaryOpKind) -> Type {
         let type_matrix: (Type, Type) = match operator {
             UnaryOpKind::Negation => (Type::Int, Type::Int),
@@ -340,6 +385,66 @@ impl ASTVisitor for Resolver {
 
         let ty = self.resolve_binary_expression(ast, &left, &right, &binary_expression.operator.kind);
         ast.set_type(expr.id, ty);
+    }
+
+    fn visit_compound_binary_expression(&mut self, ast: &mut Ast, compound_expression: &CompoundBinaryExpression, expr: &Expression) {
+        self.visit_expression(ast, compound_expression.left);
+        self.visit_expression(ast, compound_expression.right);
+
+        let left = ast.query_expression(compound_expression.left);
+        let right = ast.query_expression(compound_expression.right);
+
+        match &left.kind {
+            ExpressionKind::Variable(var_expr) => {
+                // Valid assignment target - perform desugaring
+                // Transform `a += b` into `a = (a + b)`
+                let ty = self.resolve_compound_binary_expression(ast, &left, &right, &compound_expression.operator);
+                
+                let var_identifier = var_expr.identifier.clone();
+                let var_idx = var_expr.variable_index;
+                let left_expr_id = compound_expression.left;
+                let right_expr_id = compound_expression.right;
+                let operator = compound_expression.operator;
+                
+                // Desugaring: create the binary operation (a + b)
+                let binary_op_kind = self.assignment_to_binary_op(operator);
+                let binary_op = BinaryOp::new(binary_op_kind, self.desugared_token(&compound_expression.operator_token));
+                let binary_expr_id = ast.binary_expression(binary_op, left_expr_id, right_expr_id).id;
+                
+                // Visit the newly created binary expression to resolve its type
+                self.visit_expression(ast, binary_expr_id);
+                
+                // Create the assignment expression (a = (a + b))
+                let assignment_expr = AssignExpression {
+                    identifier: var_identifier.clone(),
+                    equals: self.create_synthetic_equals_token(&var_identifier),
+                    expression: binary_expr_id,
+                    variable_index: var_idx,
+                };
+                
+                // Replace the current expression with the desugared assignment
+                let expr_mut = ast.query_expression_mut(expr.id);
+                expr_mut.kind = ExpressionKind::Assignment(assignment_expr);
+                expr_mut.ty = ty;
+            }
+            _ => {
+                let operator_str = format!("{}=", match compound_expression.operator {
+                    AssignmentOpKind::PlusAs => "+",
+                    AssignmentOpKind::MinusAs => "-",
+                    AssignmentOpKind::MultiplyAs => "*",
+                    AssignmentOpKind::DivideAs => "/",
+                    AssignmentOpKind::ModuloAs => "%",
+                    AssignmentOpKind::BitwiseAndAs => "&",
+                    AssignmentOpKind::BitwiseOrAs => "|",
+                    AssignmentOpKind::BitwiseXorAs => "^",
+                    AssignmentOpKind::ShiftLeftAs => "<<",
+                    AssignmentOpKind::ShiftRightAs => ">>",
+                });
+                
+                self.diagnostics.borrow_mut().report_invalid_assignment_target(&operator_str, &expr.span(ast));
+                ast.set_type(expr.id, Type::Void);
+            }
+        }
     }
 
     fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, expr: &Expression) {
@@ -521,6 +626,49 @@ impl ASTVisitor for Resolver {
     }
 }
 
+impl Resolver {
+    fn assignment_to_binary_op(&self, op_kind: AssignmentOpKind) -> BinaryOpKind {
+        match op_kind {
+            AssignmentOpKind::PlusAs => BinaryOpKind::Plus,
+            AssignmentOpKind::MinusAs => BinaryOpKind::Minus,
+            AssignmentOpKind::MultiplyAs => BinaryOpKind::Multiply,
+            AssignmentOpKind::DivideAs => BinaryOpKind::Divide,
+            AssignmentOpKind::ModuloAs => BinaryOpKind::Modulo,
+            AssignmentOpKind::BitwiseAndAs => BinaryOpKind::BitwiseAnd,
+            AssignmentOpKind::BitwiseOrAs => BinaryOpKind::BitwiseOr,
+            AssignmentOpKind::BitwiseXorAs => BinaryOpKind::BitwiseXor,
+            AssignmentOpKind::ShiftLeftAs => BinaryOpKind::ShiftLeft,
+            AssignmentOpKind::ShiftRightAs => BinaryOpKind::ShiftRight,
+        }
+    }
+
+    fn desugared_token(&self, token: &Token) -> Token {
+        let desugared_kind = token.kind.to_non_assignment()
+            .expect("Token should be an assignment operator");
+        
+        let literal = format!("{}", desugared_kind);
+        
+        let start = token.span.start;
+        let end = start + literal.len();
+        
+        Token {
+            kind: desugared_kind,
+            span: TextSpan {
+                start,
+                end,
+                literal,
+            },
+        }
+    }
+
+    fn create_synthetic_equals_token(&self, identifier_token: &Token) -> Token {
+        Token {
+            kind: TokenKind::Equals,
+            span: identifier_token.span.clone(),
+        }
+    }
+}
+
 pub struct CompilationUnit {
     pub ast: Ast,
     pub diagnostics_report: DiagnosticsReportCell,
@@ -552,8 +700,6 @@ impl CompilationUnit {
 
         parser.parse();
 
-        ast.visualise();
-
         // error handling (todo: improve)
         Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
 
@@ -561,6 +707,8 @@ impl CompilationUnit {
         let scopes = ScopeStack::from_global_scope(global_scope);
         let mut resolver = Resolver::new(Rc::clone(&diagnostics_report), scopes);
         resolver.resolve(&mut ast);
+
+        ast.visualise();
 
         Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
         Ok(CompilationUnit { 
