@@ -26,7 +26,12 @@ impl TextSpan {
         for (index, span) in spans.iter().enumerate() {
             if index > 0 {
                 let last = spans.get(index - 1).unwrap();
-                let diff = span.start - last.end;
+                // Prevent overflow by checking if spans are properly ordered
+                let diff = if span.start >= last.end {
+                    span.start - last.end
+                } else {
+                    0
+                };
 
                 literal.push_str(&" ".repeat(diff));
             }

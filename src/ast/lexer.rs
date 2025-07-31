@@ -11,19 +11,30 @@ pub enum TokenKind {
 
     // classic arithmetic operators
     Plus,
+    PlusAs, // +=
     Minus,
+    MinusAs, // -=
     Asterisk,
+    AsteriskAs, // *=
     Slash,
+    SlashAs, // /=
+    Modulo,
+    ModuloAs, // %=
     Equals,
     DoubleAsterisk, // ** for power
 
     // bitwise operators
     Ampersand, // & for bitwise and
+    AmpersandAs, // &=
     Pipe, // | for bitwise or
+    PipeAs, // |=
     Caret, // ^ for bitwise xor
+    CaretAs, // ^=
     Tilde, // ~ for bitwise not
     ShiftLeft, // << for left shift
+    ShiftLeftAs, // <<=
     ShiftRight, // >> for right shift
+    ShiftRightAs, // >>=
 
     // relational operators
     LessThan, // < for less than
@@ -61,6 +72,25 @@ pub enum TokenKind {
     Eof,
 }
 
+impl TokenKind {
+    /// Returns the non-assignment variant of an assignment operator token
+    pub fn to_non_assignment(&self) -> Option<TokenKind> {
+        match self {
+            TokenKind::PlusAs => Some(TokenKind::Plus),
+            TokenKind::MinusAs => Some(TokenKind::Minus),
+            TokenKind::AsteriskAs => Some(TokenKind::Asterisk),
+            TokenKind::SlashAs => Some(TokenKind::Slash),
+            TokenKind::ModuloAs => Some(TokenKind::Modulo),
+            TokenKind::AmpersandAs => Some(TokenKind::Ampersand),
+            TokenKind::PipeAs => Some(TokenKind::Pipe),
+            TokenKind::CaretAs => Some(TokenKind::Caret),
+            TokenKind::ShiftLeftAs => Some(TokenKind::ShiftLeft),
+            TokenKind::ShiftRightAs => Some(TokenKind::ShiftRight),
+            _ => None,
+        }
+    }
+}
+
 impl Display for TokenKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -70,19 +100,30 @@ impl Display for TokenKind {
 
             // classic arithmetic operators
             TokenKind::Plus => write!(f, "+"),
+            TokenKind::PlusAs => write!(f, "+="),
             TokenKind::Minus => write!(f, "-"),
+            TokenKind::MinusAs => write!(f, "-="),
             TokenKind::Asterisk => write!(f, "*"),
+            TokenKind::AsteriskAs => write!(f, "*="),
             TokenKind::Slash => write!(f, "/"),
+            TokenKind::SlashAs => write!(f, "/="),
+            TokenKind::Modulo => write!(f, "%"),
+            TokenKind::ModuloAs => write!(f, "%="),
             TokenKind::Equals => write!(f, "="),
             TokenKind::DoubleAsterisk => write!(f, "**"),
 
             // bitwise operators
             TokenKind::Ampersand => write!(f, "&"),
+            TokenKind::AmpersandAs => write!(f, "&="),
             TokenKind::Pipe => write!(f, "|"),
+            TokenKind::PipeAs => write!(f, "|="),
             TokenKind::Caret => write!(f, "^"),
+            TokenKind::CaretAs => write!(f, "^="),
             TokenKind::Tilde => write!(f, "~"),
             TokenKind::ShiftLeft => write!(f, "<<"),
+            TokenKind::ShiftLeftAs => write!(f, "<<="),
             TokenKind::ShiftRight => write!(f, ">>"),
+            TokenKind::ShiftRightAs => write!(f, ">>="),
 
             // relational operators
             TokenKind::LessThan => write!(f, "<"),
@@ -250,16 +291,17 @@ impl <'a> Lexer<'a> {
         let c = self.consume().unwrap();
 
         match c {
-            '+' => TokenKind::Plus,
+            '+' => self.potential_multi_char_operator('+'),
             '-' => self.potential_multi_char_operator('-'),
             '*' => self.potential_multi_char_operator('*'),
-            '/' => TokenKind::Slash,
+            '/' => self.potential_multi_char_operator('/'),
+            '%' => self.potential_multi_char_operator('%'),
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
             '=' => self.potential_multi_char_operator('='),
-            '&' => TokenKind::Ampersand,
-            '|' => TokenKind::Pipe,
-            '^' => TokenKind::Caret,
+            '&' => self.potential_multi_char_operator('&'),
+            '|' => self.potential_multi_char_operator('|'),
+            '^' => self.potential_multi_char_operator('^'),
             '~' => TokenKind::Tilde,
             '<' => self.potential_multi_char_operator('<'),
             '>' => self.potential_multi_char_operator('>'),
@@ -276,6 +318,86 @@ impl <'a> Lexer<'a> {
 
     fn potential_multi_char_operator(&mut self, first_char: char) -> TokenKind {
         match first_char {
+            '+' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::PlusAs
+                    },
+                    _ => TokenKind::Plus,
+                }
+            },
+            '-' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::MinusAs
+                    },
+                    Some('>') => {
+                        self.consume();
+                        TokenKind::Arrow
+                    },
+                    _ => TokenKind::Minus,
+                }
+            }
+            '*' => {
+                match self.current_char() {
+                    Some('*') => {
+                        self.consume();
+                        TokenKind::DoubleAsterisk
+                    },
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::AsteriskAs
+                    },
+                    _ => TokenKind::Asterisk,
+                }
+            },
+            '/' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::SlashAs
+                    },
+                    _ => TokenKind::Slash,
+                }
+            },
+            '%' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::ModuloAs
+                    },
+                    _ => TokenKind::Modulo,
+                }
+            },
+            '&' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::AmpersandAs
+                    },
+                    _ => TokenKind::Ampersand,
+                }
+            },
+            '|' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::PipeAs
+                    },
+                    _ => TokenKind::Pipe,
+                }
+            },
+            '^' => {
+                match self.current_char() {
+                    Some('=') => {
+                        self.consume();
+                        TokenKind::CaretAs
+                    },
+                    _ => TokenKind::Caret,
+                }
+            },
             '>' => {
                 match self.current_char() {
                     Some('=') => {
@@ -284,7 +406,13 @@ impl <'a> Lexer<'a> {
                     },
                     Some('>') => {
                         self.consume();
-                        TokenKind::ShiftRight
+                        match self.current_char() {
+                            Some('=') => {
+                                self.consume();
+                                TokenKind::ShiftRightAs
+                            },
+                            _ => TokenKind::ShiftRight,
+                        }
                     },
                     _ => TokenKind::GreaterThan,
                 }
@@ -297,7 +425,13 @@ impl <'a> Lexer<'a> {
                     },
                     Some('<') => {
                         self.consume();
-                        TokenKind::ShiftLeft
+                        match self.current_char() {
+                            Some('=') => {
+                                self.consume();
+                                TokenKind::ShiftLeftAs
+                            },
+                            _ => TokenKind::ShiftLeft,
+                        }
                     },
                     _ => TokenKind::LessThan,
                 }
@@ -309,24 +443,6 @@ impl <'a> Lexer<'a> {
                         TokenKind::EqualsEquals
                     },
                     _ => TokenKind::Equals,
-                }
-            },
-            '*' => {
-                match self.current_char() {
-                    Some('*') => {
-                        self.consume();
-                        TokenKind::DoubleAsterisk
-                    },
-                    _ => TokenKind::Asterisk,
-                }
-            },
-            '-' => {
-                match self.current_char() {
-                    Some('>') => {
-                        self.consume();
-                        TokenKind::Arrow
-                    },
-                    _ => TokenKind::Minus,
                 }
             },
             '!' => {

@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
+    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, CallExpression, CompoundBinaryExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
@@ -105,6 +105,9 @@ pub trait ASTVisitor {
             ExpressionKind::Binary(expr) => {
                 self.visit_binary_expression(ast, expr, &expression);
             }
+            ExpressionKind::CompoundBinary(expr) => {
+                self.visit_compound_binary_expression(ast, expr, &expression);
+            }
             ExpressionKind::Unary(expr) => {
                 self.visit_unary_expression(ast, expr, &expression);
             }
@@ -152,6 +155,11 @@ pub trait ASTVisitor {
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {
         self.visit_expression(ast, binary_expression.left);
         self.visit_expression(ast, binary_expression.right);
+    }
+
+    fn visit_compound_binary_expression(&mut self, ast: &mut Ast, compound_expression: &CompoundBinaryExpression, _expr: &Expression) {
+        self.visit_expression(ast, compound_expression.left);
+        self.visit_expression(ast, compound_expression.right);
     }
 
     fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression);

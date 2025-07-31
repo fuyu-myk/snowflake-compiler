@@ -1,4 +1,4 @@
-use crate::ast::{Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, UnaryOp, UnaryOpKind};
+use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, UnaryOp, UnaryOpKind};
 use crate::ast::lexer::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, GlobalScope};
 use crate::diagnostics::DiagnosticsReportCell;
@@ -312,7 +312,36 @@ impl <'a> Parser<'a> {
             left = self.ast.binary_expression(operator, left, right).id;
         }
 
+        while let Some(assignment_op) = self.parse_assignment_operator() {
+            let assignment_token = self.consume().clone();
+
+            // Create compound binary expression instead of desugaring
+            // This allows type checker to validate operands and generate proper errors
+            let right = self.parse_binary_expression();
+            
+            left = self.ast.compound_binary_expression(assignment_op, assignment_token, left, right).id;
+        }
+
         left
+    }
+
+    /// Parse assignment operators separately from binary operators
+    fn parse_assignment_operator(&mut self) -> Option<AssignmentOpKind> {
+        let token = self.current();
+
+        match token.kind {
+            TokenKind::PlusAs => Some(AssignmentOpKind::PlusAs),
+            TokenKind::MinusAs => Some(AssignmentOpKind::MinusAs),
+            TokenKind::AsteriskAs => Some(AssignmentOpKind::MultiplyAs),
+            TokenKind::SlashAs => Some(AssignmentOpKind::DivideAs),
+            TokenKind::ModuloAs => Some(AssignmentOpKind::ModuloAs),
+            TokenKind::AmpersandAs => Some(AssignmentOpKind::BitwiseAndAs),
+            TokenKind::PipeAs => Some(AssignmentOpKind::BitwiseOrAs),
+            TokenKind::CaretAs => Some(AssignmentOpKind::BitwiseXorAs),
+            TokenKind::ShiftLeftAs => Some(AssignmentOpKind::ShiftLeftAs),
+            TokenKind::ShiftRightAs => Some(AssignmentOpKind::ShiftRightAs),
+            _ => None,
+        }
     }
 
     fn parse_unary_expression(&mut self) -> ExpressionId {
@@ -346,6 +375,7 @@ impl <'a> Parser<'a> {
             TokenKind::Minus => Some(BinaryOpKind::Minus),
             TokenKind::Asterisk => Some(BinaryOpKind::Multiply),
             TokenKind::Slash => Some(BinaryOpKind::Divide),
+            TokenKind::Modulo => Some(BinaryOpKind::Modulo),
             TokenKind::DoubleAsterisk => Some(BinaryOpKind::Power),
 
             // bitwise operators

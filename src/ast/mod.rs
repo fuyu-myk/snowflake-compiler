@@ -150,6 +150,10 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right }))
     }
 
+    pub fn compound_binary_expression(&mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId) -> &Expression {
+        self.expression_from_kind(ExpressionKind::CompoundBinary(CompoundBinaryExpression { left, operator, operator_token, right }))
+    }
+
     pub fn unary_expression(&mut self, operator: UnaryOp, operand: ExpressionId) -> &Expression {
         self.expression_from_kind(ExpressionKind::Unary(UnaryExpression { operator, operand }))
     }
@@ -423,6 +427,7 @@ pub enum ExpressionKind {
     Number(NumberExpression),
     String(StringExpression),
     Binary(BinaryExpression),
+    CompoundBinary(CompoundBinaryExpression),
     Unary(UnaryExpression),
     Parenthesised(ParenExpression),
     Variable(VarExpression),
@@ -515,8 +520,8 @@ pub enum BinaryOpKind {
     Minus,
     Multiply,
     Divide,
-    Power,
     Modulo,
+    Power,
 
     // bitwise
     BitwiseAnd, // &
@@ -614,10 +619,32 @@ impl BinaryOp {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum AssignmentOpKind {
+    PlusAs,      // +=
+    MinusAs,     // -=
+    MultiplyAs,  // *=
+    DivideAs,    // /=
+    ModuloAs,    // %=
+    BitwiseAndAs,  // &=
+    BitwiseOrAs,   // |=
+    BitwiseXorAs,  // ^=
+    ShiftLeftAs,   // <<=
+    ShiftRightAs,  // >>=
+}
+
 #[derive(Debug, Clone)]
 pub struct BinaryExpression {
     pub left: ExpressionId, // stored in heap instead of stack
     pub operator: BinaryOp,
+    pub right: ExpressionId,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompoundBinaryExpression {
+    pub left: ExpressionId,
+    pub operator: AssignmentOpKind,
+    pub operator_token: Token,
     pub right: ExpressionId,
 }
 
@@ -662,6 +689,12 @@ impl Expression {
                 let right = ast.query_expression(expr.right).span(ast);
 
                 TextSpan::combine(vec![left, operator, right])
+            },
+            ExpressionKind::CompoundBinary(expr) => {
+                let left = ast.query_expression(expr.left).span(ast);
+                let right = ast.query_expression(expr.right).span(ast);
+
+                TextSpan::combine(vec![left, right])
             },
             ExpressionKind::Unary(expr) => {
                 let operator = expr.operator.token.span.clone();

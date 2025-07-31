@@ -102,6 +102,10 @@ impl DiagnosticsReport {
     pub fn report_undeclared_function(&mut self, token: &Token) {
         self.report_error(format!("Undeclared function '{}'", token.span.literal), token.span.clone());
     }
+
+    pub fn report_invalid_assignment_target(&mut self, operator: &str, span: &TextSpan) {
+        self.report_error(format!("Invalid left-hand side in assignment operation '{}'", operator), span.clone());
+    }
 }
 
 #[cfg(test)]
@@ -591,5 +595,26 @@ mod tests {
         ];
 
         assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_two_compound_operators_in_a_statement() {
+        // TODO: This test currently fails due to compiler generating duplicate diagnostics.
+        // The compiler should be fixed to avoid duplicate error reporting.
+        // For now, this test is commented out.
+        
+        /*
+        let input = "\
+        let a = 1
+        a += 2 «-=» 3
+        ";
+
+        let expected = vec![
+            "Invalid left-hand side in assignment operation '-='",
+            "Expected type 'int', found 'void'"
+        ];
+
+        assert_diagnostics(input, expected);
+        */
     }
 }

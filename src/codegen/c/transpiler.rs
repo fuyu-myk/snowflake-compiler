@@ -147,6 +147,7 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::If(if_expr) => self.transpile_if_expression(ast, &expr, if_expr),
             ExpressionKind::Block(block_expr) => self.transpile_block_expression(ast, &expr, block_expr),
             ExpressionKind::Call(call_expr) => self.transpile_call_expression(ast, call_expr),
+            ExpressionKind::CompoundBinary(_) => todo!("CompoundBinary expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -352,6 +353,7 @@ impl <'a> CTranspiler<'a> {
             },
             ExpressionKind::If(_) => false,
             ExpressionKind::Block(_) => false,
+            ExpressionKind::CompoundBinary(_) => false, // Compound binary expressions should be desugared before reaching here
             ExpressionKind::Error(_) => panic!("Error expression"),
         };
     }

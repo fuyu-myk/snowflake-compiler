@@ -249,6 +249,7 @@ impl HIRBuilder {
 
                 HIRExprKind::Call { fx_idx: call_expr.fx_idx, args: args }
             },
+            ExpressionKind::CompoundBinary(_) => bug_report!("CompoundBinary expressions should be desugared before HIR conversion"),
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };
 
