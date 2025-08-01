@@ -147,7 +147,7 @@ a += a * 2 + 3
 * Ability to parse and evaluate the below statement:
     ```
     let a = 23
-    if a > 8 {
+    if (a > 8) {
         a = 8
     } else {
         a = 6
@@ -157,7 +157,7 @@ a += a * 2 + 3
     ```
     let a = 10
     let b = 20
-    let d = if a == b {
+    let d = if (a == b) {
             10
         } else {
             20
@@ -168,9 +168,21 @@ a += a * 2 + 3
 * Ability to parse and evaluate the below statement:
     ```
     let a = 0
-    while a < 10 [
+    while (a < 10) {
         a = a + 1
-    ]
+        // a += 1 also works
+    }
+    ```
+* `return` can also be used to return a value immediately:
+    ```
+    let a = 0
+    while (a < 10) {
+        if (a >= 5) {
+            return a;
+        }
+        a += 1
+    }
+    // returns 5
     ```
 
 - [x] **Functions** [completed 11.06.2025]
@@ -186,10 +198,27 @@ a += a * 2 + 3
     fx dog {
 
     }
-
+    ```
+    ```
     fx foo(a: int, b: int) -> int {
         return a + b
     }
+    ```
+    ```
+    fx cat() -> int {
+        let a = 0;
+
+        while (a < 10) {
+            if (a >= 5) {
+                return a;
+            }
+
+            a += 1;
+        }
+
+        return a + 1;
+    }
+    // cat() returns 5
     ```
 
 - [x] **Types & type checking** [completed 14.06.2025]
