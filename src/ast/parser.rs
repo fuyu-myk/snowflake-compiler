@@ -195,7 +195,7 @@ impl <'a> Parser<'a> {
 
     fn parse_while_statement(&mut self) -> &Statement {
         let while_keyword = self.consume_and_check(TokenKind::While).clone();
-        let condition_expr = self.parse_expression();
+        let condition_expr = self.parse_condition_expression();
         let body = self.parse_body();
 
         self.ast.while_statement(while_keyword, condition_expr, body)
@@ -213,7 +213,7 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_if_expression(&mut self, if_keyword: Token) -> &Expression {
-        let condition_expr = self.parse_expression(); // parsing condition expression
+        let condition_expr = self.parse_condition_expression(); // parsing condition expression
         let then = self.parse_body(); // parsing 'then' statement
         let else_statement = self.parse_optional_else_statement(); // if there is an 'else' statement, parse it
 
@@ -258,6 +258,13 @@ impl <'a> Parser<'a> {
     fn parse_expression_statement(&mut self) -> &Statement {
         let expr = self.parse_expression();
         self.ast.expression_statement(expr)
+    }
+
+    fn parse_condition_expression(&mut self) -> ExpressionId {
+        self.consume_and_check(TokenKind::LeftParen);
+        let condition = self.parse_expression();
+        self.consume_and_check(TokenKind::RightParen);
+        condition
     }
 
     fn parse_expression(&mut self) -> ExpressionId {
