@@ -139,7 +139,11 @@ impl ASTVisitor for ASTPrinter {
         for statement in &if_statement.then_branch.statements {
             self.visit_statement(ast, *statement);
         }
+
+        self.indent -= 1;
+        self.add_padding();
         self.add_text("}");
+        self.indent += 1;
 
         if let Some(else_branch) = &if_statement.else_branch {
             self.add_whitespace();
@@ -150,7 +154,11 @@ impl ASTVisitor for ASTPrinter {
             for statement in else_branch.body.iter() {
                 self.visit_statement(ast, *statement);
             }
+
+            self.indent -= 1;
+            self.add_padding();
             self.add_text("}\n");
+            self.indent += 1;
         }
         self.indent -=1;
     }
@@ -194,7 +202,7 @@ impl ASTVisitor for ASTPrinter {
         self.visit_body(ast, &while_statement.body);
         self.indent -= 1;
         self.add_padding();
-        self.add_text("}\n");
+        self.add_text("}");
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, span: &TextSpan) {

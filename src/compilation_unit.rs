@@ -527,9 +527,20 @@ impl ASTVisitor for Resolver {
         }
 
         let function = self.scopes.global_scope.functions.get(fx_idx);
-        for statement in (*function.body).clone() {
-            self.visit_statement(ast, statement);
+        for stmt_id in (*function.body).clone() {
+            let statement = ast.query_statement(stmt_id);
+            match &statement.kind {
+                StatementKind::Return(return_statement) => {
+                    let return_statement = return_statement.clone();
+                    self.visit_return_statement(ast, &return_statement);
+                    break; // Exit the loop but continue to cleanup
+                }
+                _ => {
+                    self.visit_statement(ast, statement.id);
+                }
+            }
         }
+
         self.scopes.exit_fx_scope();
     }
 
@@ -734,6 +745,10 @@ impl CompilationUnit {
         if let Some(function) = main_function_ref {
             let function = self.global_scope.functions.get(function);
             for statement in &*function.body {
+                if eval.returned {
+                    eval.returned = false;
+                    break;
+                }
                 eval.visit_statement(&mut self.ast, *statement);
             }
         } else {

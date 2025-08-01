@@ -1,6 +1,6 @@
 use snowflake_compiler::Idx;
 
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
 use std::{collections::HashMap};
 
 
@@ -71,6 +71,7 @@ pub enum Value {
     Number(i64),
     Boolean(bool),
     String(String),
+    Void,
     Function(FunctionIndex),
 }
 
@@ -101,11 +102,12 @@ pub struct ASTEvaluator<'a> {
     pub last_value: Option<Value>,
     pub frames: FrameStack,
     pub global_scope: &'a GlobalScope,
+    pub returned: bool,
 }
 
 impl <'a> ASTEvaluator<'a> {
     pub fn new(global_scope: &'a GlobalScope) -> Self {
-        Self { last_value: None, frames: FrameStack::new(), global_scope }
+        Self { last_value: None, frames: FrameStack::new(), global_scope, returned: false }
     }
 
     fn push_frame(&mut self) {
@@ -177,6 +179,9 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.push_frame();
 
         for statement in body.iter() {
+            if self.returned {
+                break;
+            }
             self.visit_statement(ast, *statement);
         }
 
@@ -190,12 +195,18 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         if self.expect_last_value().expect_boolean() {
             self.push_frame();
             for statement in if_statement.then_branch.iter() {
+                if self.returned {
+                    break;
+                }
                 self.visit_statement(ast, *statement);
             }
             self.pop_frame();
         } else if let Some(else_branch) = &if_statement.else_branch {
             self.push_frame();
             for statement in else_branch.body.iter() {
+                if self.returned {
+                    break;
+                }
                 self.visit_statement(ast, *statement);
             }
             self.pop_frame();
@@ -234,8 +245,11 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.push_frame();
         self.visit_expression(ast, while_statement.condition);
 
-        while self.expect_last_value().expect_boolean() {
+        while self.expect_last_value().expect_boolean() && !self.returned {
             self.visit_body(ast, &while_statement.body);
+            if self.returned {
+                break;
+            }
             self.visit_expression(ast, while_statement.condition);
         }
         self.pop_frame();
@@ -259,9 +273,14 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         }
 
         for statement in &*function.body {
+            if self.returned {
+                break;
+            }
             self.visit_statement(ast, *statement);
         }
+
         self.pop_frame();
+        self.returned = false;
     }
 
     fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &super::BlockExpression, _expr: &Expression) {
@@ -275,6 +294,16 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
     }
 
     fn visit_fx_decl(&mut self, _ast: &mut Ast, _fx_expr: &FxDeclaration, _item_id: ItemId) {
+    }
+
+    fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
+        if let Some(expr) = &return_statement.return_value {
+            self.visit_expression(ast, *expr);
+            self.last_value = Some(self.expect_last_value().clone());
+        } else {
+            self.last_value = Some(Value::Void); // Default return value if none is provided
+        }
+        self.returned = true;
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
