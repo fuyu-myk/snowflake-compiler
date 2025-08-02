@@ -106,6 +106,14 @@ impl DiagnosticsReport {
     pub fn report_invalid_assignment_target(&mut self, operator: &str, span: &TextSpan) {
         self.report_error(format!("Invalid left-hand side in assignment operation '{}'", operator), span.clone());
     }
+
+    pub fn report_division_by_zero(&mut self, operator: &str, span: &TextSpan) {
+        self.report_error(format!("Division by zero in '{}' operation", operator), span.clone());
+    }
+
+    pub fn report_loop_keyword_outside_loop(&mut self, token: &Token) {
+        self.report_error(format!("Cannot use '{}' outside of a loop", token.span.literal), token.span.clone());
+    }
 }
 
 #[cfg(test)]

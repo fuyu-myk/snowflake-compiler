@@ -1,6 +1,6 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, CallExpression, CompoundBinaryExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
@@ -201,6 +201,7 @@ impl ScopeStack {
 struct Resolver {
     scopes: ScopeStack,
     diagnostics: DiagnosticsReportCell,
+    loop_depth: usize,
 }
 
 fn expect_type(diagnostics: &DiagnosticsReportCell, expected: Type, actual: &Type, span: &TextSpan) -> Type {
@@ -216,11 +217,23 @@ impl Resolver {
         Resolver {
             scopes,
             diagnostics,
+            loop_depth: 0,
         }
     }
 
     fn expect_type(&self, expected: Type, actual: &Type, span: &TextSpan) -> Type {
         expect_type(&self.diagnostics, expected, actual, span)
+    }
+
+    fn is_constant_zero(&self, ast: &Ast, expr: &Expression) -> bool {
+        match &expr.kind {
+            ExpressionKind::Number(number_expr) => number_expr.number == 0,
+            ExpressionKind::Parenthesised(paren_expr) => {
+                let inner_expr = ast.query_expression(paren_expr.expression);
+                self.is_constant_zero(ast, inner_expr)
+            }
+            _ => false,
+        }
     }
 
     pub fn resolve(&mut self, ast: &mut Ast) {
@@ -251,8 +264,22 @@ impl Resolver {
         };
 
         self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
-
         self.expect_type(type_matrix.1, &right.ty, &right.span(&ast));
+
+        // Check for division by zero at compile time
+        match operator {
+            BinaryOpKind::Divide | BinaryOpKind::Modulo => {
+                if self.is_constant_zero(ast, right) {
+                    let operator_str = match operator {
+                        BinaryOpKind::Divide => "/",
+                        BinaryOpKind::Modulo => "%",
+                        _ => unreachable!(),
+                    };
+                    self.diagnostics.borrow_mut().report_division_by_zero(operator_str, &right.span(ast));
+                }
+            }
+            _ => {}
+        }
 
         type_matrix.2
     }
@@ -279,6 +306,21 @@ impl Resolver {
 
                 self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
                 self.expect_type(type_matrix.1, &right.ty, &right.span(&ast));
+
+                // Check for division by zero in compound assignment
+                match operator {
+                    AssignmentOpKind::DivideAs | AssignmentOpKind::ModuloAs => {
+                        if self.is_constant_zero(ast, right) {
+                            let operator_str = match operator {
+                                AssignmentOpKind::DivideAs => "/=",
+                                AssignmentOpKind::ModuloAs => "%=",
+                                _ => unreachable!(),
+                            };
+                            self.diagnostics.borrow_mut().report_division_by_zero(operator_str, &right.span(ast));
+                        }
+                    }
+                    _ => {}
+                }
             }
             _ => {
                 // Invalid l-value (like another assignment expression)
@@ -629,7 +671,25 @@ impl ASTVisitor for Resolver {
         let condition = ast.query_expression(while_statement.condition);
         self.expect_type(Type::Bool, &condition.ty, &condition.span(&ast));
 
+        self.loop_depth += 1;
         self.visit_body(ast, &while_statement.body);
+        self.loop_depth -= 1;
+    }
+
+    fn visit_break_expression(&mut self, ast: &mut Ast, break_expression: &BreakExpression, expr: &Expression) {
+        if self.loop_depth == 0 {
+            let mut diagnostics_binding = self.diagnostics.borrow_mut();
+            diagnostics_binding.report_loop_keyword_outside_loop(&break_expression.break_keyword);
+        }
+        ast.set_type(expr.id, Type::Void);
+    }
+
+    fn visit_continue_expression(&mut self, ast: &mut Ast, continue_expression: &ContinueExpression, expr: &Expression) {
+        if self.loop_depth == 0 {
+            let mut diagnostics_binding = self.diagnostics.borrow_mut();
+            diagnostics_binding.report_loop_keyword_outside_loop(&continue_expression.continue_keyword);
+        }
+        ast.set_type(expr.id, Type::Void);
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

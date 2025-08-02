@@ -2,16 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use snowflake_compiler::{bug_report, Idx, IndexVec};
 
-use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, Function, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
+use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, diagnostics::DiagnosticsReportCell, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, Function, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
 
 
 pub struct MIRBuilder {
     mir: MIR,
+    diagnostics: DiagnosticsReportCell,
 }
 
 impl MIRBuilder {
-    pub fn new() -> Self {
-        Self { mir: MIR::new() }
+    pub fn new(diagnostics: DiagnosticsReportCell) -> Self {
+        Self { mir: MIR::new(), diagnostics }
     }
 
     /// Builds the MIR.
@@ -79,10 +80,15 @@ impl MIRBuilder {
 
 type LocalDefinitions = HashMap<VariableIndex, HashMap<BasicBlockIdx, InstructionIdx>>;
 
+struct LoopInfo {
+    entry_bb: BasicBlockIdx,
+    break_blocks: Vec<BasicBlockIdx>,
+}
+
 struct FunctionBuilder {
     temp_var_counter: usize,
     function: Function,
-    loops: Vec<Vec<BasicBlockIdx>>,
+    loops: Vec<LoopInfo>,
     definitions: LocalDefinitions,
     incomplete_phis: HashMap<BasicBlockIdx, Vec<(InstructionIdx, VariableIndex)>>,
     sealed_blocks: HashSet<BasicBlockIdx>,
@@ -206,12 +212,15 @@ impl FunctionBuilder {
     #[inline]
     pub fn push_loop(&mut self, entry_bb: BasicBlockIdx) {
         tracing::debug!("Entering loop at bb{}", entry_bb);
-        self.loops.push(vec![]);
+        self.loops.push(LoopInfo {
+            entry_bb,
+            break_blocks: Vec::new(),
+        });
     }
 
     #[inline]
     pub fn pop_loop(&mut self) -> Vec<BasicBlockIdx> {
-        self.loops.pop().unwrap()
+        self.loops.pop().unwrap().break_blocks
     }
 
     pub fn build_statement(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, statement: &HIRStatement) {
@@ -222,23 +231,32 @@ impl FunctionBuilder {
                 let value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
                 let ty = expr.ty.clone().into();
 
-                bb_builder.add_instruction(
-                    basic_blocks,
-                    &mut self.function,
-                    Instruction::new(InstructionKind::Value(value), ty)
-                );
+                // Only add instruction if the current basic block is not already terminated
+                // (this is such that break/continue expressions can terminate the block)
+                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                    bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(InstructionKind::Value(value), ty)
+                    );
+                }
             }
             HIRStmtKind::Assignment { var_idx, expr } => {
                 // Transforms expression into a value and assigns it to a new instruction
                 // It is then stored as a local variable under `Function` and a definition under `FunctionBuilder`
                 let value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
-                let instruct_idx = bb_builder.add_instruction(
-                    basic_blocks,
-                    &mut self.function,
-                    Instruction::new(InstructionKind::Value(value), expr.ty.clone().into())
-                );
+                
+                // Only add instruction if the current basic block is not already terminated
+                // (this is such that break/continue expressions can terminate the block)
+                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                    let instruct_idx = bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(InstructionKind::Value(value), expr.ty.clone().into())
+                    );
 
-                self.write_variable(*var_idx, bb_builder.current, instruct_idx);
+                    self.write_variable(*var_idx, bb_builder.current, instruct_idx);
+                }
             }
             HIRStmtKind::If { condition, then_block, else_block } => {
                 // A condition bb is constructed first, with a `SwitchInt` terminator that jumps to the
@@ -357,11 +375,6 @@ impl FunctionBuilder {
                 self.pop_loop_and_update(basic_blocks, exit_block);
                 self.seal_block(basic_blocks, exit_block, global_scope);
             }
-            HIRStmtKind::Break => {
-                // Current block terminated with an unresolved terminator (for breaks in loops)
-                let break_block = bb_builder.terminate(basic_blocks, TerminatorKind::Unresolved);
-                self.push_depending_block(break_block);
-            }
         }
     }
 
@@ -412,6 +425,23 @@ impl FunctionBuilder {
 
                 self.calls_to_resolve.push((instruct_idx, *fx_idx));
                 Value::InstructionRef(instruct_idx)
+            }
+            HIRExprKind::Break => {
+                // Current block terminated with an unresolved terminator (for breaks in loops)
+                let break_block = bb_builder.terminate(basic_blocks, TerminatorKind::Unresolved);
+                self.push_depending_block(break_block);
+                Value::Void
+            }
+            HIRExprKind::Continue => {
+                // For continue, jump directly to the loop entry block
+                if let Some(current_loop) = self.loops.last() {
+                    let loop_entry = current_loop.entry_bb;
+                    bb_builder.terminate(basic_blocks, TerminatorKind::Goto(loop_entry));
+                    Value::Void
+                } else {
+                    // Continue outside of loop - this should be caught before this point
+                    panic!("Continue statement outside of loop");
+                }
             }
         }
     }
@@ -584,7 +614,7 @@ impl FunctionBuilder {
     }
 
     pub fn push_depending_block(&mut self, bb: BasicBlockIdx) {
-        self.loops.last_mut().unwrap().push(bb);
+        self.loops.last_mut().unwrap().break_blocks.push(bb);
     }
 }
 

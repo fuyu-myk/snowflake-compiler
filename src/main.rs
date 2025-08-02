@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     println!("{}", hir_output); // display HIR output
 
     // MIR unoptimised
-    let mir_builder = MIRBuilder::new();
+    let mir_builder = MIRBuilder::new(compilation_unit.diagnostics_report.clone());
     let mut mir = mir_builder.build(&hir, &compilation_unit.global_scope);
     let mut mir_output = String::new();
     let mut mir_graphviz = String::new();

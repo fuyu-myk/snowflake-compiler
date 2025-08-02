@@ -78,8 +78,22 @@ impl MIRPassLocal for ConstantsFolding {
                             BinOp::Add => left_int + right_int,
                             BinOp::Sub => left_int - right_int,
                             BinOp::Mul => left_int * right_int,
-                            BinOp::Div => left_int / right_int,
-                            BinOp::Mod => left_int % right_int,
+                            BinOp::Div => {
+                                if right_int == 0 {
+                                    // Division by zero should have been caught at compile time
+                                    // Skip optimization for safety
+                                    continue;
+                                }
+                                left_int / right_int
+                            },
+                            BinOp::Mod => {
+                                if right_int == 0 {
+                                    // Modulo by zero should have been caught at compile time
+                                    // Skip optimization for safety
+                                    continue;
+                                }
+                                left_int % right_int
+                            },
                             BinOp::BitAnd => left_int & right_int,
                             BinOp::BitOr => left_int | right_int,
                             BinOp::BitXor => left_int ^ right_int,
