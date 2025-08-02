@@ -51,6 +51,8 @@ pub enum TokenKind {
     True,
     False,
     While,
+    Break,
+    Continue,
     Function,
     Return,
 
@@ -140,6 +142,8 @@ impl Display for TokenKind {
             TokenKind::True => write!(f, "True"),
             TokenKind::False => write!(f, "False"),
             TokenKind::While => write!(f, "While"),
+            TokenKind::Break => write!(f, "Break"),
+            TokenKind::Continue => write!(f, "Continue"),
             TokenKind::Function => write!(f, "Function"),
             TokenKind::Return => write!(f, "Return"),
 
@@ -226,6 +230,8 @@ impl <'a> Lexer<'a> {
                     "true" => TokenKind::True,
                     "false" => TokenKind::False,
                     "while" => TokenKind::While,
+                    "break" => TokenKind::Break,
+                    "continue" => TokenKind::Continue,
                     "fx" => TokenKind::Function,
                     "return" => TokenKind::Return,
                     _ => TokenKind::Identifier,

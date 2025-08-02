@@ -49,7 +49,6 @@ pub enum HIRStmtKind {
     Block { body: Vec<HIRStatement> },
     Return { expr: HIRExpression },
     Loop { body: Vec<HIRStatement> },
-    Break,
 }
 
 #[derive(Debug, Clone)]
@@ -78,4 +77,6 @@ pub enum HIRExprKind {
         fx_idx: FunctionIndex,
         args: Vec<HIRExpression>,
     },
+    Break,
+    Continue,
 }

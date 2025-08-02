@@ -1,5 +1,6 @@
 use termion::color;
 use termion::color::{Fg, Reset};
+use tracing_subscriber::fmt::format;
 use crate::ast::*;
 
 
@@ -269,5 +270,13 @@ impl ASTVisitor for ASTPrinter {
         }
 
         self.add_text(")");
+    }
+
+    fn visit_break_expression(&mut self, _ast: &mut Ast, _break_expression: &BreakExpression, _expr: &Expression) {
+        self.result.push_str(&format!("{}break{}", Self::TEXT_COLOUR.fg_str(), Fg(Reset)));
+    }
+
+    fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &ContinueExpression, _expr: &Expression) {
+        self.result.push_str(&format!("{}continue{}", Self::TEXT_COLOUR.fg_str(), Fg(Reset)));
     }
 }

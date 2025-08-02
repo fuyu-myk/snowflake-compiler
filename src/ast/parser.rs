@@ -261,9 +261,9 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_condition_expression(&mut self) -> ExpressionId {
-        self.consume_and_check(TokenKind::LeftParen);
+        //self.consume_and_check(TokenKind::LeftParen);
         let condition = self.parse_expression();
-        self.consume_and_check(TokenKind::RightParen);
+        //self.consume_and_check(TokenKind::RightParen);
         condition
     }
 
@@ -429,6 +429,8 @@ impl <'a> Parser<'a> {
             }
             TokenKind::If => self.parse_if_expression(token.clone()),
             TokenKind::OpenBrace => self.parse_block_expression(token.clone()),
+            TokenKind::Break => self.ast.break_expression(token.clone()),
+            TokenKind::Continue => self.ast.continue_expression(token.clone()),
             _ => {
                 self.diagnostics_report.borrow_mut().report_expected_expression(&token);
                 self.ast.error_expression(token.span)

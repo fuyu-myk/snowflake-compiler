@@ -3,11 +3,15 @@
  */
 
 use crate::ast::{
-    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, CallExpression, CompoundBinaryExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
+    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
 pub trait ASTVisitor {
+    fn visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
+        self.do_visit_statement(ast, statement);
+    }
+
     fn do_visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
         let statement = ast.query_statement(statement).clone();
 
@@ -44,16 +48,6 @@ pub trait ASTVisitor {
         }
     }
 
-    fn visit_body(&mut self, ast: &mut Ast, body: &Body) {
-        self.visit_body_default(ast, body);
-    }
-
-    fn visit_body_default(&mut self, ast: &mut Ast, body: &Body) {
-        for statement in body.iter() {
-            self.visit_statement(ast, *statement);
-        }
-    }
-
     fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId);
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
@@ -67,29 +61,10 @@ pub trait ASTVisitor {
         self.visit_body(ast, &while_statement.body);
     }
 
-    fn visit_block_expression(&mut self, ast: &mut Ast, block_expression: &BlockExpression, _expr: &Expression) {
-        for statement in &block_expression.statements {
-            self.visit_statement(ast, *statement);
-        }
-    }
-
-    fn visit_if_expression(&mut self, ast: &mut Ast, if_expression: &IfExpression, _expr: &Expression) {
-        self.visit_expression(ast, if_expression.condition);
-        for statement in if_expression.then_branch.iter() {
-            self.visit_statement(ast, *statement);
-        }
-
-        if let Some(else_branch) = &if_expression.else_branch {
-            for statement in else_branch.body.iter() {
-                self.visit_statement(ast, *statement);
-            }
-        }
-    }
-
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement);
 
-    fn visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
-        self.do_visit_statement(ast, statement);
+    fn visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
+        self.do_visit_expression(ast, expression);
     }
 
     fn do_visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
@@ -132,8 +107,37 @@ pub trait ASTVisitor {
             ExpressionKind::Block(expr) => {
                 self.visit_block_expression(ast, expr, &expression);
             }
+            ExpressionKind::Break(expr) => {
+                self.visit_break_expression(ast, expr, &expression);
+            }
+            ExpressionKind::Continue(expr) => {
+                self.visit_continue_expression(ast, expr, &expression);
+            }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, span);
+            }
+        }
+    }
+
+    fn visit_continue_expression(&mut self, ast: &mut Ast, continue_expression: &ContinueExpression, _expr: &Expression);
+
+    fn visit_break_expression(&mut self, ast: &mut Ast, break_expression: &BreakExpression, _expr: &Expression);
+
+    fn visit_block_expression(&mut self, ast: &mut Ast, block_expression: &BlockExpression, _expr: &Expression) {
+        for statement in &block_expression.statements {
+            self.visit_statement(ast, *statement);
+        }
+    }
+
+    fn visit_if_expression(&mut self, ast: &mut Ast, if_expression: &IfExpression, _expr: &Expression) {
+        self.visit_expression(ast, if_expression.condition);
+        for statement in if_expression.then_branch.iter() {
+            self.visit_statement(ast, *statement);
+        }
+
+        if let Some(else_branch) = &if_expression.else_branch {
+            for statement in else_branch.body.iter() {
+                self.visit_statement(ast, *statement);
             }
         }
     }
@@ -144,37 +148,43 @@ pub trait ASTVisitor {
         }
     }
 
-    fn visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
-        self.do_visit_expression(ast, expression);
+    fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression);
+
+    fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
+        self.visit_expression(ast, assignment_expression.expression);
     }
 
-    fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression);
+    fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression);
 
-    fn visit_string_expression(&mut self, ast: &mut Ast, string: &StringExpression, expr: &Expression);
-
-    fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {
-        self.visit_expression(ast, binary_expression.left);
-        self.visit_expression(ast, binary_expression.right);
+    fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
+        self.visit_expression(ast, parenthesised_expression.expression);
     }
+
+    fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression);
 
     fn visit_compound_binary_expression(&mut self, ast: &mut Ast, compound_expression: &CompoundBinaryExpression, _expr: &Expression) {
         self.visit_expression(ast, compound_expression.left);
         self.visit_expression(ast, compound_expression.right);
     }
 
-    fn visit_unary_expression(&mut self, ast: &mut Ast, unary_expression: &UnaryExpression, expr: &Expression);
-
-    fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
-        self.visit_expression(ast, parenthesised_expression.expression);
+    fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expression: &BinaryExpression, _expr: &Expression) {
+        self.visit_expression(ast, binary_expression.left);
+        self.visit_expression(ast, binary_expression.right);
     }
 
-    fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression);
+    fn visit_string_expression(&mut self, ast: &mut Ast, string: &StringExpression, expr: &Expression);
 
-    fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
-        self.visit_expression(ast, assignment_expression.expression);
-    }
-
-    fn visit_boolean_expression(&mut self, ast: &mut Ast, boolean: &BoolExpression, expr: &Expression);
+    fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression);
 
     fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan);
+
+    fn visit_body(&mut self, ast: &mut Ast, body: &Body) {
+        self.visit_body_default(ast, body);
+    }
+
+    fn visit_body_default(&mut self, ast: &mut Ast, body: &Body) {
+        for statement in body.iter() {
+            self.visit_statement(ast, *statement);
+        }
+    }
 }

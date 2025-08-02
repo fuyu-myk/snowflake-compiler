@@ -123,9 +123,6 @@ impl <W> HIRWriter<W> where W: Write {
                 Self::write_indent(writer, indent)?;
                 writeln!(writer, "}}")?;
             }
-            HIRStmtKind::Break => {
-                writeln!(writer, "break")?;
-            }
         }
         Ok(())
     }
@@ -169,6 +166,12 @@ impl <W> HIRWriter<W> where W: Write {
                 }
 
                 write!(writer, ")")?;
+            }
+            HIRExprKind::Break => {
+                write!(writer, "break")?;
+            }
+            HIRExprKind::Continue => {
+                write!(writer, "continue")?;
             }
         }
 

@@ -103,11 +103,13 @@ pub struct ASTEvaluator<'a> {
     pub frames: FrameStack,
     pub global_scope: &'a GlobalScope,
     pub returned: bool,
+    pub loop_break: bool,
+    pub loop_continue: bool,
 }
 
 impl <'a> ASTEvaluator<'a> {
     pub fn new(global_scope: &'a GlobalScope) -> Self {
-        Self { last_value: None, frames: FrameStack::new(), global_scope, returned: false }
+        Self { last_value: None, frames: FrameStack::new(), global_scope, returned: false, loop_break: false, loop_continue: false }
     }
 
     fn push_frame(&mut self) {
@@ -179,7 +181,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.push_frame();
 
         for statement in body.iter() {
-            if self.returned {
+            if self.returned || self.loop_break || self.loop_continue {
                 break;
             }
             self.visit_statement(ast, *statement);
@@ -245,13 +247,21 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.push_frame();
         self.visit_expression(ast, while_statement.condition);
 
-        while self.expect_last_value().expect_boolean() && !self.returned {
+        while self.expect_last_value().expect_boolean() && !self.returned && !self.loop_break {
             self.visit_body(ast, &while_statement.body);
-            if self.returned {
+            if self.returned || self.loop_break {
                 break;
+            }
+            if self.loop_continue {
+                self.loop_continue = false;
+                self.visit_expression(ast, while_statement.condition);
+                continue;
             }
             self.visit_expression(ast, while_statement.condition);
         }
+        
+        self.loop_break = false;
+        self.loop_continue = false;
         self.pop_frame();
     }
 
@@ -304,6 +314,14 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             self.last_value = Some(Value::Void); // Default return value if none is provided
         }
         self.returned = true;
+    }
+
+    fn visit_break_expression(&mut self, _ast: &mut Ast, _break_expression: &super::BreakExpression, _expr: &Expression) {
+        self.loop_break = true;
+    }
+
+    fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &super::ContinueExpression, _expr: &Expression) {
+        self.loop_continue = true;
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

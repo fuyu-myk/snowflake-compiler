@@ -84,7 +84,14 @@ impl HIRBuilder {
                         kind: HIRStmtKind::If {
                             condition,
                             then_block: body_ctx.statements,
-                            else_block: vec![HIRStatement { kind: HIRStmtKind::Break }],
+                            else_block: vec![HIRStatement {
+                                kind: HIRStmtKind::Expression {
+                                    expr: HIRExpression {
+                                        kind: HIRExprKind::Break,
+                                        ty: Type::Void
+                                    }
+                                }
+                            }],
                         }
                     }
                 ];
@@ -122,6 +129,7 @@ impl HIRBuilder {
                     right: Box::new(right)
                 }
             },
+            ExpressionKind::CompoundBinary(_) => bug_report!("CompoundBinary expressions should be desugared before HIR conversion"),
             ExpressionKind::Unary(un_expr) => {
                 let operand = self.build_expression(un_expr.operand, ast, global_scope, ctx, true);
 
@@ -249,7 +257,8 @@ impl HIRBuilder {
 
                 HIRExprKind::Call { fx_idx: call_expr.fx_idx, args: args }
             },
-            ExpressionKind::CompoundBinary(_) => bug_report!("CompoundBinary expressions should be desugared before HIR conversion"),
+            ExpressionKind::Break(_) => HIRExprKind::Break,
+            ExpressionKind::Continue(_) => HIRExprKind::Continue,
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };
 

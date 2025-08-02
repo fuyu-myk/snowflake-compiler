@@ -178,6 +178,14 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() }))
     }
 
+    pub fn break_expression(&mut self, break_keyword: Token) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Break(BreakExpression { break_keyword }))
+    }
+
+    pub fn continue_expression(&mut self, continue_keyword: Token) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Continue(ContinueExpression { continue_keyword }))
+    }
+
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
         self.expression_from_kind(ExpressionKind::Error(span))
     }
@@ -333,46 +341,6 @@ pub struct WhileStatement {
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockExpression {
-    pub left_brace: Token,
-    pub statements: Vec<StatementId>,
-    pub right_brace: Token,
-}
-
-impl BlockExpression {
-    pub fn returning_expression(&self, ast: &Ast) -> Option<ExpressionId> {
-        if let Some(last_statement) = self.statements.last() {
-            let statement = ast.query_statement(*last_statement);
-
-            if let StatementKind::Expression(expr_id) = &statement.kind {
-                return Some(*expr_id);
-            }
-        }
-        None
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ElseBranch {
-    pub else_keyword: Token,
-    pub body: Body,
-}
-
-impl ElseBranch {
-    pub fn new(else_keyword: Token, body: Body) -> Self {
-        ElseBranch { else_keyword, body }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct IfExpression {
-    pub if_keyword: Token,
-    pub condition: ExpressionId,
-    pub then_branch: Body,
-    pub else_branch: Option<ElseBranch>,
-}
-
-#[derive(Debug, Clone)]
 pub struct LetStatement {
     pub identifier: Token,
     pub initialiser: ExpressionId,
@@ -436,7 +404,59 @@ pub enum ExpressionKind {
     Call(CallExpression),
     If(IfExpression),
     Block(BlockExpression),
+    Break(BreakExpression),
+    Continue(ContinueExpression),
     Error(TextSpan),
+}
+
+#[derive(Debug, Clone)]
+pub struct BreakExpression {
+    pub break_keyword: Token,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContinueExpression {
+    pub continue_keyword: Token,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockExpression {
+    pub left_brace: Token,
+    pub statements: Vec<StatementId>,
+    pub right_brace: Token,
+}
+
+impl BlockExpression {
+    pub fn returning_expression(&self, ast: &Ast) -> Option<ExpressionId> {
+        if let Some(last_statement) = self.statements.last() {
+            let statement = ast.query_statement(*last_statement);
+
+            if let StatementKind::Expression(expr_id) = &statement.kind {
+                return Some(*expr_id);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ElseBranch {
+    pub else_keyword: Token,
+    pub body: Body,
+}
+
+impl ElseBranch {
+    pub fn new(else_keyword: Token, body: Body) -> Self {
+        ElseBranch { else_keyword, body }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IfExpression {
+    pub if_keyword: Token,
+    pub condition: ExpressionId,
+    pub then_branch: Body,
+    pub else_branch: Option<ElseBranch>,
 }
 
 #[derive(Debug, Clone)]
@@ -753,6 +773,8 @@ impl Expression {
                 spans.push(block_statement.right_brace.span.clone());
                 TextSpan::combine(spans)
             },
+            ExpressionKind::Break(break_expression) => break_expression.break_keyword.span.clone(),
+            ExpressionKind::Continue(continue_expression) => continue_expression.continue_keyword.span.clone(),
             ExpressionKind::Error(span) => span.clone(),
         }
     }
@@ -787,6 +809,8 @@ mod tests {
         Function,
         Return,
         Call,
+        Break,
+        Continue,
     }
 
     struct ASTVerifier {
@@ -914,6 +938,14 @@ mod tests {
             for argument in &call_expression.arguments {
                 self.visit_expression(ast, *argument);
             }
+        }
+
+        fn visit_break_expression(&mut self, _ast: &mut Ast, _break_expression: &BreakExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Break);
+        }
+
+        fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &ContinueExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Continue);
         }
     }
 
