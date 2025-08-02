@@ -316,7 +316,7 @@ impl <'a> Parser<'a> {
                 right = self.parse_binary_expression_recurse(right, std::cmp::max(operator.precedence(), inner_operator.precedence()));
             }
 
-            left = self.ast.binary_expression(operator, left, right).id;
+            left = self.ast.binary_expression(operator, left, right, false).id;
         }
 
         while let Some(assignment_op) = self.parse_assignment_operator() {

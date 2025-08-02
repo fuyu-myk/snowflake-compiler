@@ -146,8 +146,8 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::String(StringExpression { token, value }))
     }
 
-    pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right }))
+    pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId, from_compound: bool) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right, from_compound }))
     }
 
     pub fn compound_binary_expression(&mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId) -> &Expression {
@@ -409,6 +409,16 @@ pub enum ExpressionKind {
     Error(TextSpan),
 }
 
+impl ExpressionKind {
+    pub fn is_from_compound(&self) -> bool {
+        match self {
+            ExpressionKind::Binary(binary_expr) => binary_expr.from_compound,
+            ExpressionKind::CompoundBinary(_) => false,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BreakExpression {
     pub break_keyword: Token,
@@ -658,6 +668,7 @@ pub struct BinaryExpression {
     pub left: ExpressionId, // stored in heap instead of stack
     pub operator: BinaryOp,
     pub right: ExpressionId,
+    pub from_compound: bool,
 }
 
 #[derive(Debug, Clone)]

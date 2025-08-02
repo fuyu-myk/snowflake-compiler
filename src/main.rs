@@ -1,4 +1,4 @@
-use std::{env, fs::File, io::Write};
+use std::{env, fs::File, io::Write, rc::Rc};
 
 use crate::{compilation_unit::CompilationUnit, ir::{hir::{HIRBuilder, HIRWriter}, mir::{optimisations::Optimiser, MIRBuilder, MIRWriter}}};
 
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     println!("{}", hir_output); // display HIR output
 
     // MIR unoptimised
-    let mir_builder = MIRBuilder::new(compilation_unit.diagnostics_report.clone());
+    let mir_builder = MIRBuilder::new(Rc::clone(&compilation_unit.diagnostics_report));
     let mut mir = mir_builder.build(&hir, &compilation_unit.global_scope);
     let mut mir_output = String::new();
     let mut mir_graphviz = String::new();

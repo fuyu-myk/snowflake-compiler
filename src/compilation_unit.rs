@@ -269,7 +269,7 @@ impl Resolver {
         // Check for division by zero at compile time
         match operator {
             BinaryOpKind::Divide | BinaryOpKind::Modulo => {
-                if self.is_constant_zero(ast, right) {
+                if self.is_constant_zero(ast, right) && !right.kind.is_from_compound() {
                     let operator_str = match operator {
                         BinaryOpKind::Divide => "/",
                         BinaryOpKind::Modulo => "%",
@@ -306,21 +306,6 @@ impl Resolver {
 
                 self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
                 self.expect_type(type_matrix.1, &right.ty, &right.span(&ast));
-
-                // Check for division by zero in compound assignment
-                match operator {
-                    AssignmentOpKind::DivideAs | AssignmentOpKind::ModuloAs => {
-                        if self.is_constant_zero(ast, right) {
-                            let operator_str = match operator {
-                                AssignmentOpKind::DivideAs => "/=",
-                                AssignmentOpKind::ModuloAs => "%=",
-                                _ => unreachable!(),
-                            };
-                            self.diagnostics.borrow_mut().report_division_by_zero(operator_str, &right.span(ast));
-                        }
-                    }
-                    _ => {}
-                }
             }
             _ => {
                 // Invalid l-value (like another assignment expression)
@@ -339,8 +324,6 @@ impl Resolver {
             }
         }
 
-        // Compound assignment expressions always return void
-        // This is key for generating the intended error messages
         Type::Void
     }
 
@@ -451,7 +434,7 @@ impl ASTVisitor for Resolver {
                 // Desugaring: create the binary operation (a + b)
                 let binary_op_kind = self.assignment_to_binary_op(operator);
                 let binary_op = BinaryOp::new(binary_op_kind, self.desugared_token(&compound_expression.operator_token));
-                let binary_expr_id = ast.binary_expression(binary_op, left_expr_id, right_expr_id).id;
+                let binary_expr_id = ast.binary_expression(binary_op, left_expr_id, right_expr_id, true).id;
                 
                 // Visit the newly created binary expression to resolve its type
                 self.visit_expression(ast, binary_expr_id);

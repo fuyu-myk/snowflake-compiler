@@ -119,7 +119,7 @@ impl DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compilation_unit::CompilationUnit};
+    use crate::{compilation_unit::CompilationUnit, ir::{hir::HIRBuilder, mir::MIRBuilder}};
 
 
     struct DiagnosticsVerifier {
@@ -140,9 +140,22 @@ mod tests {
         fn compile(input: &str) -> Vec<Diagnostic> {
             let raw_text = Self::get_raw_text(input);
             let compilation_unit = CompilationUnit::compile(&raw_text);
+
+            let hir_builder = HIRBuilder::new();
+
             match compilation_unit {
-                Ok(_) => vec![],
-                Err(e) => e.borrow().diagnostics.clone(),
+                Ok(mut unit) => {
+                    let hir = hir_builder.build(&unit.ast, &mut unit.global_scope);
+                    let mir_builder = MIRBuilder::new(Rc::clone(&unit.diagnostics_report));
+                    let _mir = mir_builder.build(&hir, &unit.global_scope);
+                    let diagnostics = unit.diagnostics_report.borrow()
+                        .diagnostics
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    diagnostics
+                },
+                Err(e) => return e.borrow().diagnostics.clone(),
             }
         }
 
@@ -624,5 +637,61 @@ mod tests {
 
         assert_diagnostics(input, expected);
         */
+    }
+
+    #[test]
+    fn test_division_by_zero() {
+        let input = "\
+        let a = 1
+        a / «0»
+        ";
+
+        let expected = vec![
+            "Division by zero in '/' operation"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_remainder_by_zero() {
+        let input = "\
+        let a = 1
+        a % «0»
+        ";
+
+        let expected = vec![
+            "Division by zero in '%' operation"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_division_assignment_by_zero() {
+        let input = "\
+        let a = 1
+        a /= «0»
+        ";
+
+        let expected = vec![
+            "Division by zero in '/' operation"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_remainder_assignment_by_zero() {
+        let input = "\
+        let a = 1
+        a %= «0»
+        ";
+
+        let expected = vec![
+            "Division by zero in '%' operation"
+        ];
+
+        assert_diagnostics(input, expected);
     }
 }
