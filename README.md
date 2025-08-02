@@ -147,7 +147,7 @@ a += a * 2 + 3
 * Ability to parse and evaluate the below statement:
     ```
     let a = 23
-    if (a > 8) {
+    if a > 8 {
         a = 8
     } else {
         a = 6
@@ -157,7 +157,7 @@ a += a * 2 + 3
     ```
     let a = 10
     let b = 20
-    let d = if (a == b) {
+    let d = if a == b {
             10
         } else {
             20
@@ -168,7 +168,7 @@ a += a * 2 + 3
 * Ability to parse and evaluate the below statement:
     ```
     let a = 0
-    while (a < 10) {
+    while a < 10 {
         a = a + 1
         // a += 1 also works
     }
@@ -176,14 +176,15 @@ a += a * 2 + 3
 * `return` can also be used to return a value immediately:
     ```
     let a = 0
-    while (a < 10) {
-        if (a >= 5) {
+    while a < 10 {
+        if a >= 5 {
             return a;
         }
         a += 1
     }
     // returns 5
     ```
+* `break` and `continue` can also be used to exit the loop and skip the current iteration respectively
 
 - [x] **Functions** [completed 11.06.2025]
 * Ability to define, parse, store and evaluate functions
@@ -208,8 +209,8 @@ a += a * 2 + 3
     fx cat() -> int {
         let a = 0;
 
-        while (a < 10) {
-            if (a >= 5) {
+        while a < 10 {
+            if a >= 5 {
                 return a;
             }
 
