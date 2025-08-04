@@ -153,6 +153,20 @@ impl FunctionBuilder {
                                  self.function.name, self.function.return_type);
                     Value::ConstantInt(0) // false
                 }
+                Type::Usize => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
+                                 self.function.name, self.function.return_type);
+                    Value::ConstantUsize(0)
+                }
+                Type::Array(_) => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty array return", 
+                                 self.function.name, self.function.return_type);
+                    Value::InstructionRef(bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(InstructionKind::Array(Vec::new()), Type::Array(Box::new(Type::Void))),
+                    ))
+                }
             };
             bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: return_value });
         }
@@ -381,11 +395,44 @@ impl FunctionBuilder {
     pub fn build_expr(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, expr: &HIRExpression) -> Value {
         match &expr.kind {
             HIRExprKind::Number(value) => Value::ConstantInt(*value as i32),
+            HIRExprKind::Usize(value) => Value::ConstantUsize(*value),
             HIRExprKind::String(value) => Value::ConstantString(value.clone()),
             HIRExprKind::Bool(value) => Value::ConstantInt(if *value { 1 } else { 0 }),
             HIRExprKind::Unit => Value::Void,
             HIRExprKind::Var(var_idx) => {
                 let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
+
+                Value::InstructionRef(instruct_ref)
+            }
+            HIRExprKind::Array(array_expr) => {
+                // For arrays, we create a new instruction that represents the array
+                // The array is built as a single value, which is then used in the MIR
+                let element_type = array_expr.first()
+                    .map(|elem| elem.ty.clone().into())
+                    .unwrap_or(Type::Void);
+
+                let elements: Vec<Value> = array_expr.iter()
+                    .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
+                    .collect();
+
+                let instruct_ref = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(InstructionKind::Array(elements), Type::Array(Box::new(element_type))),
+                );
+
+                Value::InstructionRef(instruct_ref)
+            }
+            HIRExprKind::Index { object, index } => {
+                // For indexing, we create a new instruction that represents the index operation
+                let object = self.build_expr(basic_blocks, bb_builder, global_scope, object);
+                let index = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+
+                let instruct_ref = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(InstructionKind::Index { object: Box::new(object), index: Box::new(index) }, Type::Void),
+                );
 
                 Value::InstructionRef(instruct_ref)
             }

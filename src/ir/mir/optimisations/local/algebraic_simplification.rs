@@ -78,6 +78,8 @@ impl MIRPassLocal for AlgebraicSimplification {
                 InstructionKind::Unary { .. } => {}
                 InstructionKind::Value(_) => {}
                 InstructionKind::Call { .. } => {}
+                InstructionKind::Array(_) => {}
+                InstructionKind::Index { .. } => {}
                 InstructionKind::Phi(_) => {}
             }
         }

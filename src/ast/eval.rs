@@ -1,6 +1,6 @@
 use snowflake_compiler::Idx;
 
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, CallExpression, Expression, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ContinueExpression, Expression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, TextSpan, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
 use std::{collections::HashMap};
 
 
@@ -69,10 +69,12 @@ fn update(&mut self, index: VariableIndex, value: Value) {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(i64),
+    Usize(usize),
     Boolean(bool),
     String(String),
     Void,
     Function(FunctionIndex),
+    Array(Vec<Value>),
 }
 
 impl Value {
@@ -86,6 +88,7 @@ impl Value {
     pub fn expect_number(&self) -> i64 {
         match self {
             Value::Number(value) => *value,
+            Value::Usize(value) => *value as i64,
             _ => panic!("Expected number value"),
         }
     }
@@ -130,8 +133,21 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.last_value = Some(Value::Number(number.number));
     }
 
+    fn visit_usize_expression(&mut self, _ast: &mut Ast, number: &super::UsizeExpression, _expr: &Expression) {
+        self.last_value = Some(Value::Usize(number.number));
+    }
+
     fn visit_string_expression(&mut self, _ast: &mut Ast, string: &super::StringExpression, _expr: &Expression) {
-        self.last_value = Some(Value::String(string.value.clone()));
+        self.last_value = Some(Value::String(string.string.clone()));
+    }
+
+    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &super::ArrayExpression, _expr: &Expression) {
+        let elements = array_expression.elements.iter().map(|element| {
+            self.visit_expression(ast, *element);
+            self.expect_last_value().clone()
+        }).collect();
+
+        self.last_value = Some(Value::Array(elements));
     }
 
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expr: &BinaryExpression, _expr: &Expression) {
@@ -316,12 +332,42 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.returned = true;
     }
 
-    fn visit_break_expression(&mut self, _ast: &mut Ast, _break_expression: &super::BreakExpression, _expr: &Expression) {
+    fn visit_break_expression(&mut self, _ast: &mut Ast, _break_expression: &BreakExpression, _expr: &Expression) {
         self.loop_break = true;
     }
 
-    fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &super::ContinueExpression, _expr: &Expression) {
+    fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &ContinueExpression, _expr: &Expression) {
         self.loop_continue = true;
+    }
+
+    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
+        self.visit_expression(ast, index_expression.object);
+        let object = self.expect_last_value().clone();
+
+        self.visit_expression(ast, index_expression.index);
+        let index_value = self.expect_last_value();
+        
+        // Handle both usize and converted numbers as array indices
+        let index = match index_value {
+            Value::Usize(val) => *val,
+            Value::Number(val) => {
+                if *val < 0 {
+                    panic!("Array index cannot be negative: {}", val);
+                }
+                *val as usize
+            },
+            _ => panic!("Array index must be a number or usize, found {:?}", index_value),
+        };
+
+        match object {
+            Value::Array(array) => {
+                if index >= array.len() {
+                    panic!("Array index {} out of bounds for array of length {}", index, array.len());
+                }
+                self.last_value = Some(array[index].clone());
+            }
+            _ => panic!("Indexing is only supported for arrays"),
+        }
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

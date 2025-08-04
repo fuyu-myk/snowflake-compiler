@@ -132,6 +132,9 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Number(number) => {
                 write!(writer, "{}", number)?;
             }
+            HIRExprKind::Usize(number) => {
+                write!(writer, "{}", number)?;
+            }
             HIRExprKind::String(string) => {
                 write!(writer, "\"{}\"", string)?;
             }
@@ -144,6 +147,22 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Var(var_idx) => {
                 let var = global_scope.variables.get(*var_idx);
                 write!(writer, "{}", var.name)?;
+            }
+            HIRExprKind::Array(array_expr) => {
+                write!(writer, "[")?;
+                for (i, elem) in array_expr.iter().enumerate() {
+                    Self::write_expression(writer, elem, global_scope, indent)?;
+                    if i != array_expr.len() - 1 {
+                        write!(writer, ", ")?;
+                    }
+                }
+                write!(writer, "]")?;
+            }
+            HIRExprKind::Index { object, index } => {
+                Self::write_expression(writer, object, global_scope, indent)?;
+                write!(writer, "[")?;
+                Self::write_expression(writer, index, global_scope, indent)?;
+                write!(writer, "]")?;
             }
             HIRExprKind::Binary { operator, left, right } => {
                 Self::write_expression(writer, left.as_ref(), global_scope, indent)?;

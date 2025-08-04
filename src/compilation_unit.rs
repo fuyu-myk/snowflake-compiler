@@ -1,6 +1,6 @@
 use snowflake_compiler::{Idx, idx, IndexVec};
 
-use crate::ast::{AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StringExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use crate::diagnostics::{DiagnosticsReportCell};
@@ -202,10 +202,15 @@ struct Resolver {
     scopes: ScopeStack,
     diagnostics: DiagnosticsReportCell,
     loop_depth: usize,
+    expected_array_type: Option<Type>, // Track expected array type for better error reporting
 }
 
 fn expect_type(diagnostics: &DiagnosticsReportCell, expected: Type, actual: &Type, span: &TextSpan) -> Type {
-    if !actual.is_assignable_to(&expected) {
+    // Implicit conversion from Int to Usize
+    let is_compatible = actual.is_assignable_to(&expected) || 
+                       (matches!(expected, Type::Usize) && matches!(actual, Type::Int));
+    
+    if !is_compatible {
         diagnostics.borrow_mut().report_type_mismatch(&expected, actual, span);
     }
 
@@ -218,11 +223,22 @@ impl Resolver {
             scopes,
             diagnostics,
             loop_depth: 0,
+            expected_array_type: None,
         }
     }
 
     fn expect_type(&self, expected: Type, actual: &Type, span: &TextSpan) -> Type {
         expect_type(&self.diagnostics, expected, actual, span)
+    }
+
+    fn expect_index_type(&self, expected: Type, actual: &Type, span: &TextSpan, is_neg_idx: bool) {
+        // Implicit conversion from Int to Usize for array indexing
+        let is_compatible = actual.is_assignable_to(&expected) || 
+                           (matches!(expected, Type::Usize) && matches!(actual, Type::Int));
+        
+        if !is_compatible && !is_neg_idx {
+            self.diagnostics.borrow_mut().report_index_type_mismatch(expected, actual, span);
+        }
     }
 
     fn is_constant_zero(&self, ast: &Ast, expr: &Expression) -> bool {
@@ -339,6 +355,36 @@ impl Resolver {
     }
 }
 
+pub fn resolve_type_from_annotation(diagnostics: &DiagnosticsReportCell, type_annotation: &StaticTypeAnnotation) -> Type {
+    // Check if it's an array type annotation like [int; 3]
+    if let (Some(_open_bracket), Some(length_token), Some(_close_bracket)) = 
+        (&type_annotation.open_square_bracket, &type_annotation.length, &type_annotation.close_square_bracket) {
+        
+        // Parse the element type
+        let element_type = Type::from_str(&type_annotation.type_name.span.literal);
+        let element_type = match element_type {
+            Some(ty) => ty,
+            None => {
+                diagnostics.borrow_mut().report_undeclared_type(&type_annotation.type_name);
+                Type::Error
+            }
+        };
+        
+        // Parse the array length
+        let length_str = &length_token.span.literal;
+        match length_str.parse::<usize>() {
+            Ok(length) => Type::Array(Box::new(element_type), length),
+            Err(_) => {
+                diagnostics.borrow_mut().report_undeclared_type(length_token);
+                Type::Error
+            }
+        }
+    } else {
+        // Regular type like int, bool, etc.
+        resolve_type_from_string(diagnostics, &type_annotation.type_name)
+    }
+}
+
 pub fn resolve_type_from_string(diagnostics: &DiagnosticsReportCell, type_name: &Token) -> Type {
         let ty = Type::from_str(&type_name.span.literal);
         return match ty {
@@ -353,14 +399,28 @@ pub fn resolve_type_from_string(diagnostics: &DiagnosticsReportCell, type_name: 
 impl ASTVisitor for Resolver {
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
         let identifier = let_statement.identifier.span.literal.clone();
+        
+        // Set expected array type if we have an array type annotation
+        let expected_type = match &let_statement.type_annotation {
+            Some(type_annotation) => {
+                let ty = resolve_type_from_annotation(&self.diagnostics, type_annotation);
+                if matches!(ty, Type::Array(_, _)) {
+                    self.expected_array_type = Some(ty.clone());
+                }
+                Some(ty)
+            }
+            None => None,
+        };
+        
         self.visit_expression(ast, let_statement.initialiser);
         let initialiser_expression = &ast.query_expression(let_statement.initialiser);
 
-        let ty = match &let_statement.type_annotation {
-            Some(type_annotation) => {
-                let ty = resolve_type_from_string(&self.diagnostics, &type_annotation.type_name);
-                self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
-                ty
+        self.expected_array_type = None;
+
+        let ty = match expected_type {
+            Some(expected_ty) => {
+                self.expect_type(expected_ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
+                expected_ty
             }
             None => initialiser_expression.ty.clone(),
         };
@@ -386,6 +446,10 @@ impl ASTVisitor for Resolver {
 
     fn visit_number_expression(&mut self, ast: &mut Ast, _number: &NumberExpression, expr: &Expression) {
         ast.set_type(expr.id, Type::Int);
+    }
+
+    fn visit_usize_expression(&mut self, ast: &mut Ast, _number: &UsizeExpression, expr: &Expression) {
+        ast.set_type(expr.id, Type::Usize);
     }
 
     fn visit_string_expression(&mut self, ast: &mut Ast, _string: &StringExpression, expr: &Expression) {
@@ -675,12 +739,141 @@ impl ASTVisitor for Resolver {
         ast.set_type(expr.id, Type::Void);
     }
 
+    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &ArrayExpression, expr: &Expression) {
+        for element in &array_expression.elements {
+            self.visit_expression(ast, *element);
+        }
+
+        // Infer the array element type from the first element (if any)
+        let inferred_element_type = if let Some(first_element_id) = array_expression.elements.first() {
+            let first_element = ast.query_expression(*first_element_id);
+            first_element.ty.clone()
+        } else {
+            resolve_type_from_string(&self.diagnostics, &array_expression.type_decl)
+        };
+        
+        let actual_array_type = Type::Array(Box::new(inferred_element_type.clone()), array_expression.elements.len());
+
+        ast.set_type(expr.id, actual_array_type.clone());
+
+        let should_report_element_mismatches = if let Some(expected) = &self.expected_array_type {
+            match expected {
+                Type::Array(expected_element_type, expected_length) => {
+                    let length_matches = *expected_length == array_expression.elements.len();
+                    
+                    // Check if ALL elements would match the expected type
+                    let all_elements_match_expected = array_expression.elements.iter().all(|element_id| {
+                        let element = ast.query_expression(*element_id);
+                        element.ty.is_assignable_to(expected_element_type)
+                    });
+                    
+                    if !length_matches && !all_elements_match_expected {
+                        false
+                    } else {
+                        true
+                    }
+                }
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        // Check that all elements match the inferred element type
+        if should_report_element_mismatches && !array_expression.elements.is_empty() {
+            for element_id in &array_expression.elements {
+                let element = ast.query_expression(*element_id);
+                if !element.ty.is_assignable_to(&inferred_element_type) {
+                    self.diagnostics.borrow_mut().report_type_mismatch(
+                        &inferred_element_type,
+                        &element.ty,
+                        &element.span(ast)
+                    );
+                }
+            }
+        }
+    }
+
+    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, expr: &Expression) {
+        self.visit_expression(ast, index_expression.object);
+        self.visit_expression(ast, index_expression.index);
+        
+        let object = ast.query_expression(index_expression.object);
+        let index = ast.query_expression(index_expression.index);
+
+        let object_ty = object.ty.clone();
+        let object_span = object.span(ast);
+        let index_ty = index.ty.clone();
+        let index_span = index.span(ast);
+        let index_literal = index_span.literal.clone();
+
+        // Check for negative array index patterns
+        let is_neg_idx = self.check_for_negative_array_index(ast, index, &index_span);
+
+        self.expect_index_type(Type::Usize, &index_ty, &index_span, is_neg_idx);
+
+        match &object_ty {
+            Type::Array(element_type, object_size) => {
+                let element_type_cloned = *element_type.clone();
+                ast.set_type(expr.id, element_type_cloned);
+
+                // Compile-time bounds checking for constant indices
+                if let Ok(idx) = index_literal.parse::<usize>() {
+                    if idx >= *object_size {
+                        self.diagnostics.borrow_mut().report_index_out_of_bounds(
+                            &index_span,
+                            object_size.to_string(),
+                            &object_span,
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Error: trying to index a non-array type
+                self.diagnostics.borrow_mut().report_cannot_index_type(&object_ty, &object_span);
+                ast.set_type(expr.id, Type::Error);
+            }
+        }
+    }
+
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
 
     }
 }
 
 impl Resolver {
+    /// Check if the index expression represents a negative number (like -1, -5, etc.)
+    fn check_for_negative_array_index(&self, ast: &Ast, index_expr: &Expression, index_span: &TextSpan) -> bool {
+        match &index_expr.kind {
+            ExpressionKind::Unary(unary_expr) => {
+                // Check if this is a negation of a positive number
+                if matches!(unary_expr.operator.kind, UnaryOpKind::Negation) {
+                    let operand = ast.query_expression(unary_expr.operand);
+                    match &operand.kind {
+                        ExpressionKind::Number(_) | ExpressionKind::Usize(_) => {
+                            self.diagnostics.borrow_mut().report_negative_array_index(index_span);
+                            true
+                        }
+                        _ => false
+                    }
+                } else {
+                    false
+                }
+            }
+            ExpressionKind::Number(number_expr) => {
+                if number_expr.number < 0 {
+                    self.diagnostics.borrow_mut().report_negative_array_index(index_span);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => {
+                false
+            }
+        }
+    }
+
     fn assignment_to_binary_op(&self, op_kind: AssignmentOpKind) -> BinaryOpKind {
         match op_kind {
             AssignmentOpKind::PlusAs => BinaryOpKind::Plus,
@@ -810,12 +1003,7 @@ impl CompilationUnit {
         );
 
         diagnostics_printer.print();
-
-        if diagnostics_binding.diagnostics.len() == 1 {
-                println!("\nCompilation failed due to {} previous error.", diagnostics_binding.diagnostics.len());
-            } else {
-                println!("\nCompilation failed due to {} previous errors.", diagnostics_binding.diagnostics.len());
-            }
+        println!("");
         
         return Err(());
         }

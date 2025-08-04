@@ -96,7 +96,7 @@ impl Ast {
         expr.ty = ty;
     }
 
-    // ASTStatement
+    // Statement
     fn statement_from_kind(&mut self, kind: StatementKind) -> &Statement {
         let statement = Statement::new(kind, StatementId::new(0));
         let id = self.statements.push(statement);
@@ -113,7 +113,9 @@ impl Ast {
         self.statement_from_kind(StatementKind::Let(LetStatement { identifier, initialiser, type_annotation, variable_index: VariableIndex::new(0) }))
     }
 
-    pub fn if_expression(&mut self, if_keyword: Token, condition: ExpressionId, then_branch: Body, else_statement: Option<ElseBranch>) -> &Expression {
+    pub fn if_expression(
+        &mut self, if_keyword: Token, condition: ExpressionId, then_branch: Body, else_statement: Option<ElseBranch>
+    ) -> &Expression {
         self.expression_from_kind(ExpressionKind::If(IfExpression { if_keyword, condition, then_branch, else_branch: else_statement }))
     }
 
@@ -129,7 +131,7 @@ impl Ast {
         self.statement_from_kind(StatementKind::Return(ReturnStatement { return_keyword, return_value }))
     }
 
-    // ASTExpression
+    // Expression
     pub fn expression_from_kind(&mut self, kind: ExpressionKind) -> &Expression {
         let expression = Expression::new(kind, ExpressionId::new(0), Type::Unresolved);
         let expr_id = self.expressions.push(expression);
@@ -142,16 +144,24 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Number(NumberExpression { token, number }))
     }
 
+    pub fn usize_expression(&mut self, token: Token, number: usize) -> &Expression {
+        self.expression_from_kind(ExpressionKind::Usize(UsizeExpression { token, number }))
+    }
+
     pub fn string_expression(&mut self, token: Token, value: String) -> &Expression {
-        self.expression_from_kind(ExpressionKind::String(StringExpression { token, value }))
+        self.expression_from_kind(ExpressionKind::String(StringExpression { token, string: value }))
     }
 
     pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId, from_compound: bool) -> &Expression {
         self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right, from_compound }))
     }
 
-    pub fn compound_binary_expression(&mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId) -> &Expression {
-        self.expression_from_kind(ExpressionKind::CompoundBinary(CompoundBinaryExpression { left, operator, operator_token, right }))
+    pub fn compound_binary_expression(
+        &mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId
+    ) -> &Expression {
+        self.expression_from_kind(
+            ExpressionKind::CompoundBinary(CompoundBinaryExpression { left, operator, operator_token, right })
+        )
     }
 
     pub fn unary_expression(&mut self, operator: UnaryOp, operand: ExpressionId) -> &Expression {
@@ -167,7 +177,9 @@ impl Ast {
     }
 
     pub fn assignment_expression(&mut self, identifier: Token, equals: Token, expression: ExpressionId) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Assignment(AssignExpression { identifier, equals, expression, variable_index: VariableIndex::new(0) }))
+        self.expression_from_kind(
+            ExpressionKind::Assignment(AssignExpression { identifier, equals, expression, variable_index: VariableIndex::new(0) })
+        )
     }
 
     pub fn boolean_expression(&mut self, token: Token, value: bool) -> &Expression {
@@ -175,7 +187,9 @@ impl Ast {
     }
 
     pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() }))
+        self.expression_from_kind(
+            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() })
+        )
     }
 
     pub fn break_expression(&mut self, break_keyword: Token) -> &Expression {
@@ -184,6 +198,20 @@ impl Ast {
 
     pub fn continue_expression(&mut self, continue_keyword: Token) -> &Expression {
         self.expression_from_kind(ExpressionKind::Continue(ContinueExpression { continue_keyword }))
+    }
+
+    pub fn array_expression(
+        &mut self, type_decl: Token, open_square_bracket: Token, elements: Vec<ExpressionId>, commas: Vec<Token>, close_square_bracket: Token
+    ) -> &Expression {
+        self.expression_from_kind(
+            ExpressionKind::Array(ArrayExpression { type_decl, open_square_bracket, elements, commas, close_square_bracket })
+        )
+    }
+
+    pub fn index_expression(&mut self, object: ExpressionId, open_square_bracket: Token, index: ExpressionId, close_square_bracket: Token) -> &Expression {
+        self.expression_from_kind(
+            ExpressionKind::IndexExpression(IndexExpression { object, open_square_bracket, index, close_square_bracket })
+        )
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
@@ -296,12 +324,21 @@ pub struct ReturnStatement {
 #[derive(Debug, Clone)]
 pub struct StaticTypeAnnotation {
     pub colon: Token,
+    pub open_square_bracket: Option<Token>,
     pub type_name: Token,
+    pub length: Option<Token>,
+    pub close_square_bracket: Option<Token>,
 }
 
 impl StaticTypeAnnotation {
-    pub fn new(colon: Token, type_name: Token) -> Self {
-        Self { colon, type_name }
+    pub fn new(
+        colon: Token,
+        open_square_bracket: Option<Token>,
+        type_name: Token,
+        length: Option<Token>,
+        close_square_bracket: Option<Token>
+    ) -> Self {
+        Self { colon, open_square_bracket, type_name, length, close_square_bracket }
     }
 }
 
@@ -393,6 +430,7 @@ impl Statement {
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     Number(NumberExpression),
+    Usize(UsizeExpression),
     String(StringExpression),
     Binary(BinaryExpression),
     CompoundBinary(CompoundBinaryExpression),
@@ -406,6 +444,8 @@ pub enum ExpressionKind {
     Block(BlockExpression),
     Break(BreakExpression),
     Continue(ContinueExpression),
+    Array(ArrayExpression),
+    IndexExpression(IndexExpression),
     Error(TextSpan),
 }
 
@@ -417,6 +457,23 @@ impl ExpressionKind {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexExpression {
+    pub object: ExpressionId,
+    pub open_square_bracket: Token,
+    pub index: ExpressionId,
+    pub close_square_bracket: Token,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrayExpression {
+    pub type_decl: Token,
+    pub open_square_bracket: Token,
+    pub elements: Vec<ExpressionId>,
+    pub commas: Vec<Token>,
+    pub close_square_bracket: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -686,9 +743,15 @@ pub struct NumberExpression {
 }
 
 #[derive(Debug, Clone)]
+pub struct UsizeExpression {
+    pub token: Token,
+    pub number: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct StringExpression {
     pub token: Token,
-    pub value: String,
+    pub string: String,
 }
 
 #[derive(Debug, Clone)]
@@ -713,6 +776,7 @@ impl Expression {
     pub fn span(&self, ast: &Ast) -> TextSpan {
         match &self.kind {
             ExpressionKind::Number(expr) => expr.token.span.clone(),
+            ExpressionKind::Usize(expr) => expr.token.span.clone(),
             ExpressionKind::String(expr) => expr.token.span.clone(),
             ExpressionKind::Binary(expr) => {
                 let left = ast.query_expression(expr.left).span(ast);
@@ -786,6 +850,27 @@ impl Expression {
             },
             ExpressionKind::Break(break_expression) => break_expression.break_keyword.span.clone(),
             ExpressionKind::Continue(continue_expression) => continue_expression.continue_keyword.span.clone(),
+            ExpressionKind::Array(array_expression) => {
+                let mut spans = vec![array_expression.open_square_bracket.span.clone()];
+                for (i, element) in array_expression.elements.iter().enumerate() {
+                    spans.push(ast.query_expression(*element).span(ast));
+
+                    if i < array_expression.commas.len() {
+                        spans.push(array_expression.commas[i].span.clone());
+                    }
+                }
+                spans.push(array_expression.close_square_bracket.span.clone());
+
+                TextSpan::combine(spans)
+            },
+            ExpressionKind::IndexExpression(index_expression) => {
+                let object_span = ast.query_expression(index_expression.object).span(ast);
+                let open_square_bracket = index_expression.open_square_bracket.span.clone();
+                let index_span = ast.query_expression(index_expression.index).span(ast);
+                let close_square_bracket = index_expression.close_square_bracket.span.clone();
+
+                TextSpan::combine(vec![object_span, open_square_bracket, index_span, close_square_bracket])
+            },
             ExpressionKind::Error(span) => span.clone(),
         }
     }
@@ -805,6 +890,7 @@ mod tests {
     #[derive(Debug, PartialEq, Eq)]
     enum TestASTNode {
         Number(i64),
+        Usize(usize),
         Boolean(bool),
         String(String),
         Binary,
@@ -822,6 +908,8 @@ mod tests {
         Call,
         Break,
         Continue,
+        Array,
+        Index,
     }
 
     struct ASTVerifier {
@@ -871,8 +959,12 @@ mod tests {
             self.actual.push(TestASTNode::Number(number.number));
         }
 
+        fn visit_usize_expression(&mut self, _ast: &mut Ast, usize_expression: &UsizeExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Usize(usize_expression.number));
+        }
+
         fn visit_string_expression(&mut self, _ast: &mut Ast, string: &StringExpression, _expr: &Expression) {
-            self.actual.push(TestASTNode::String(string.value.clone()));
+            self.actual.push(TestASTNode::String(string.string.clone()));
         }
 
         fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
@@ -957,6 +1049,19 @@ mod tests {
 
         fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &ContinueExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Continue);
+        }
+
+        fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &ArrayExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Array);
+            for element in &array_expression.elements {
+                self.visit_expression(ast, *element);
+            }
+        }
+
+        fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Index);
+            self.visit_expression(ast, index_expression.object);
+            self.visit_expression(ast, index_expression.index);
         }
     }
 

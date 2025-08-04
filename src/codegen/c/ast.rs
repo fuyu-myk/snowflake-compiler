@@ -42,6 +42,8 @@ impl TryFrom<&Type> for CType {
             Type::String => Ok(CType::String),
             Type::Bool => Ok(CType::Bool),
             Type::Void => Ok(CType::Void),
+            Type::Usize => Err(()), // Usize not supported in C codegen yet
+            Type::Array(_, _) => Err(()), // Arrays not supported in C codegen yet
             Type::Unresolved => Err(()),
             Type::Error => Err(()),
         };
@@ -117,6 +119,7 @@ pub struct CBlockStatement {
 #[derive(Debug, Clone)]
 pub enum CExpr {
     Number(CNumber),
+    Usize(CUsize),
     String(String),
     Bool(CBool),
     Unary(CUnaryExpr),
@@ -130,6 +133,11 @@ pub enum CExpr {
 #[derive(Debug, Clone)]
 pub struct CNumber {
     pub value: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CUsize {
+    pub value: usize,
 }
 
 #[derive(Debug, Clone)]

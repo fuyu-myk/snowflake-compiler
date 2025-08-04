@@ -44,6 +44,15 @@ impl MIRPass for DeadCodeElimination {
                                 referenced_instructions.insert_instruct_ref(arg);
                             }
                         }
+                        InstructionKind::Array(elements) => {
+                            for elem in elements.iter_mut() {
+                                referenced_instructions.insert_instruct_ref(elem);
+                            }
+                        }
+                        InstructionKind::Index { object, index } => {
+                            referenced_instructions.insert_instruct_ref(object);
+                            referenced_instructions.insert_instruct_ref(index);
+                        }
                         InstructionKind::Phi(phi) => {
                             for (_, instruct_idx) in phi.iter().copied() {
                                 referenced_instructions.0.insert(instruct_idx);

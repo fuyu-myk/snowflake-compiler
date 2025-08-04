@@ -143,6 +143,22 @@ impl<W> MIRWriter<W> where W: Write {
 
                 write!(writer, ")")?;
             }
+            InstructionKind::Array(elements) => {
+                write!(writer, "[")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    Self::write_value(writer, elem)?;
+                    if i != elements.len() - 1 {
+                        write!(writer, ", ")?;
+                    }
+                }
+                write!(writer, "]")?;
+            }
+            InstructionKind::Index { object, index } => {
+                Self::write_value(writer, object)?;
+                write!(writer, "[")?;
+                Self::write_value(writer, index)?;
+                write!(writer, "]")?;
+            }
             InstructionKind::Phi(phi) => {
                 write!(writer, "phi {{")?;
 
@@ -174,6 +190,9 @@ impl<W> MIRWriter<W> where W: Write {
             }
             Value::ConstantString(value) => {
                 write!(writer, "\"{}\"", value)?;
+            }
+            Value::ConstantUsize(value) => {
+                write!(writer, "{}", value)?;
             }
             Value::Void => {
                 write!(writer, "()")?;

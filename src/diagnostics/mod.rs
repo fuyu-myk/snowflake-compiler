@@ -84,7 +84,12 @@ impl DiagnosticsReport {
     }
 
     pub fn report_type_mismatch(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
-        self.report_error(format!("Expected type '{}', found '{}'", expected, actual), span.clone());
+        if matches!(expected, Type::Array(_, _)) {
+            self.report_array_error(expected, actual, span);
+            return;
+        } else {
+            self.report_error(format!("Expected type '{}', found '{}'", expected, actual), span.clone());
+        }
     }
 
     pub fn report_undeclared_type(&mut self, token: &Token) {
@@ -113,6 +118,36 @@ impl DiagnosticsReport {
 
     pub fn report_loop_keyword_outside_loop(&mut self, token: &Token) {
         self.report_error(format!("Cannot use '{}' outside of a loop", token.span.literal), token.span.clone());
+    }
+
+    pub fn report_array_error(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
+        if let (Type::Array(expected_type, expected_size), Type::Array(actual_type, actual_size)) = (expected, actual) {
+            if !actual_type.is_assignable_to(expected_type) {
+                self.report_error(format!("Expected '{}', found '{}'", expected_type, actual_type), span.clone());
+                return;
+            } else if expected_size != actual_size {
+                self.report_error(format!("Expected array of size {}, found one of size {}", expected_size, actual_size), span.clone());
+                return;
+            } else {
+                self.report_error(format!("Expected array of type '{}', found one of type '{}'", expected_type, actual_type), span.clone());
+            }
+        }
+    }
+
+    pub fn report_index_out_of_bounds(&mut self, index: &TextSpan, arr_size: String, array: &TextSpan) {
+        self.report_error(format!("Index out of bounds: the length of array `{}` is {} but the index is {}", array.literal, arr_size, index.literal), index.clone());
+    }
+
+    pub fn report_cannot_index_type(&mut self, ty: &Type, span: &TextSpan) {
+        self.report_error(format!("Cannot index type '{}'", ty), span.clone());
+    }
+
+    pub fn report_index_type_mismatch(&mut self, expected: Type, actual: &Type, span: &TextSpan) {
+        self.report_error(format!("Cannot be indexed by '{}' (slice indices are of type '{}')", actual, expected), span.clone());
+    }
+
+    pub fn report_negative_array_index(&mut self, span: &TextSpan) {
+        self.report_error(format!("Negative integers cannot be used to index on arrays"), span.clone());
     }
 }
 
@@ -690,6 +725,127 @@ mod tests {
 
         let expected = vec![
             "Division by zero in '%' operation"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_break_outside_loop() {
+        let input = "\
+        «break»
+        ";
+
+        let expected = vec![
+            "Cannot use 'break' outside of a loop"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_continue_outside_loop() {
+        let input = "\
+        «continue»
+        ";
+
+        let expected = vec![
+            "Cannot use 'continue' outside of a loop"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_type_mismatch() {
+        let input = "\
+        let a: [int; 3] = [1, 2, «true»];
+        ";
+
+        let expected = vec![
+            "Expected type 'int', found 'bool'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_length_mismatch() {
+        let input = "\
+        let a: [int; 3] = «[1, 2]»;
+        ";
+
+        let expected = vec![
+            "Expected array of size 3, found one of size 2"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_both_type_and_length_mismatch() {
+        let input = "\
+        let a: [int; 3] = «[\"this should fail\"]»;
+        ";
+
+        let expected = vec![
+            "Expected 'int', found 'string'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_index_out_of_bounds() {
+        let input = "\
+        let a: [int; 3] = [1, 2, 3];
+        a[«3»]
+        ";
+
+        let expected = vec![
+            "Index out of bounds: the length of array `a` is 3 but the index is 3"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_index_negative() {
+        let input = "\
+        let a: [int; 3] = [1, 2, 3];
+        a[«-1»]
+        ";
+
+        let expected = vec![
+            "Negative integers cannot be used to index on arrays"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_index_type_mismatch() {
+        let input = "\
+        let a: [int; 3] = [1, 2, 3];
+        a[«true»]
+        ";
+
+        let expected = vec![
+            "Cannot be indexed by 'bool' (slice indices are of type 'usize')"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_array_indexing_on_non_array_type() {
+        let input = "\
+        let a = 1;
+        «a»[0]
+        ";
+
+        let expected = vec![
+            "Cannot index type 'int'"
         ];
 
         assert_diagnostics(input, expected);

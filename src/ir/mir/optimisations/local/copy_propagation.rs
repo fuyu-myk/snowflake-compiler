@@ -47,6 +47,21 @@ impl MIRPassLocal for CopyPropagation {
                         }
                     }
                 }
+                InstructionKind::Array(elements) => {
+                    for elem in elements.iter_mut() {
+                        if elem.replace_with_copied_ref(&copies) {
+                            changes += 1;
+                        }
+                    }
+                }
+                InstructionKind::Index { object, index } => {
+                    if object.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                    if index.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
                 InstructionKind::Phi(_) => {}
             }
         }

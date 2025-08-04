@@ -60,10 +60,16 @@ pub struct HIRExpression {
 #[derive(Debug, Clone)]
 pub enum HIRExprKind {
     Number(i64),
+    Usize(usize),
     String(String),
     Bool(bool),
     Unit,
     Var(VariableIndex),
+    Array(Vec<HIRExpression>),
+    Index {
+        object: Box<HIRExpression>,
+        index: Box<HIRExpression>,
+    },
     Binary {
         operator: BinaryOpKind,
         left: Box<HIRExpression>,

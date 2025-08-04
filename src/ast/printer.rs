@@ -1,6 +1,5 @@
 use termion::color;
 use termion::color::{Fg, Reset};
-use tracing_subscriber::fmt::format;
 use crate::ast::*;
 
 
@@ -17,6 +16,7 @@ impl ASTPrinter {
     const BOOL_COLOUR: color::Yellow = color::Yellow;
     const TYPE_COLOUR: color::LightBlue = color::LightBlue;
     const STRING_COLOUR: color::LightGreen = color::LightGreen;
+    const SIZE_COLOUR: color::Rgb = color::Rgb(255, 165, 0); // Orange
 
     pub fn new() -> Self {
         Self { indent: 0, result: String::new() }
@@ -56,11 +56,25 @@ impl ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::TYPE_COLOUR.fg_str(), type_));
     }
 
+    fn add_size(&mut self, size: &str) {
+        self.result.push_str(&format!("{}{}", Self::SIZE_COLOUR.fg_string(), size));
+    }
+
     fn add_type_annot(&mut self, type_annotation: &StaticTypeAnnotation) {
         self.add_text(":");
         self.add_whitespace();
 
-        self.add_type(&type_annotation.type_name.span.literal);
+        if type_annotation.open_square_bracket.is_some() {
+            self.add_text("[");
+            self.add_type(&type_annotation.type_name.span.literal);
+            self.add_text("; ");
+            if let Some(length_token) = &type_annotation.length {
+                self.add_size(&length_token.span.literal);
+            }
+            self.add_text("]");
+        } else {
+            self.add_type(&type_annotation.type_name.span.literal);
+        }
     }
 }
 
@@ -76,8 +90,12 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), number.number));
     }
 
+    fn visit_usize_expression(&mut self, _ast: &mut Ast, number: &UsizeExpression, _expr: &Expression) {
+        self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), number.number));
+    }
+
     fn visit_string_expression(&mut self, _ast: &mut Ast, string: &StringExpression, _expr: &Expression) {
-        self.result.push_str(&format!("{}\"{}\"", Self::STRING_COLOUR.fg_str(), string.value));
+        self.result.push_str(&format!("{}\"{}\"", Self::STRING_COLOUR.fg_str(), string.string));
         self.result.push_str(&format!("{}", Fg(Reset)));
     }
 
@@ -278,5 +296,24 @@ impl ASTVisitor for ASTPrinter {
 
     fn visit_continue_expression(&mut self, _ast: &mut Ast, _continue_expression: &ContinueExpression, _expr: &Expression) {
         self.result.push_str(&format!("{}continue{}", Self::TEXT_COLOUR.fg_str(), Fg(Reset)));
+    }
+
+    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &ArrayExpression, _expr: &Expression) {
+        self.add_text("[");
+        for (i, element) in array_expression.elements.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+            self.visit_expression(ast, *element);
+        }
+        self.add_text("]");
+    }
+
+    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
+        self.visit_expression(ast, index_expression.object);
+        self.add_text("[");
+        self.visit_expression(ast, index_expression.index);
+        self.add_text("]");
     }
 }

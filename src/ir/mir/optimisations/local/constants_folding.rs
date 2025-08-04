@@ -29,6 +29,7 @@ impl ComputedConstants {
         match value {
             Value::ConstantInt(value) => Some(Value::ConstantInt(*value)),
             Value::ConstantString(value) => Some(Value::ConstantString(value.clone())),
+            Value::ConstantUsize(value) => Some(Value::ConstantUsize(*value)),
             Value::InstructionRef(idx) => match self.0.get(idx) {
                 Some(value) => self.get_constant_value(value),
                 None => None,
@@ -133,6 +134,27 @@ impl MIRPassLocal for ConstantsFolding {
                             if arg.replace_if_unequal(value) {
                                 changes += 1;
                             }
+                        }
+                    }
+                }
+                InstructionKind::Array(elements) => {
+                    for elem in elements.iter_mut() {
+                        if let Some(value) = constants.get_constant_value(elem) {
+                            if elem.replace_if_unequal(value) {
+                                changes += 1;
+                            }
+                        }
+                    }
+                }
+                InstructionKind::Index { object, index } => {
+                    if let Some(value) = constants.get_constant_value(object) {
+                        if object.replace_if_unequal(value) {
+                            changes += 1;
+                        }
+                    }
+                    if let Some(value) = constants.get_constant_value(index) {
+                        if index.replace_if_unequal(value) {
+                            changes += 1;
                         }
                     }
                 }

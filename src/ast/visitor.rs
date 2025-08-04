@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
@@ -74,6 +74,9 @@ pub trait ASTVisitor {
             ExpressionKind::Number(number) => {
                 self.visit_number_expression(ast, number, &expression);
             }
+            ExpressionKind::Usize(number) => {
+                self.visit_usize_expression(ast, number, &expression);
+            }
             ExpressionKind::String(string) => {
                 self.visit_string_expression(ast, string, &expression);
             }
@@ -113,9 +116,23 @@ pub trait ASTVisitor {
             ExpressionKind::Continue(expr) => {
                 self.visit_continue_expression(ast, expr, &expression);
             }
+            ExpressionKind::Array(expr) => {
+                self.visit_array_expression(ast, expr, &expression);
+            }
+            ExpressionKind::IndexExpression(index_expression) => {
+                self.visit_index_expression(ast, index_expression, &expression);
+            }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, span);
             }
+        }
+    }
+
+    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression);
+
+    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &ArrayExpression, _expr: &Expression) {
+        for element in &array_expression.elements {
+            self.visit_expression(ast, *element);
         }
     }
 
@@ -173,6 +190,8 @@ pub trait ASTVisitor {
     }
 
     fn visit_string_expression(&mut self, ast: &mut Ast, string: &StringExpression, expr: &Expression);
+
+    fn visit_usize_expression(&mut self, ast: &mut Ast, number: &super::UsizeExpression, expr: &Expression);
 
     fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression);
 

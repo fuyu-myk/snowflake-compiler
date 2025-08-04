@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{ast::{Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, Item, ItemKind, StatementId, StatementKind, UnaryExpression, UnaryOp, UnaryOpKind},
-    codegen::c::ast::{CAssignExpr, CAst, CBinExpr, CBinOp, CBlockStatement, CBool, CCallExpr, CExpr, CFxDecl, CFxImpl, CIfStatement, CItem, CNumber, CParams, CReturn, CStatement, CType, CUnaryExpr, CUnaryOp, CVarDecl, CVarExpr, CWhileStatement}, compilation_unit::{GlobalScope, VariableIndex},
+    codegen::c::ast::{CAssignExpr, CAst, CBinExpr, CBinOp, CBlockStatement, CBool, CCallExpr, CExpr, CFxDecl, CFxImpl, CIfStatement, CItem, CNumber, CParams, CReturn, CStatement, CType, CUnaryExpr, CUnaryOp, CUsize, CVarDecl, CVarExpr, CWhileStatement}, compilation_unit::{GlobalScope, VariableIndex},
     typings::Type};
 
 
@@ -116,9 +116,13 @@ impl <'a> CTranspiler<'a> {
                 None, 
                 CExpr::Number(CNumber { value: number.number }),
             ),
+            ExpressionKind::Usize(usize_expr) => (
+                None,
+                CExpr::Usize(CUsize { value: usize_expr.number }),
+            ),
             ExpressionKind::String(string) => (
                 None,
-                CExpr::String(string.value.clone()),
+                CExpr::String(string.string.clone()),
             ),
             ExpressionKind::Boolean(bool_expr) => (
                 None,
@@ -150,6 +154,8 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::CompoundBinary(_) => todo!("CompoundBinary expressions not yet supported in C transpiler"),
             ExpressionKind::Break(_) => todo!("Break expressions not yet supported in C transpiler"),
             ExpressionKind::Continue(_) => todo!("Continue expressions not yet supported in C transpiler"),
+            ExpressionKind::Array(_) => todo!("Array expressions not yet supported in C transpiler"),
+            ExpressionKind::IndexExpression(_) => todo!("Index expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -295,6 +301,8 @@ impl <'a> CTranspiler<'a> {
             Type::String => "char*".to_string(),
             Type::Bool => "int".to_string(),
             Type::Void => "void".to_string(),
+            Type::Usize => "size_t".to_string(),
+            Type::Array(_, _) => panic!("Array types not supported in C codegen yet"),
             Type::Unresolved => panic!("Unresolved type"),
             Type::Error => panic!("Error type"),
         }
@@ -334,6 +342,7 @@ impl <'a> CTranspiler<'a> {
 
         return match &expr.kind {
             ExpressionKind::Number(_) => true,
+            ExpressionKind::Usize(_) => true,
             ExpressionKind::String(_) => true,
             ExpressionKind::Boolean(_) => true,
             ExpressionKind::Unary(_) => self.is_valid_r_value(ast, expr.id),
@@ -358,6 +367,8 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::CompoundBinary(_) => false, // Compound binary expressions should be desugared before reaching here
             ExpressionKind::Break(_) => false,
             ExpressionKind::Continue(_) => false,
+            ExpressionKind::Array(_) => false,
+            ExpressionKind::IndexExpression(_) => false,
             ExpressionKind::Error(_) => panic!("Error expression"),
         };
     }

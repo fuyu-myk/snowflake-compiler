@@ -7,6 +7,7 @@ use crate::text::span::TextSpan;
 pub enum TokenKind {
     // literals
     Number(i64),
+    Usize(usize),
     String(String),
 
     // classic arithmetic operators
@@ -61,6 +62,8 @@ pub enum TokenKind {
     RightParen,
     OpenBrace,
     CloseBrace,
+    OpenBracket,
+    CloseBracket,
     Comma,
     Colon,
     Arrow,
@@ -98,6 +101,7 @@ impl Display for TokenKind {
         match self {
             // literals
             TokenKind::Number(_) => write!(f, "Number"),
+            TokenKind::Usize(_) => write!(f, "Usize"),
             TokenKind::String(_) => write!(f, "String"),
 
             // classic arithmetic operators
@@ -152,6 +156,8 @@ impl Display for TokenKind {
             TokenKind::RightParen => write!(f, ")"),
             TokenKind::OpenBrace => write!(f, "{{"),
             TokenKind::CloseBrace => write!(f, "}}"),
+            TokenKind::OpenBracket => write!(f, "["),
+            TokenKind::CloseBracket => write!(f, "]"),
             TokenKind::Comma => write!(f, "Comma"),
             TokenKind::Colon => write!(f, "Colon"),
             TokenKind::Arrow => write!(f, "Arrow"),
@@ -210,8 +216,16 @@ impl <'a> Lexer<'a> {
             let mut kind = TokenKind::Bad; // If there is a token that we cannot lext
 
             if Self::is_number_start(&c) {
-                let number: i64 = self.consume_number();
-                kind = TokenKind::Number(number);
+                let (number, suffix) = self.consume_number();
+                kind = match suffix.as_deref() {
+                    Some("usize") => TokenKind::Usize(number as usize),
+                    Some("u32") | Some("u64") => TokenKind::Usize(number as usize), // temp
+                    None => TokenKind::Number(number),
+                    _ => {
+                        // todo: error reporting for unsupported suffixes
+                        TokenKind::Number(number)
+                    }
+                };
             } else if c == '"' {
                 self.consume();
                 let string_value = self.consume_string_literal();
@@ -248,8 +262,10 @@ impl <'a> Lexer<'a> {
         });
     }
 
-    fn consume_number(&mut self) -> i64 {
+    fn consume_number(&mut self) -> (i64, Option<String>) {
         let mut number: i64 = 0;
+        
+        // Consume numeral
         while let Some(c) = self.current_char() {
             if c.is_digit(10) {
                 self.consume().unwrap();
@@ -258,7 +274,20 @@ impl <'a> Lexer<'a> {
                 break;
             }
         }
-        number
+        
+        // Check for suffix (like "usize", "u32", etc.)
+        let mut suffix = String::new();
+        while let Some(c) = self.current_char() {
+            if c.is_alphabetic() {
+                suffix.push(c);
+                self.consume().unwrap();
+            } else {
+                break;
+            }
+        }
+        
+        let suffix_option = if suffix.is_empty() { None } else { Some(suffix) };
+        (number, suffix_option)
     }
 
     fn consume_string_literal(&mut self) -> String {
@@ -314,6 +343,8 @@ impl <'a> Lexer<'a> {
             '!' => self.potential_multi_char_operator('!'),
             '{' => TokenKind::OpenBrace,
             '}' => TokenKind::CloseBrace,
+            '[' => TokenKind::OpenBracket,
+            ']' => TokenKind::CloseBracket,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             ';' => TokenKind::SemiColon,

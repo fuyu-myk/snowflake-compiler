@@ -78,8 +78,10 @@ impl DerefMut for BasicBlocks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int,
+    Usize,
     String,
     Bool,
+    Array(Box<Type>),
     Void,
 }
 
@@ -90,6 +92,10 @@ impl From<compilation_unit::Type> for Type {
             compilation_unit::Type::String => Self::String,
             compilation_unit::Type::Bool => Self::Bool,
             compilation_unit::Type::Void => Self::Void,
+            compilation_unit::Type::Usize => Self::Usize,
+            compilation_unit::Type::Array(elements, _) => {
+                Self::Array(Box::new(Type::from(*elements)))
+            }
             compilation_unit::Type::Unresolved | compilation_unit::Type::Error => {
                 bug_report!("Unresolved type")
             }
@@ -152,6 +158,8 @@ impl Instruction {
     pub fn is_pure(&self) -> bool {
         match &self.kind {
             InstructionKind::Value(_) => true,
+            InstructionKind::Array(_) => true,
+            InstructionKind::Index { .. } => true,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
             InstructionKind::Call { .. } => false,
@@ -163,6 +171,11 @@ impl Instruction {
 #[derive(Debug)]
 pub enum InstructionKind {
     Value(Value),
+    Array(Vec<Value>),
+    Index {
+        object: Box<Value>,
+        index: Box<Value>,
+    },
     Binary {
         operator: BinOp,
         left: Value,
@@ -200,6 +213,7 @@ pub enum Value {
     InstructionRef(InstructionIdx),
     ParamRef(usize),
     ConstantInt(i32),
+    ConstantUsize(usize),
     ConstantString(String),
     Void,
 }

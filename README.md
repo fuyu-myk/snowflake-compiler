@@ -88,6 +88,17 @@ Thus far, the current compiler architecture is highlighted below:
 * Boolean
 * Strings
 
+### Data Structures supported
+* Arrays [completed 05.08.2025]
+    * TODO: Improve handling in MIR; support repeat definition; multidimensional arrays
+    * Defined and indexed as follows:
+```
+let arr: [int, 3] = [1, 2, 3];
+let b: int = a[0];
+```
+* Type is defined as `[T, len]`
+* Indexes are of type `usize`
+
 ### Operators
 - [x] **Basic arithmetic support** [completed 05.06.2025]
 * Ability to apply BODMAS to evaluate the below statement:

@@ -117,7 +117,8 @@ impl HIRBuilder {
         let expr = ast.query_expression(expr_id);
         let kind = match &expr.kind {
             ExpressionKind::Number(number_expr) => HIRExprKind::Number(number_expr.number),
-            ExpressionKind::String(string_expr) => HIRExprKind::String(string_expr.value.clone()),
+            ExpressionKind::Usize(usize_expr) => HIRExprKind::Usize(usize_expr.number),
+            ExpressionKind::String(string_expr) => HIRExprKind::String(string_expr.string.clone()),
             ExpressionKind::Boolean(bool_expr) => HIRExprKind::Bool(bool_expr.value),
             ExpressionKind::Binary(bin_expr) => {
                 let left = self.build_expression(bin_expr.left, ast, global_scope, ctx, true);
@@ -259,6 +260,22 @@ impl HIRBuilder {
             },
             ExpressionKind::Break(_) => HIRExprKind::Break,
             ExpressionKind::Continue(_) => HIRExprKind::Continue,
+            ExpressionKind::Array(array_expr) => {
+                let elements = array_expr.elements.iter()
+                    .map(|elem_id| self.build_expression(*elem_id, ast, global_scope, ctx, true))
+                    .collect();
+
+                HIRExprKind::Array(elements)
+            },
+            ExpressionKind::IndexExpression(index_expr) => {
+                let object = self.build_expression(index_expr.object, ast, global_scope, ctx, true);
+                let index = self.build_expression(index_expr.index, ast, global_scope, ctx, true);
+
+                HIRExprKind::Index {
+                    object: Box::new(object),
+                    index: Box::new(index)
+                }
+            },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };
 
