@@ -35,10 +35,17 @@ fn main() -> Result<()> {
         .map_err(|e| anyhow!("Failed to read file '{}': {}", file_path, e))?;
 
     // Compile the input code ^0^
-    let mut compilation_unit = CompilationUnit::compile(&input).map_err(|_err| anyhow!("Compilation failed"))?;
+    let mut compilation_unit = CompilationUnit::compile(&input)
+        .map_err(|err| {
+            if err.borrow().diagnostics.len() == 1 {
+                anyhow!("Could not compile `{}` due to {} previous error", file_path, err.borrow().diagnostics.len())
+            } else {
+                anyhow!("Could not compile `{}` due to {} previous errors", file_path, err.borrow().diagnostics.len())
+            }
+        })?;
     compilation_unit.run_compiler();
 
-     // GCC codegen
+    // GCC codegen
     //let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);
     //let c_return_value = program.run()?;
     //println!("C program returned {}", c_return_value);
