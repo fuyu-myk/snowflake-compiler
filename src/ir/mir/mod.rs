@@ -221,7 +221,7 @@ pub enum Value {
 impl Value {
     /// Checks if `Value` is a constant.
     pub fn is_const(&self) -> bool {
-        matches!(self, Self::ConstantInt(_) | Self::ConstantString(_) | Self::Void)
+        matches!(self, Self::ConstantInt(_) | Self::ConstantString(_) | Self::ConstantUsize(_) | Self::Void)
     }
 
     /// Returns `InstructionIdx` if `Value` is an instruction reference, `InstructionRef`.

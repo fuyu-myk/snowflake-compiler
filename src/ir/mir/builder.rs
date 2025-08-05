@@ -431,7 +431,7 @@ impl FunctionBuilder {
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Index { object: Box::new(object), index: Box::new(index) }, Type::Void),
+                    Instruction::new(InstructionKind::Index { object: Box::new(object), index: Box::new(index) }, Type::from(expr.ty.clone())),
                 );
 
                 Value::InstructionRef(instruct_ref)
