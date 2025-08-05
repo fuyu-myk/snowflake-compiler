@@ -70,6 +70,10 @@ pub enum TokenKind {
     SemiColon,
     DoubleQuote,
 
+    // comments (handled by lexer, not tokenized)
+    LineComment, // // for single line comments
+    BlockComment, // /* ... */ for multi-line comments
+
     // other
     Whitespace,
     Identifier,
@@ -163,6 +167,10 @@ impl Display for TokenKind {
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::SemiColon => write!(f, "Semicolon"),
             TokenKind::DoubleQuote => write!(f, "\""),
+
+            // comments
+            TokenKind::LineComment => write!(f, "LineComment"),
+            TokenKind::BlockComment => write!(f, "BlockComment"),
 
             // other
             TokenKind::Whitespace => write!(f, "Whitespace"),
@@ -396,6 +404,16 @@ impl <'a> Lexer<'a> {
                         self.consume();
                         TokenKind::SlashAs
                     },
+                    Some('/') => {
+                        self.consume();
+                        self.consume_line_comment();
+                        TokenKind::LineComment
+                    }
+                    Some('*') => {
+                        self.consume();
+                        self.consume_block_comment();
+                        TokenKind::BlockComment
+                    },
                     _ => TokenKind::Slash,
                 }
             },
@@ -492,6 +510,33 @@ impl <'a> Lexer<'a> {
                 }
             },
             _ => TokenKind::Bad,
+        }
+    }
+
+    fn consume_block_comment(&mut self) {
+        while let Some(c) = self.current_char() {
+            if c == '*' {
+                self.consume();
+                if let Some(next_char) = self.current_char() {
+                    if next_char == '/' {
+                        self.consume();
+                        break;
+                    }
+                }
+            } else {
+                self.consume();
+            }
+        }
+    }
+
+    fn consume_line_comment(&mut self) {
+        while let Some(c) = self.current_char() {
+            if c == '\n' {
+                self.consume();
+                break;
+            } else {
+                self.consume();
+            }
         }
     }
 

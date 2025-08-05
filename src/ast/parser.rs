@@ -73,6 +73,9 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> StatementId {
+        self.consume_if(TokenKind::LineComment);
+        self.consume_if(TokenKind::BlockComment);
+        
         let statement = match self.current().kind {
             TokenKind::Let => self.parse_let_statement().id,
             TokenKind::While => self.parse_while_statement().id,
