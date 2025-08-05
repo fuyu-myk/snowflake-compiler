@@ -241,3 +241,19 @@ a += a * 2 + 3
     let z: string = "Hello World"
     let a = 10 // type inference => int
     ```  
+* Explicit suffix typecasting (WIP as more types are supported)
+    * Current supported suffixes are outlined below:
+    ```
+    let x = 8usize
+    ```
+
+- [x] **Comments** [completed 05.08.2025]
+* Both line and block comments, in traditional C syntax
+* Nested block comments are not supported
+    ```
+    // This is a line comment
+
+    /* This is 
+    a
+    block comment */
+    ```
