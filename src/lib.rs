@@ -6,7 +6,7 @@ macro_rules! idx {
             pub index: usize,
         }
 
-        impl Idx for $name {
+        impl $crate::Idx for $name {
             fn as_index(&self) -> usize {
                 return self.index;
             }
@@ -39,13 +39,13 @@ pub trait Idx: Copy + Clone + Sized {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct IndexVec<Index, T> where Index: Idx {
     vec: Vec<T>,
     _marker: std::marker::PhantomData<Index>,
 }
 
-impl<Index, T> IndexVec<Index, T> where Index: Idx {
+impl<Index: Idx, T> IndexVec<Index, T> {
     pub fn new() -> Self {
         Self { vec: vec![], _marker: std::marker::PhantomData }
     }
