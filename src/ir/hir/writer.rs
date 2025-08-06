@@ -96,7 +96,7 @@ impl <W> HIRWriter<W> where W: Write {
                 Self::write_indent(writer, indent)?;
                 writeln!(writer, "}}")?;
             }
-            HIRStmtKind::Block { body } => {
+            HIRStmtKind::Block { body, scope_id: _ } => {
                 Self::write_indent(writer, indent)?;
                 writeln!(writer, "{{")?;
                 for statement in body {
@@ -148,17 +148,17 @@ impl <W> HIRWriter<W> where W: Write {
                 let var = global_scope.variables.get(*var_idx);
                 write!(writer, "{}", var.name)?;
             }
-            HIRExprKind::Array(array_expr) => {
+            HIRExprKind::Array { elements, element_type: _, alloc_type: _ } => {
                 write!(writer, "[")?;
-                for (i, elem) in array_expr.iter().enumerate() {
+                for (i, elem) in elements.iter().enumerate() {
                     Self::write_expression(writer, elem, global_scope, indent)?;
-                    if i != array_expr.len() - 1 {
+                    if i != elements.len() - 1 {
                         write!(writer, ", ")?;
                     }
                 }
                 write!(writer, "]")?;
             }
-            HIRExprKind::Index { object, index } => {
+            HIRExprKind::Index { object, index, bounds_check: _ } => {
                 Self::write_expression(writer, object, global_scope, indent)?;
                 write!(writer, "[")?;
                 Self::write_expression(writer, index, global_scope, indent)?;
