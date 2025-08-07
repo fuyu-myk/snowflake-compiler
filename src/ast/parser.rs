@@ -193,7 +193,7 @@ impl <'a> Parser<'a> {
             Some(self.parse_expression())
         };
 
-        self.ast.return_statement(return_keyword, expression)
+        self.ast.return_statement(&self.ast.clone(), return_keyword, expression)
     }
 
     fn parse_while_statement(&mut self) -> &Statement {
@@ -201,7 +201,7 @@ impl <'a> Parser<'a> {
         let condition_expr = self.parse_condition_expression();
         let body = self.parse_body();
 
-        self.ast.while_statement(while_keyword, condition_expr, body)
+        self.ast.while_statement(&self.ast.clone(), while_keyword, condition_expr, body)
     }
 
     fn parse_let_statement(&mut self) -> &Statement {
@@ -212,7 +212,7 @@ impl <'a> Parser<'a> {
 
         let expr = self.parse_expression();
 
-        self.ast.let_statement(identifier, expr, optional_type_annotation)
+        self.ast.let_statement(&self.ast.clone(), identifier, expr, optional_type_annotation)
     }
 
     fn parse_optional_type_annotation(&mut self) -> Option<StaticTypeAnnotation> {
@@ -257,7 +257,7 @@ impl <'a> Parser<'a> {
 
     fn parse_expression_statement(&mut self) -> &Statement {
         let expr = self.parse_expression();
-        self.ast.expression_statement(expr)
+        self.ast.expression_statement(&self.ast.clone(), expr)
     }
 
     fn parse_condition_expression(&mut self) -> ExpressionId {

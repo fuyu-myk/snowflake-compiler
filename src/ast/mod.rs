@@ -97,43 +97,118 @@ impl Ast {
     }
 
     // Statement
-    fn statement_from_kind(&mut self, kind: StatementKind) -> &Statement {
-        let statement = Statement::new(kind, StatementId::new(0));
+    fn statement_from_kind(&mut self, kind: StatementKind, span: TextSpan) -> &Statement {
+        let statement = Statement::new(kind, StatementId::new(0), span);
         let id = self.statements.push(statement);
 
         self.statements[id].id = id;
         &self.statements[id]
     }
 
-    pub fn expression_statement(&mut self, expr_id: ExpressionId) -> &Statement {
-        self.statement_from_kind(StatementKind::Expression(expr_id))
+    pub fn expression_statement(&mut self, ast: &Ast, expr_id: ExpressionId) -> &Statement {
+        let span = self.query_expression(expr_id).span(ast);
+        self.statement_from_kind(StatementKind::Expression(expr_id), span)
     }
 
-    pub fn let_statement(&mut self, identifier: Token, initialiser: ExpressionId, type_annotation: Option<StaticTypeAnnotation>) -> &Statement {
-        self.statement_from_kind(StatementKind::Let(LetStatement { identifier, initialiser, type_annotation, variable_index: VariableIndex::new(0) }))
+    pub fn let_statement(
+        &mut self, ast: &Ast, identifier: Token, initialiser: ExpressionId, type_annotation: Option<StaticTypeAnnotation>
+    ) -> &Statement {
+        let mut span_refs = Vec::new();
+        
+        span_refs.push(&identifier.span);
+        
+        let initializer_span = self.query_expression(initialiser).span(ast);
+        span_refs.push(&initializer_span);
+        
+        if let Some(ref annotation) = type_annotation {
+            span_refs.extend(annotation.collect_spans());
+        }
+        
+        let span = TextSpan::combine_refs(&span_refs);
+
+        self.statement_from_kind(
+            StatementKind::Let(LetStatement { identifier, initialiser, type_annotation, variable_index: VariableIndex::new(0) }),
+            span,
+        )
     }
 
     pub fn if_expression(
         &mut self, if_keyword: Token, condition: ExpressionId, then_branch: Body, else_statement: Option<ElseBranch>
     ) -> &Expression {
-        self.expression_from_kind(ExpressionKind::If(IfExpression { if_keyword, condition, then_branch, else_branch: else_statement }))
+        let mut span_refs = vec![&if_keyword.span];
+        let condition_span = self.query_expression(condition).span(self);
+        span_refs.push(&condition_span);
+        let then_span = then_branch.span(self);
+        span_refs.push(&then_span);
+        
+        let else_spans: Vec<TextSpan> = if let Some(ref else_branch) = else_statement {
+            let else_span = else_branch.body.span(self);
+            vec![else_branch.else_keyword.span.clone(), else_span]
+        } else {
+            vec![]
+        };
+        
+        for span in &else_spans {
+            span_refs.push(span);
+        }
+        
+        let span = TextSpan::combine_refs(&span_refs);
+        self.expression_from_kind(ExpressionKind::If(IfExpression { if_keyword, condition, then_branch, else_branch: else_statement }), span)
     }
 
     pub fn block_expression(&mut self, left_brace: Token, statements: Vec<StatementId>, right_brace: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace }))
+        let mut span_refs = vec![&left_brace.span];
+        
+        let statement_spans: Vec<TextSpan> = statements.iter()
+            .map(|stmt_id| self.query_statement(*stmt_id).span(self))
+            .collect();
+        
+        for span in &statement_spans {
+            span_refs.push(span);
+        }
+        
+        span_refs.push(&right_brace.span);
+        
+        let span = TextSpan::combine_refs(&span_refs);
+        self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace }), span)
     }
 
-    pub fn while_statement(&mut self, while_keyword: Token, condition: ExpressionId, body: Body) -> &Statement {
-        self.statement_from_kind(StatementKind::While(WhileStatement { while_keyword, condition, body }))
+    pub fn while_statement(&mut self, ast: &Ast, while_keyword: Token, condition: ExpressionId, body: Body) -> &Statement {
+        let condition_span = self.query_expression(condition).span(ast);
+        let body_span = body.span(ast);
+        let span_refs = vec![&while_keyword.span, &condition_span, &body_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.statement_from_kind(
+            StatementKind::While(WhileStatement { while_keyword, condition, body }),
+            span
+        )
     }
 
-    pub fn return_statement(&mut self, return_keyword: Token, return_value: Option<ExpressionId>) -> &Statement {
-        self.statement_from_kind(StatementKind::Return(ReturnStatement { return_keyword, return_value }))
+    pub fn return_statement(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExpressionId>) -> &Statement {
+        let mut span_refs = vec![&return_keyword.span];
+        
+        let return_value_span = if let Some(expr_id) = return_value {
+            Some(self.query_expression(expr_id).span(_ast))
+        } else {
+            None
+        };
+        
+        if let Some(ref span) = return_value_span {
+            span_refs.push(span);
+        }
+        
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.statement_from_kind(
+            StatementKind::Return(ReturnStatement { return_keyword, return_value }),
+            span
+        )
     }
 
     // Expression
-    pub fn expression_from_kind(&mut self, kind: ExpressionKind) -> &Expression {
-        let expression = Expression::new(kind, ExpressionId::new(0), Type::Unresolved);
+    pub fn expression_from_kind(&mut self, kind: ExpressionKind, span: TextSpan) -> &Expression {
+        let expression = Expression::new(kind, ExpressionId::new(0), Type::Unresolved, span);
         let expr_id = self.expressions.push(expression);
 
         self.expressions[expr_id].id = expr_id;
@@ -141,81 +216,150 @@ impl Ast {
     }
 
     pub fn number_expression(&mut self, token: Token, number: i64) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Number(NumberExpression { token, number }))
+        let span = token.span.clone();
+        self.expression_from_kind(ExpressionKind::Number(NumberExpression { token, number }), span)
     }
 
     pub fn usize_expression(&mut self, token: Token, number: usize) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Usize(UsizeExpression { token, number }))
+        let span = token.span.clone();
+        self.expression_from_kind(ExpressionKind::Usize(UsizeExpression { token, number }), span)
     }
 
     pub fn string_expression(&mut self, token: Token, value: String) -> &Expression {
-        self.expression_from_kind(ExpressionKind::String(StringExpression { token, string: value }))
+        let span = token.span.clone();
+        self.expression_from_kind(ExpressionKind::String(StringExpression { token, string: value }), span)
     }
 
     pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId, from_compound: bool) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right, from_compound }))
+        let left_span = self.query_expression(left).span(self);
+        let right_span = self.query_expression(right).span(self);
+        let span_refs = vec![&left_span, &operator.token.span, &right_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(ExpressionKind::Binary(BinaryExpression { left, operator, right, from_compound }), span)
     }
 
     pub fn compound_binary_expression(
         &mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId
     ) -> &Expression {
+        let left_span = self.query_expression(left).span(self);
+        let right_span = self.query_expression(right).span(self);
+        let span_refs = vec![&left_span, &operator_token.span, &right_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
         self.expression_from_kind(
-            ExpressionKind::CompoundBinary(CompoundBinaryExpression { left, operator, operator_token, right })
+            ExpressionKind::CompoundBinary(CompoundBinaryExpression { left, operator, operator_token, right }),
+            span
         )
     }
 
     pub fn unary_expression(&mut self, operator: UnaryOp, operand: ExpressionId) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Unary(UnaryExpression { operator, operand }))
+        let operand_span = self.query_expression(operand).span(self);
+        let span_refs = vec![&operator.token.span, &operand_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(ExpressionKind::Unary(UnaryExpression { operator, operand }), span)
     }
 
     pub fn parenthesised_expression(&mut self, left_paren:Token, expression: ExpressionId, right_paren: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Parenthesised(ParenExpression { left_paren, expression, right_paren }))
+        let expr_span = self.query_expression(expression).span(self);
+        let span_refs = vec![&left_paren.span, &expr_span, &right_paren.span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(ExpressionKind::Parenthesised(ParenExpression { left_paren, expression, right_paren }), span)
     }
 
     pub fn variable_expression(&mut self, identifier: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Variable(VarExpression { identifier, variable_index: VariableIndex::new(0) }))
+        let span = identifier.span.clone();
+        self.expression_from_kind(ExpressionKind::Variable(VarExpression { identifier, variable_index: VariableIndex::new(0) }), span)
     }
 
     pub fn assignment_expression(&mut self, identifier: Token, equals: Token, expression: ExpressionId) -> &Expression {
+        let expr_span = self.query_expression(expression).span(self);
+        let span_refs = vec![&identifier.span, &equals.span, &expr_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
         self.expression_from_kind(
-            ExpressionKind::Assignment(AssignExpression { identifier, equals, expression, variable_index: VariableIndex::new(0) })
+            ExpressionKind::Assignment(AssignExpression { identifier, equals, expression, variable_index: VariableIndex::new(0) }),
+            span
         )
     }
 
     pub fn boolean_expression(&mut self, token: Token, value: bool) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }))
+        let span = token.span.clone();
+        self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }), span)
     }
 
     pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
+        let mut span_refs = vec![&callee.span, &left_paren.span];
+        
+        let arg_spans: Vec<TextSpan> = arguments.iter()
+            .map(|arg_id| self.query_expression(*arg_id).span(self))
+            .collect();
+        
+        for span in &arg_spans {
+            span_refs.push(span);
+        }
+        
+        span_refs.push(&right_paren.span);
+        let span = TextSpan::combine_refs(&span_refs);
+        
         self.expression_from_kind(
-            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() })
+            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() }),
+            span
         )
     }
 
     pub fn break_expression(&mut self, break_keyword: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Break(BreakExpression { break_keyword }))
+        let span = break_keyword.span.clone();
+        self.expression_from_kind(ExpressionKind::Break(BreakExpression { break_keyword }), span)
     }
 
     pub fn continue_expression(&mut self, continue_keyword: Token) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Continue(ContinueExpression { continue_keyword }))
+        let span = continue_keyword.span.clone();
+        self.expression_from_kind(ExpressionKind::Continue(ContinueExpression { continue_keyword }), span)
     }
 
     pub fn array_expression(
         &mut self, type_decl: Token, open_square_bracket: Token, elements: Vec<ExpressionId>, commas: Vec<Token>, close_square_bracket: Token
     ) -> &Expression {
+        let mut span_refs = vec![&type_decl.span, &open_square_bracket.span];
+        
+        let element_spans: Vec<TextSpan> = elements.iter()
+            .map(|elem_id| self.query_expression(*elem_id).span(self))
+            .collect();
+        
+        for (i, span) in element_spans.iter().enumerate() {
+            span_refs.push(span);
+            if i < commas.len() {
+                span_refs.push(&commas[i].span);
+            }
+        }
+        
+        span_refs.push(&close_square_bracket.span);
+        let span = TextSpan::combine_refs(&span_refs);
+        
         self.expression_from_kind(
-            ExpressionKind::Array(ArrayExpression { type_decl, open_square_bracket, elements, commas, close_square_bracket })
+            ExpressionKind::Array(ArrayExpression { type_decl, open_square_bracket, elements, commas, close_square_bracket }),
+            span
         )
     }
 
     pub fn index_expression(&mut self, object: ExpressionId, open_square_bracket: Token, index: ExpressionId, close_square_bracket: Token) -> &Expression {
+        let object_span = self.query_expression(object).span(self);
+        let index_span = self.query_expression(index).span(self);
+        let span_refs = vec![&object_span, &open_square_bracket.span, &index_span, &close_square_bracket.span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
         self.expression_from_kind(
-            ExpressionKind::IndexExpression(IndexExpression { object, open_square_bracket, index, close_square_bracket })
+            ExpressionKind::IndexExpression(IndexExpression { object, open_square_bracket, index, close_square_bracket }),
+            span
         )
     }
 
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
-        self.expression_from_kind(ExpressionKind::Error(span))
+        let span_clone = span.clone();
+        self.expression_from_kind(ExpressionKind::Error(span), span_clone)
     }
 
     // Item
@@ -340,6 +484,25 @@ impl StaticTypeAnnotation {
     ) -> Self {
         Self { colon, open_square_bracket, type_name, length, close_square_bracket }
     }
+
+    /// Collect all text spans from this type annotation
+    pub fn collect_spans(&self) -> Vec<&TextSpan> {
+        let mut spans = vec![&self.colon.span, &self.type_name.span];
+        
+        if let Some(ref bracket) = self.open_square_bracket {
+            spans.insert(1, &bracket.span); // Insert after colon, before type_name
+        }
+        
+        if let Some(ref length) = self.length {
+            spans.push(&length.span);
+        }
+        
+        if let Some(ref bracket) = self.close_square_bracket {
+            spans.push(&bracket.span);
+        }
+        
+        spans
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -389,11 +552,12 @@ pub struct LetStatement {
 pub struct Statement {
     pub kind: StatementKind,
     pub id: StatementId,
+    pub span: TextSpan,
 }
 
 impl Statement {
-    pub fn new(kind: StatementKind, id: StatementId) -> Self {
-        Statement { kind, id }
+    pub fn new(kind: StatementKind, id: StatementId, span: TextSpan) -> Self {
+        Statement { kind, id, span }
     }
 
     pub fn span(&self, ast: &Ast) -> TextSpan {
@@ -766,11 +930,12 @@ pub struct Expression {
     pub kind: ExpressionKind,
     pub id: ExpressionId,
     pub ty: Type,
+    pub span: TextSpan,
 }
 
 impl Expression {
-    pub fn new(kind: ExpressionKind, id: ExpressionId, ty: Type) -> Self {
-        Expression { kind, id, ty }
+    pub fn new(kind: ExpressionKind, id: ExpressionId, ty: Type, span: TextSpan) -> Self {
+        Expression { kind, id, ty, span }
     }
 
     pub fn span(&self, ast: &Ast) -> TextSpan {

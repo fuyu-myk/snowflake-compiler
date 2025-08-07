@@ -37,29 +37,29 @@ impl HIRBuilder {
         }
     }
 
-    // Helper method to get a new node ID
+    /// Method to get a new node ID
     fn next_node_id(&mut self) -> HIRNodeId {
         self.context.next_node_id()
     }
 
-    // Helper method to get a default span (you should replace this with actual span tracking)
+    /// Method to get a default span (you should replace this with actual span tracking)
     fn default_span(&self) -> TextSpan {
         TextSpan::new(0, 0, String::new())
     }
 
-    // Helper method to get a current or default scope
+    /// Method to get a current or default scope
     fn current_scope_id(&self) -> ScopeId {
         self.context.current_scope
     }
 
-    // Helper method to create a HIRStatement with proper ID and span
+    /// Method to create a HIRStatement with proper ID and span
     fn create_statement(&mut self, kind: HIRStmtKind) -> HIRStatement {
         let id = self.next_node_id();
         let span = self.default_span();
         HIRStatement { kind, id, span }
     }
 
-    // Helper method to create a HIRExpression with proper ID and span
+    /// Method to create a HIRExpression with proper ID and span
     fn create_expression(&mut self, kind: HIRExprKind, ty: Type) -> HIRExpression {
         let id = self.next_node_id();
         let span = self.default_span();
