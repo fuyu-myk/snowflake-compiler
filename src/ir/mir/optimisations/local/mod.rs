@@ -1,4 +1,4 @@
-use crate::{compilation_unit::FunctionIndex, ir::mir::{basic_block::BasicBlockIdx, optimisations::MIRPass, MIR}};
+use crate::{ir::mir::{basic_block::BasicBlockIdx, optimisations::MIRPass, FunctionIdx, MIR}};
 
 mod copy_propagation;
 mod constants_folding;
@@ -6,7 +6,7 @@ mod algebraic_simplification;
 
 
 pub trait MIRPassLocal {
-    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIndex, bb_idx: BasicBlockIdx) -> u32;
+    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIdx, bb_idx: BasicBlockIdx) -> u32;
 }
 
 pub struct LocalOptimiser {

@@ -1,4 +1,4 @@
-use crate::{compilation_unit::FunctionIndex, ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, InstructionKind, Type, Value, MIR}};
+use crate::ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, Constant, FunctionIdx, InstructionKind, Type, Value, MIR};
 
 pub struct AlgebraicSimplification;
 
@@ -45,7 +45,7 @@ impl AlgebraicSimplification {
 }
 
 impl MIRPassLocal for AlgebraicSimplification {
-    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIndex, bb_idx: BasicBlockIdx) -> u32 {
+    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIdx, bb_idx: BasicBlockIdx) -> u32 {
         let mut changes = 0;
         let function = mir.functions.get_mut(fx_idx);
         let bb = mir.basic_blocks.get_mut_or_panic(bb_idx);
@@ -60,7 +60,7 @@ impl MIRPassLocal for AlgebraicSimplification {
                             if let Some(result) = self.simplify_binary_instruction_one_side_known(
                                 *operator, &instruction.ty, right_int)
                             {
-                                instruction.kind = InstructionKind::Value(Value::ConstantInt(result));
+                                instruction.kind = InstructionKind::Value(Value::Constant(Constant::Int(result)));
                                 changes += 1;
                             }
                         }
@@ -68,7 +68,7 @@ impl MIRPassLocal for AlgebraicSimplification {
                             if let Some(result) = self.simplify_binary_instruction_one_side_known(
                                 *operator, &instruction.ty, left_int)
                             {
-                                instruction.kind = InstructionKind::Value(Value::ConstantInt(result));
+                                instruction.kind = InstructionKind::Value(Value::Constant(Constant::Int(result)));
                                 changes += 1;
                             }
                         }
@@ -78,7 +78,10 @@ impl MIRPassLocal for AlgebraicSimplification {
                 InstructionKind::Unary { .. } => {}
                 InstructionKind::Value(_) => {}
                 InstructionKind::Call { .. } => {}
-                InstructionKind::Array(_) => {}
+                InstructionKind::ArrayInit { .. } => {}
+                InstructionKind::ArrayAlloc { .. } => {}
+                InstructionKind::IndexVal { .. } => {}
+                InstructionKind::ArrayIndex { .. } => {}
                 InstructionKind::Index { .. } => {}
                 InstructionKind::Phi(_) => {}
             }

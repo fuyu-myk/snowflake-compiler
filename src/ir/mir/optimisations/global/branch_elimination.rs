@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use crate::ir::mir::{basic_block::BasicBlockIdx, builder::Dominators, optimisations::MIRPass, BasicBlocks, Function, TerminatorKind, Value, MIR};
+use crate::ir::mir::{basic_block::BasicBlockIdx, builder::Dominators, optimisations::MIRPass, BasicBlocks, Constant, Function, TerminatorKind, Value, MIR};
 
 
 /// Branch Elimination is a global optimization pass that removes unnecessary branches.
@@ -134,7 +134,7 @@ impl MIRPass for BranchElimination {
                         // Check if the terminator is a branch that can be eliminated
                         if let Some(terminator) = bb.terminator.as_mut() {
                             match &terminator.kind {
-                                TerminatorKind::Return { .. } | TerminatorKind::Unresolved => {}
+                                TerminatorKind::Return { .. } | TerminatorKind::Unresolved | TerminatorKind::Assert { .. } => {}
                                 TerminatorKind::Goto(target) => {
                                     // Remove self-loops (infinite loops should be handled differently)
                                     if *target == bb_idx {
@@ -144,7 +144,7 @@ impl MIRPass for BranchElimination {
                                 }
                                 TerminatorKind::SwitchInt { value, targets, default } => {
                                     // Check for constant condition
-                                    if let Value::ConstantInt(const_val) = value {
+                                    if let Value::Constant(Constant::Int(const_val)) = value {
                                         // Find the target for this constant value
                                         let actual_target = targets.iter()
                                             .find(|(case_val, _)| *case_val == *const_val)

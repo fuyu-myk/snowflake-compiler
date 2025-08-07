@@ -54,6 +54,7 @@ Thus far, the current compiler architecture is highlighted below:
             }
         }
         ```
+    * TODO: Proper span tracking for diagnostics
 
     - [x] *Mid-level IR (MIR)* [completed 28.04.2025]
     * Based on a control-flow graph (CFG)
@@ -70,6 +71,7 @@ Thus far, the current compiler architecture is highlighted below:
         }
         ```
         * Locals - function arguments, local variables etc.
+    * TODO: Proper span tracking for diagnostics
     
     - [x] *MIR Optimisations* [completed 30.07.2025]
     * Optimisations that aims to enhance the performance and efficiency of the executed code

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use snowflake_compiler::{bug_report, Idx, IndexVec};
 
-use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, diagnostics::DiagnosticsReportCell, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, Function, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
+use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, diagnostics::DiagnosticsReportCell, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
 
 
 pub struct MIRBuilder {
@@ -19,7 +19,7 @@ impl MIRBuilder {
     /// 
     /// All functions are built first, then all calls are resolved as instructions.
     pub fn build(mut self, hir: &HIR, global_scope: &GlobalScope) -> MIR {
-        let mut fx_map: HashMap<FunctionIndex, FunctionIndex> = HashMap::new();
+        let mut fx_map: HashMap<FunctionIndex, FunctionIdx> = HashMap::new();
         let mut calls_to_resolve = Vec::new();
 
         // Building every function
@@ -137,26 +137,26 @@ impl FunctionBuilder {
             // Only add implicit return for void functions
             // Non-void functions without explicit returns should get a default value return
             let return_value = match self.function.return_type {
-                Type::Void => Value::Void,
+                Type::Void => Value::Constant(Constant::Void),
                 Type::Int => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
                                  self.function.name, self.function.return_type);
-                    Value::ConstantInt(0)
+                    Value::Constant(Constant::Int(0))
                 }
                 Type::String => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty string return", 
                                  self.function.name, self.function.return_type);
-                    Value::ConstantString(String::new())
+                    Value::Constant(Constant::String(String::new()))
                 }
                 Type::Bool => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return false", 
                                  self.function.name, self.function.return_type);
-                    Value::ConstantInt(0) // false
+                    Value::Constant(Constant::Int(0))
                 }
                 Type::Usize => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
                                  self.function.name, self.function.return_type);
-                    Value::ConstantUsize(0)
+                    Value::Constant(Constant::Usize(0))
                 }
                 Type::Array(_) => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty array return", 
@@ -164,7 +164,7 @@ impl FunctionBuilder {
                     Value::InstructionRef(bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
-                        Instruction::new(InstructionKind::Array(Vec::new()), Type::Array(Box::new(Type::Void))),
+                        Instruction::new(InstructionKind::ArrayInit { elements: Vec::new() }, Type::Array(Box::new(Type::Void))),
                     ))
                 }
             };
@@ -338,12 +338,12 @@ impl FunctionBuilder {
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Value(value.unwrap_or(Value::Void)), ty),
+                    Instruction::new(InstructionKind::Value(value.unwrap_or(Value::Constant(Constant::Void))), ty),
                 );
 
                 self.write_variable(*var_idx, bb_builder.current, instruct_idx);
             }
-            HIRStmtKind::Block { body } => {
+            HIRStmtKind::Block { body, scope_id: _ } => {
                 // Builds every statement inside the block
                 for statement in body.iter() {
                     self.build_statement(basic_blocks, bb_builder, global_scope, statement);
@@ -394,44 +394,130 @@ impl FunctionBuilder {
 
     pub fn build_expr(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, expr: &HIRExpression) -> Value {
         match &expr.kind {
-            HIRExprKind::Number(value) => Value::ConstantInt(*value as i32),
-            HIRExprKind::Usize(value) => Value::ConstantUsize(*value),
-            HIRExprKind::String(value) => Value::ConstantString(value.clone()),
-            HIRExprKind::Bool(value) => Value::ConstantInt(if *value { 1 } else { 0 }),
-            HIRExprKind::Unit => Value::Void,
+            HIRExprKind::Number(value) => Value::Constant(Constant::Int(*value as i32)),
+            HIRExprKind::Usize(value) => Value::Constant(Constant::Usize(*value)),
+            HIRExprKind::String(value) => Value::Constant(Constant::String(value.clone())),
+            HIRExprKind::Bool(value) => Value::Constant(Constant::Int(if *value { 1 } else { 0 })),
+            HIRExprKind::Unit => Value::Constant(Constant::Void),
             HIRExprKind::Var(var_idx) => {
                 let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
 
                 Value::InstructionRef(instruct_ref)
             }
-            HIRExprKind::Array(array_expr) => {
-                // For arrays, we create a new instruction that represents the array
-                // The array is built as a single value, which is then used in the MIR
-                let element_type = array_expr.first()
-                    .map(|elem| elem.ty.clone().into())
-                    .unwrap_or(Type::Void);
+            HIRExprKind::Array { elements, element_type, alloc_type } => {
+                // Different instructions for static and dynamic arrays
+                match alloc_type {
+                    crate::ir::hir::AllocType::Stack => {
+                        // Static array - array initialization instruction
+                        let element_values: Vec<Value> = elements.iter()
+                            .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
+                            .collect();
 
-                let elements: Vec<Value> = array_expr.iter()
-                    .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
-                    .collect();
+                        let instruct_ref = bb_builder.add_instruction(
+                            basic_blocks,
+                            &mut self.function,
+                            Instruction::new(
+                                InstructionKind::ArrayInit { elements: element_values.clone() },
+                                Type::Array(Box::new(element_type.clone().into()))
+                            ),
+                        );
 
-                let instruct_ref = bb_builder.add_instruction(
-                    basic_blocks,
-                    &mut self.function,
-                    Instruction::new(InstructionKind::Array(elements), Type::Array(Box::new(element_type))),
-                );
+                        Value::InstructionRef(instruct_ref)
+                    }
+                    crate::ir::hir::AllocType::Heap => {
+                        // Dynamic array - allocate then initialize
+                        let size = Value::Constant(Constant::Usize(elements.len()));
+                        
+                        let alloc_ref = bb_builder.add_instruction(
+                            basic_blocks,
+                            &mut self.function,
+                            Instruction::new(
+                                InstructionKind::ArrayAlloc { 
+                                    element_type: element_type.clone().into(), 
+                                    size 
+                                },
+                                Type::Array(Box::new(element_type.clone().into()))
+                            ),
+                        );
 
-                Value::InstructionRef(instruct_ref)
+                        if !elements.is_empty() {
+                            let element_values: Vec<Value> = elements.iter()
+                                .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
+                                .collect();
+
+                            let init_ref = bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(
+                                    InstructionKind::ArrayInit { elements: element_values },
+                                    Type::Array(Box::new(element_type.clone().into()))
+                                ),
+                            );
+
+                            Value::InstructionRef(init_ref)
+                        } else {
+                            Value::InstructionRef(alloc_ref)
+                        }
+                    }
+                }
             }
-            HIRExprKind::Index { object, index } => {
-                // For indexing, we create a new instruction that represents the index operation
-                let object = self.build_expr(basic_blocks, bb_builder, global_scope, object);
-                let index = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+            HIRExprKind::Index { object, index, bounds_check } => {
+                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
+                let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+
+                if *bounds_check {
+                    let index_val_ref = bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(
+                            InstructionKind::IndexVal { 
+                                array_len: index_val.clone(),
+                            },
+                            Type::Usize
+                        ),
+                    );
+
+                    let bounds_check_ref = bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(
+                            InstructionKind::Binary { 
+                                operator: BinOp::Lt,
+                                left: Value::InstructionRef(index_val_ref),
+                                right: object_val.clone(),
+                            },
+                            Type::Bool
+                        ),
+                    );
+
+                    // Create the basic block for successful array access
+                    let predecessor = bb_builder.current;
+                    let array_access_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
+
+                    bb_builder.set_bb(predecessor);
+                    bb_builder.terminate(
+                        basic_blocks,
+                        TerminatorKind::Assert {
+                            condition: Value::InstructionRef(bounds_check_ref),
+                            message: "Array index out of bounds".to_string(),
+                            default: array_access_bb,
+                        }
+                    );
+
+                    bb_builder.set_bb(array_access_bb);
+                    self.seal_block(basic_blocks, array_access_bb, global_scope);
+                }
 
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Index { object: Box::new(object), index: Box::new(index) }, Type::from(expr.ty.clone())),
+                    Instruction::new(
+                        InstructionKind::ArrayIndex { 
+                            array: object_val, 
+                            index: index_val 
+                        }, 
+                        Type::from(expr.ty.clone())
+                    ),
                 );
 
                 Value::InstructionRef(instruct_ref)
@@ -467,7 +553,7 @@ impl FunctionBuilder {
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Call { fx_idx: FunctionIndex::first(), args }, ty)
+                    Instruction::new(InstructionKind::Call { fx_idx: FunctionIdx::first(), args }, ty)
                 );
 
                 self.calls_to_resolve.push((instruct_idx, *fx_idx));
@@ -477,14 +563,14 @@ impl FunctionBuilder {
                 // Current block terminated with an unresolved terminator (for breaks in loops)
                 let break_block = bb_builder.terminate(basic_blocks, TerminatorKind::Unresolved);
                 self.push_depending_block(break_block);
-                Value::Void
+                Value::Constant(Constant::Void)
             }
             HIRExprKind::Continue => {
                 // For continue, jump directly to the loop entry block
                 if let Some(current_loop) = self.loops.last() {
                     let loop_entry = current_loop.entry_bb;
                     bb_builder.terminate(basic_blocks, TerminatorKind::Goto(loop_entry));
-                    Value::Void
+                    Value::Constant(Constant::Void)
                 } else {
                     // Continue outside of loop - this should be caught before this point
                     panic!("Continue statement outside of loop");
@@ -516,7 +602,7 @@ impl FunctionBuilder {
                                   incomplete_phi, replacement_idx, var_idx);
                     self.write_variable(var_idx, bb_idx, replacement_idx);
                     
-                    self.function.instructions[incomplete_phi].kind = InstructionKind::Value(Value::Void);
+                    self.function.instructions[incomplete_phi].kind = InstructionKind::Value(Value::Constant(Constant::Void));
                 }
             }
         }
@@ -621,7 +707,7 @@ impl FunctionBuilder {
                               instruct_ref, replacement_idx, var_idx);
                 self.write_variable(var_idx, bb_idx, replacement_idx);
                 
-                self.function.instructions[instruct_ref].kind = InstructionKind::Value(Value::Void);
+                self.function.instructions[instruct_ref].kind = InstructionKind::Value(Value::Constant(Constant::Void));
                 replacement_idx
             } else {
                 instruct_ref
@@ -722,6 +808,9 @@ impl BasicBlockBuilder {
                     assert_ne!(*target, self.current, "Unable to jump to same basic block currently");
                 }
             }
+            TerminatorKind::Assert { default, .. } => {
+                assert_ne!(*default, self.current, "Unable to jump to same basic block currently");
+            }
             TerminatorKind::Return { .. } | TerminatorKind::Unresolved => {}
         };
         
@@ -767,6 +856,9 @@ impl Function {
                             predecessors.insert(*target, idx);
                         }
                     }
+                    TerminatorKind::Assert { default, .. } => {
+                        predecessors.insert(*default, idx);
+                    }
                     TerminatorKind::Return { .. } | TerminatorKind::Unresolved => {}
                 }
             }
@@ -789,6 +881,9 @@ impl Function {
                         for (_, target) in targets {
                             successors.insert(idx, *target);
                         }
+                    }
+                    TerminatorKind::Assert { default, .. } => {
+                        successors.insert(idx, *default);
                     }
                     TerminatorKind::Return { .. } | TerminatorKind::Unresolved => {}
                 }

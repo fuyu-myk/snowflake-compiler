@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::{Deref, DerefMut}};
 
-use crate::{compilation_unit::FunctionIndex, ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, Instruction, InstructionIdx, InstructionKind, TerminatorKind, UnOp, Value, MIR}};
+use crate::ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, Constant, FunctionIdx, Instruction, InstructionIdx, InstructionKind, TerminatorKind, UnOp, Value, MIR};
 
 
 struct ComputedConstants(HashMap<InstructionIdx, Value>);
@@ -27,15 +27,16 @@ impl ComputedConstants {
 
     fn get_constant_value(&self, value: &Value) -> Option<Value> {
         match value {
-            Value::ConstantInt(value) => Some(Value::ConstantInt(*value)),
-            Value::ConstantString(value) => Some(Value::ConstantString(value.clone())),
-            Value::ConstantUsize(value) => Some(Value::ConstantUsize(*value)),
+            Value::Constant(Constant::Int(value)) => Some(Value::Constant(Constant::Int(*value))),
+            Value::Constant(Constant::Bool(value)) => Some(Value::Constant(Constant::Bool(*value))),
+            Value::Constant(Constant::String(value)) => Some(Value::Constant(Constant::String(value.clone()))),
+            Value::Constant(Constant::Usize(value)) => Some(Value::Constant(Constant::Usize(*value))),
             Value::InstructionRef(idx) => match self.0.get(idx) {
                 Some(value) => self.get_constant_value(value),
                 None => None,
             },
             Value::ParamRef(_) => None,
-            Value::Void => Some(Value::Void),
+            Value::Constant(Constant::Void) => Some(Value::Constant(Constant::Void)),
         }
     }
 }
@@ -57,7 +58,7 @@ impl DerefMut for ComputedConstants {
 pub struct ConstantsFolding;
 
 impl MIRPassLocal for ConstantsFolding {
-    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIndex, bb_idx: BasicBlockIdx) -> u32 {
+    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIdx, bb_idx: BasicBlockIdx) -> u32 {
         let mut changes = 0;
         let mut constants = ComputedConstants::new();
         let function = mir.functions.get_mut(fx_idx);
@@ -108,7 +109,7 @@ impl MIRPassLocal for ConstantsFolding {
                             BinOp::Geq => (left_int >= right_int) as i32,
                         };
 
-                        let new_value = Value::ConstantInt(result);
+                        let new_value = Value::Constant(Constant::Int(result));
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
                         *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
@@ -122,7 +123,7 @@ impl MIRPassLocal for ConstantsFolding {
                             UnOp::Not => !operand_int,
                         };
 
-                        let new_value = Value::ConstantInt(result);
+                        let new_value = Value::Constant(Constant::Int(result));
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
                         *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
@@ -137,12 +138,24 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::Array(elements) => {
+                InstructionKind::ArrayInit { elements } => {
                     for elem in elements.iter_mut() {
                         if let Some(value) = constants.get_constant_value(elem) {
                             if elem.replace_if_unequal(value) {
                                 changes += 1;
                             }
+                        }
+                    }
+                }
+                InstructionKind::ArrayIndex { array, index } => {
+                    if let Some(value) = constants.get_constant_value(array) {
+                        if array.replace_if_unequal(value) {
+                            changes += 1;
+                        }
+                    }
+                    if let Some(value) = constants.get_constant_value(index) {
+                        if index.replace_if_unequal(value) {
+                            changes += 1;
                         }
                     }
                 }
@@ -158,7 +171,7 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::Phi(_) => {}
+                InstructionKind::Phi(_) | InstructionKind::IndexVal { .. } | InstructionKind::ArrayAlloc { .. } => {}
             }
         }
 
@@ -175,6 +188,13 @@ impl MIRPassLocal for ConstantsFolding {
                 TerminatorKind::SwitchInt { value, .. } => {
                     if let Some(const_value) = constants.get_constant_value(value) {
                         if value.replace_if_unequal(const_value) {
+                            changes += 1;
+                        }
+                    }
+                }
+                TerminatorKind::Assert { condition, .. } => {
+                    if let Some(const_value) = constants.get_constant_value(condition) {
+                        if condition.replace_if_unequal(const_value) {
                             changes += 1;
                         }
                     }

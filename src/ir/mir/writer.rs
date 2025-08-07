@@ -4,8 +4,7 @@ use anyhow::Result;
 use snowflake_compiler::{Idx, IndexVec};
 
 use crate::{
-    compilation_unit::FunctionIndex,
-    ir::mir::{basic_block::{BasicBlock, BasicBlockIdx}, Function, Instruction, InstructionIdx, InstructionKind, Terminator, TerminatorKind, Type, Value, MIR}
+    ir::mir::{basic_block::{BasicBlock, BasicBlockIdx}, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, Terminator, TerminatorKind, Type, Value, MIR}
 };
 
 
@@ -39,6 +38,9 @@ impl<W> MIRWriter<W> where W: Write {
                         for (_case_idx, case_target) in targets.iter() {
                             writeln!(writer, "        {} -> {};", Self::format_bb_idx(bb_idx), Self::format_bb_idx(*case_target))?;
                         }
+                    }
+                    TerminatorKind::Assert { condition: _, message: _, default } => {
+                        writeln!(writer, "        {} -> {};", Self::format_bb_idx(bb_idx), Self::format_bb_idx(*default))?;
                     }
                     TerminatorKind::Unresolved => {}
                 }
@@ -87,7 +89,7 @@ impl<W> MIRWriter<W> where W: Write {
         Ok(())
     }
 
-    fn write_terminator(writer: &mut W, _functions: &IndexVec<FunctionIndex, Function>, terminator: &Terminator) -> Result<()> {
+    fn write_terminator(writer: &mut W, _functions: &IndexVec<FunctionIdx, Function>, terminator: &Terminator) -> Result<()> {
         match &terminator.kind {
             TerminatorKind::Return { value } => {
                 write!(writer, "return ")?;
@@ -110,13 +112,19 @@ impl<W> MIRWriter<W> where W: Write {
                 writeln!(writer)?;
                 write!(writer, "    }}")?;
             }
+            TerminatorKind::Assert { condition, message, default } => {
+                write!(writer, "assert(")?;
+                Self::write_value(writer, condition)?;
+                write!(writer, ", \"{}\"", message)?;
+                write!(writer, ") -> [success: {}]", Self::format_bb_idx(*default))?;
+            }
             TerminatorKind::Unresolved => { write!(writer, "unresolved")?; }
         }
 
         Ok(())
     }
 
-    fn write_instruction(writer: &mut W, functions: &IndexVec<FunctionIndex, Function>, instruction: &Instruction) -> Result<()> {
+    fn write_instruction(writer: &mut W, functions: &IndexVec<FunctionIdx, Function>, instruction: &Instruction) -> Result<()> {
         match &instruction.kind {
             InstructionKind::Value(value) => { Self::write_value(writer, value)?; }
             InstructionKind::Binary { operator, left, right } => {
@@ -143,7 +151,12 @@ impl<W> MIRWriter<W> where W: Write {
 
                 write!(writer, ")")?;
             }
-            InstructionKind::Array(elements) => {
+            InstructionKind::ArrayAlloc { size, element_type: _ } => {
+                write!(writer, "array_alloc(")?;
+                Self::write_value(writer, size)?;  
+                write!(writer, ")")?;
+            }
+            InstructionKind::ArrayInit { elements } => {
                 write!(writer, "[")?;
                 for (i, elem) in elements.iter().enumerate() {
                     Self::write_value(writer, elem)?;
@@ -151,6 +164,15 @@ impl<W> MIRWriter<W> where W: Write {
                         write!(writer, ", ")?;
                     }
                 }
+                write!(writer, "]")?;
+            }
+            InstructionKind::IndexVal { array_len } => {
+                Self::write_value(writer, array_len)?;
+            }
+            InstructionKind::ArrayIndex { array, index } => {
+                Self::write_value(writer, array)?;
+                write!(writer, "[")?;
+                Self::write_value(writer, index)?;
                 write!(writer, "]")?;
             }
             InstructionKind::Index { object, index } => {
@@ -185,16 +207,19 @@ impl<W> MIRWriter<W> where W: Write {
             Value::ParamRef(param_idx) => {
                 write!(writer, "{}", Self::format_param_idx(*param_idx))?;
             }
-            Value::ConstantInt(value) => {
+            Value::Constant(Constant::Int(value)) => {
                 write!(writer, "{}", value)?;
             }
-            Value::ConstantString(value) => {
+            Value::Constant(Constant::Bool(value)) => {
+                write!(writer, "{}", value)?;
+            }
+            Value::Constant(Constant::String(value)) => {
                 write!(writer, "\"{}\"", value)?;
             }
-            Value::ConstantUsize(value) => {
+            Value::Constant(Constant::Usize(value)) => {
                 write!(writer, "{}", value)?;
             }
-            Value::Void => {
+            Value::Constant(Constant::Void) => {
                 write!(writer, "()")?;
             }
         }

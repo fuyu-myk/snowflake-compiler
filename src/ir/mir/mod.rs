@@ -8,9 +8,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use snowflake_compiler::{bug_report, idx, IndexVec, Idx};
+use snowflake_compiler::{bug_report, idx, IndexVec};
 
-use crate::{ast, compilation_unit::{self, FunctionIndex, VariableIndex}};
+use crate::{ast, compilation_unit::{self, VariableIndex}};
 
 use basic_block::{BasicBlock, BasicBlockIdx};
 
@@ -26,7 +26,8 @@ mod writer;
 pub mod optimisations;
 
 
-pub type Functions = IndexVec<FunctionIndex, Function>;
+idx!(FunctionIdx);
+pub type Functions = IndexVec<FunctionIdx, Function>;
 
 idx!(InstructionIdx);
 
@@ -158,7 +159,10 @@ impl Instruction {
     pub fn is_pure(&self) -> bool {
         match &self.kind {
             InstructionKind::Value(_) => true,
-            InstructionKind::Array(_) => true,
+            InstructionKind::ArrayAlloc { .. } => false,
+            InstructionKind::ArrayInit { .. } => false,
+            InstructionKind::ArrayIndex { .. } => true,
+            InstructionKind::IndexVal { .. } => true,
             InstructionKind::Index { .. } => true,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
@@ -171,7 +175,20 @@ impl Instruction {
 #[derive(Debug)]
 pub enum InstructionKind {
     Value(Value),
-    Array(Vec<Value>),
+    ArrayAlloc {
+        element_type: Type,
+        size: Value,
+    },
+    ArrayInit {
+        elements: Vec<Value>,
+    },
+    ArrayIndex {
+        array: Value,
+        index: Value,
+    },
+    IndexVal {
+        array_len: Value,
+    },
     Index {
         object: Box<Value>,
         index: Box<Value>,
@@ -186,7 +203,7 @@ pub enum InstructionKind {
         operand: Value,
     },
     Call {
-        fx_idx: FunctionIndex,
+        fx_idx: FunctionIdx,
         args: Vec<Value>,
     },
     Phi(PhiNode),
@@ -212,16 +229,27 @@ impl InstructionKind {
 pub enum Value {
     InstructionRef(InstructionIdx),
     ParamRef(usize),
-    ConstantInt(i32),
-    ConstantUsize(usize),
-    ConstantString(String),
+    Constant(Constant),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum Constant {
+    Int(i32),
+    Usize(usize),
+    Bool(bool),
+    String(String),
     Void,
 }
 
 impl Value {
     /// Checks if `Value` is a constant.
     pub fn is_const(&self) -> bool {
-        matches!(self, Self::ConstantInt(_) | Self::ConstantString(_) | Self::ConstantUsize(_) | Self::Void)
+        matches!(self,
+            Self::Constant(Constant::Int(_)) |
+            Self::Constant(Constant::String(_)) |
+            Self::Constant(Constant::Usize(_)) |
+            Self::Constant(Constant::Void)
+        )
     }
 
     /// Returns `InstructionIdx` if `Value` is an instruction reference, `InstructionRef`.
@@ -236,7 +264,7 @@ impl Value {
     /// Returns `None` if it is not a constant integer.
     pub fn as_i32(&self) -> Option<i32> {
         match self {
-            Self::ConstantInt(value) => Some(*value),
+            Self::Constant(Constant::Int(value)) => Some(*value),
             _ => None,
         }
     }
@@ -490,6 +518,13 @@ pub enum TerminatorKind {
     SwitchInt {
         value: Value,
         targets: Vec<(i32, BasicBlockIdx)>,
+        default: BasicBlockIdx,
+    },
+    /// Continues default execution if condition is true
+    /// If false, execution stops and diagnostic (message) is printed
+    Assert {
+        condition: Value,
+        message: String,
         default: BasicBlockIdx,
     },
     /// Used for unknown targets

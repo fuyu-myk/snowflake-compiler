@@ -6,13 +6,13 @@
 
 use std::collections::HashMap;
 
-use crate::{compilation_unit::FunctionIndex, ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, InstructionIdx, InstructionKind, TerminatorKind, MIR}};
+use crate::{ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, FunctionIdx, InstructionIdx, InstructionKind, TerminatorKind, MIR}};
 
 
 pub struct CopyPropagation;
 
 impl MIRPassLocal for CopyPropagation {
-    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIndex, bb_idx: BasicBlockIdx) -> u32 {
+    fn run_on_bb(&mut self, mir: &mut MIR, fx_idx: FunctionIdx, bb_idx: BasicBlockIdx) -> u32 {
         let mut changes = 0;
         let mut copies: HashMap<InstructionIdx, InstructionIdx> = HashMap::new();
         let function = mir.functions.get_mut(fx_idx);
@@ -47,11 +47,25 @@ impl MIRPassLocal for CopyPropagation {
                         }
                     }
                 }
-                InstructionKind::Array(elements) => {
+                InstructionKind::ArrayInit { elements, .. } => {
                     for elem in elements.iter_mut() {
                         if elem.replace_with_copied_ref(&copies) {
                             changes += 1;
                         }
+                    }
+                }
+                InstructionKind::ArrayAlloc { size, .. } => {
+                    if size.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
+                InstructionKind::ArrayIndex { array, index } => {
+                    if array.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+
+                    if index.replace_with_copied_ref(&copies) {
+                        changes += 1;
                     }
                 }
                 InstructionKind::Index { object, index } => {
@@ -62,7 +76,7 @@ impl MIRPassLocal for CopyPropagation {
                         changes += 1;
                     }
                 }
-                InstructionKind::Phi(_) => {}
+                InstructionKind::Phi(_) | InstructionKind::IndexVal { .. }=> {}
             }
         }
 
@@ -76,6 +90,11 @@ impl MIRPassLocal for CopyPropagation {
                 TerminatorKind::Goto(_) => {}
                 TerminatorKind::SwitchInt { value, .. } => {
                     if value.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
+                TerminatorKind::Assert { condition, .. } => {
+                    if condition.replace_with_copied_ref(&copies) {
                         changes += 1;
                     }
                 }

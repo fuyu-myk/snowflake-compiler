@@ -44,10 +44,16 @@ impl MIRPass for DeadCodeElimination {
                                 referenced_instructions.insert_instruct_ref(arg);
                             }
                         }
-                        InstructionKind::Array(elements) => {
+                        InstructionKind::ArrayInit { elements, .. } => {
                             for elem in elements.iter_mut() {
                                 referenced_instructions.insert_instruct_ref(elem);
                             }
+                        }
+                        InstructionKind::ArrayAlloc { size, .. } => referenced_instructions.insert_instruct_ref(size),
+                        InstructionKind::IndexVal { array_len } => referenced_instructions.insert_instruct_ref(array_len),
+                        InstructionKind::ArrayIndex { array, index } => {
+                            referenced_instructions.insert_instruct_ref(array);
+                            referenced_instructions.insert_instruct_ref(index);
                         }
                         InstructionKind::Index { object, index } => {
                             referenced_instructions.insert_instruct_ref(object);
@@ -66,6 +72,7 @@ impl MIRPass for DeadCodeElimination {
                         TerminatorKind::Return { value } => referenced_instructions.insert_instruct_ref(value),
                         TerminatorKind::Goto(_) => {}
                         TerminatorKind::SwitchInt { value, .. } => referenced_instructions.insert_instruct_ref(value),
+                        TerminatorKind::Assert { condition, .. } => referenced_instructions.insert_instruct_ref(condition),
                         TerminatorKind::Unresolved => {}
                     }
                 }
