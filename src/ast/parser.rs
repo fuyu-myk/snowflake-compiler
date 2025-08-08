@@ -92,7 +92,8 @@ impl <'a> Parser<'a> {
             TokenKind::Function => self.parse_fx_item(),
             _ => {
                 let id = self.parse_statement();
-                self.ast.item_from_kind(ItemKind::Statement(id))
+                let span = self.ast.query_statement(id).span(self.ast);
+                self.ast.item_from_kind(ItemKind::Statement(id), span)
             }
         };
     }

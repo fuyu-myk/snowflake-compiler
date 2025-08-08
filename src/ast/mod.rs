@@ -363,16 +363,39 @@ impl Ast {
     }
 
     // Item
-    pub fn item_from_kind(&mut self, kind: ItemKind) -> &Item {
-        let item = Item::new(kind, ItemId::new(0));
+    pub fn item_from_kind(&mut self, kind: ItemKind, span: TextSpan) -> &Item {
+        let item = Item::new(kind, ItemId::new(0), span);
         let id = self.items.push(item);
         self.items[id].id = id;
 
         &self.items[id]
     }
 
-    pub fn func_item(&mut self, fx_keyword: Token, identifier: Token, parameters: Vec<FxDeclarationParams>, body: Body, return_type: Option<FxReturnType>, index: FunctionIndex) -> &Item {
-        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }))
+    pub fn func_item(
+        &mut self,
+        fx_keyword: Token,
+        identifier: Token,
+        parameters: Vec<FxDeclarationParams>,
+        body: Body,
+        return_type: Option<FxReturnType>,
+        index: FunctionIndex
+    ) -> &Item {
+        let mut param_span: Vec<TextSpan> = Vec::new();
+        for param in &parameters {
+            param_span.push(param.identifier.span.clone());
+            param_span.extend(param.type_annotation.collect_spans().into_iter().cloned());
+        }
+        
+        let span = TextSpan::combine_refs(&[
+            &fx_keyword.span,
+            &identifier.span,
+            &TextSpan::combine(param_span),
+            &body.span(self),
+            return_type.as_ref().map_or(&TextSpan::default(), |rt| &rt.arrow.span),
+            return_type.as_ref().map_or(&TextSpan::default(), |rt| &rt.type_name.span)
+        ]);
+
+        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }), span)
     }
 
     pub fn visit(&mut self, visitor: &mut dyn ASTVisitor) {
@@ -392,11 +415,12 @@ impl Ast {
 pub struct Item {
     pub kind: ItemKind,
     pub id: ItemId,
+    pub span: TextSpan,
 }
 
 impl Item {
-    pub fn new(kind: ItemKind, id: ItemId) -> Self {
-        Self { kind, id }
+    pub fn new(kind: ItemKind, id: ItemId, span: TextSpan) -> Self {
+        Self { kind, id, span }
     }
 }
 
