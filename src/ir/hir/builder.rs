@@ -1,7 +1,6 @@
 use std::{cell::Cell, collections::HashMap};
 
 use snowflake_compiler::{bug_report, Idx};
-use tracing::span;
 
 use crate::{ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::hir::{AllocType, HIRContext, HIRExprKind, HIRExpression, HIRNodeId, HIRStatement, HIRStmtKind, ScopeId, HIR}, text::span::TextSpan, typings::Type};
 
@@ -43,11 +42,6 @@ impl HIRBuilder {
         self.context.next_node_id()
     }
 
-    /// Method to get a default span (you should replace this with actual span tracking)
-    fn default_span(&self) -> TextSpan {
-        TextSpan::new(0, 0, String::new())
-    }
-
     /// Method to get a current or default scope
     fn current_scope_id(&self) -> ScopeId {
         self.context.current_scope
@@ -56,12 +50,14 @@ impl HIRBuilder {
     /// Method to create a HIRStatement with proper ID and span
     fn create_statement(&mut self, kind: HIRStmtKind, span: TextSpan) -> HIRStatement {
         let id = self.next_node_id();
+        self.hir.source_map.insert(id, span.clone());
         HIRStatement { kind, id, span }
     }
 
     /// Method to create a HIRExpression with proper ID and span
     fn create_expression(&mut self, kind: HIRExprKind, ty: Type, span: TextSpan) -> HIRExpression {
         let id = self.next_node_id();
+        self.hir.source_map.insert(id, span.clone());
         HIRExpression { kind, ty, id, span }
     }
 
@@ -113,13 +109,14 @@ impl HIRBuilder {
                     self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false);
                 }
 
-                let break_expr = self.create_expression(HIRExprKind::Break, Type::Void, TextSpan::default());
-                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr }, TextSpan::default());
+                let while_span = TextSpan::combine_refs(&[&while_statement.while_keyword.span, &condition.span]);
+                let break_expr = self.create_expression(HIRExprKind::Break, Type::Void, while_span.clone());
+                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr }, while_span.clone());
                 let if_stmt = self.create_statement(HIRStmtKind::If {
                     condition,
                     then_block: body_ctx.statements,
                     else_block: vec![break_stmt],
-                }, TextSpan::default());
+                }, while_span);
 
                 HIRStmtKind::Loop { body: vec![if_stmt] }
             }
@@ -129,7 +126,7 @@ impl HIRBuilder {
                     .unwrap_or_else(|| {
                         match return_statement.return_value {
                             Some(value) => self.create_expression(HIRExprKind::Unit, Type::Void, ast.query_expression(value).span.clone()),
-                            None => self.create_expression(HIRExprKind::Unit, Type::Void, TextSpan::default()),
+                            None => self.create_expression(HIRExprKind::Unit, Type::Void, return_statement.return_keyword.span.clone()),
                         }
                     });
 
@@ -215,19 +212,20 @@ impl HIRBuilder {
                     };
 
                     let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
+                    let temp_span = expr.span.clone();
                     ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
                         var_idx: temp_var_idx, 
                         init: None 
-                    }, TextSpan::default()));
+                    }, temp_span.clone()));
 
                     *then_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
                         var_idx: temp_var_idx, 
                         expr: then_expr
-                    }, TextSpan::default());
+                    }, temp_span.clone());
                     *else_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
                         var_idx: temp_var_idx, 
                         expr: else_expr 
-                    }, TextSpan::default());
+                    }, temp_span);
 
                     HIRExprKind::Var(temp_var_idx)
                 };
@@ -258,15 +256,16 @@ impl HIRBuilder {
 
                     if let HIRStmtKind::Expression { expr } = &last_stmt.kind {
                         let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
+                        let temp_span = expr.span.clone();
                         ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
                             var_idx: temp_var_idx, 
                             init: None 
-                        }, TextSpan::default()));
+                        }, temp_span.clone()));
 
                         *last_stmt = self.create_statement(HIRStmtKind::Assignment { 
                             var_idx: temp_var_idx, 
                             expr: expr.clone() 
-                        }, TextSpan::default());
+                        }, temp_span);
 
                         HIRExprKind::Var(temp_var_idx)
                     } else {

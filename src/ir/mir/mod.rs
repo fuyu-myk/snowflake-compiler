@@ -10,7 +10,7 @@ use std::{
 
 use snowflake_compiler::{bug_report, idx, IndexVec};
 
-use crate::{ast, compilation_unit::{self, VariableIndex}};
+use crate::{ast, compilation_unit::{self, VariableIndex}, text::span::TextSpan};
 
 use basic_block::{BasicBlock, BasicBlockIdx};
 
@@ -149,11 +149,12 @@ pub type Locals = HashMap<InstructionIdx, VariableIndex>;
 pub struct Instruction {
     pub kind: InstructionKind,
     pub ty: Type,
+    pub span: TextSpan,
 }
 
 impl Instruction {
-    pub fn new(kind: InstructionKind, ty: Type) -> Self {
-        Self { kind, ty }
+    pub fn new(kind: InstructionKind, ty: Type, span: TextSpan) -> Self {
+        Self { kind, ty, span }
     }
 
     pub fn is_pure(&self) -> bool {
@@ -347,22 +348,22 @@ impl From<ast::BinaryOpKind> for BinOp {
 impl Display for BinOp {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Add => write!(f, "add"),
-            Self::Sub => write!(f, "sub"),
-            Self::Mul => write!(f, "mul"),
-            Self::Div => write!(f, "div"),
-            Self::Mod => write!(f, "mod"),
-            Self::BitAnd => write!(f, "and"),
-            Self::BitOr => write!(f, "or"),
-            Self::BitXor => write!(f, "xor"),
-            Self::BitShl => write!(f, "shl"),
-            Self::BitShr => write!(f, "shr"),
-            Self::Eq => write!(f, "eq"),
-            Self::Neq => write!(f, "neq"),
-            Self::Lt => write!(f, "lt"),
-            Self::Gt => write!(f, "gt"),
-            Self::Leq => write!(f, "leq"),
-            Self::Geq => write!(f, "geq"),
+            Self::Add => write!(f, "Add"),
+            Self::Sub => write!(f, "Sub"),
+            Self::Mul => write!(f, "Mul"),
+            Self::Div => write!(f, "Div"),
+            Self::Mod => write!(f, "Mod"),
+            Self::BitAnd => write!(f, "And"),
+            Self::BitOr => write!(f, "Or"),
+            Self::BitXor => write!(f, "Xor"),
+            Self::BitShl => write!(f, "Shl"),
+            Self::BitShr => write!(f, "Shr"),
+            Self::Eq => write!(f, "Eq"),
+            Self::Neq => write!(f, "Neq"),
+            Self::Lt => write!(f, "Lt"),
+            Self::Gt => write!(f, "Gt"),
+            Self::Leq => write!(f, "Leq"),
+            Self::Geq => write!(f, "Geq"),
         }
     }
 }

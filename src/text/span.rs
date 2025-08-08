@@ -61,4 +61,14 @@ impl TextSpan {
         let span_refs: Vec<&TextSpan> = spans.iter().collect();
         Self::combine_refs(&span_refs)
     }
+
+    /// Combine two spans without creating a vector
+    pub fn combine_two(first: &TextSpan, second: &TextSpan) -> TextSpan {
+        Self::combine_refs(&[first, second])
+    }
+
+    /// Combine three spans without creating a vector
+    pub fn combine_three(first: &TextSpan, second: &TextSpan, third: &TextSpan) -> TextSpan {
+        Self::combine_refs(&[first, second, third])
+    }
 }

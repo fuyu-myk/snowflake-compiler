@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::{Deref, DerefMut}};
 
-use crate::ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, Constant, FunctionIdx, Instruction, InstructionIdx, InstructionKind, TerminatorKind, UnOp, Value, MIR};
+use crate::{ir::mir::{basic_block::BasicBlockIdx, optimisations::local::MIRPassLocal, BinOp, Constant, FunctionIdx, Instruction, InstructionIdx, InstructionKind, TerminatorKind, UnOp, Value, MIR}, text::span::TextSpan};
 
 
 struct ComputedConstants(HashMap<InstructionIdx, Value>);
@@ -112,7 +112,7 @@ impl MIRPassLocal for ConstantsFolding {
                         let new_value = Value::Constant(Constant::Int(result));
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
-                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
+                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone(), TextSpan::default());
                     }
                 }
                 InstructionKind::Unary { operand, operator } => {
@@ -126,7 +126,7 @@ impl MIRPassLocal for ConstantsFolding {
                         let new_value = Value::Constant(Constant::Int(result));
                         constants.insert(instruct_idx, new_value.clone());
                         changes += 1;
-                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone());
+                        *instruction = Instruction::new(InstructionKind::Value(new_value), instruction.ty.clone(), TextSpan::default());
                     }
                 }
                 InstructionKind::Call { args, .. } => {

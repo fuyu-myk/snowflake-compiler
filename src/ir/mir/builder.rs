@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use snowflake_compiler::{bug_report, Idx, IndexVec};
 
-use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, diagnostics::DiagnosticsReportCell, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}};
+use crate::{compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, diagnostics::DiagnosticsReportCell, ir::{hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}}, text::span::TextSpan};
 
 
 pub struct MIRBuilder {
@@ -122,6 +122,7 @@ impl FunctionBuilder {
                 Instruction::new(
                     InstructionKind::Value(Value::ParamRef(idx)),
                     param_ty,
+                    TextSpan::default(), // TODO: Track parameter spans from function declaration
                 ),
             );
             self.write_variable(var_idx, bb_builder.current, instruct_idx);
@@ -164,7 +165,11 @@ impl FunctionBuilder {
                     Value::InstructionRef(bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
-                        Instruction::new(InstructionKind::ArrayInit { elements: Vec::new() }, Type::Array(Box::new(Type::Void))),
+                        Instruction::new(
+                            InstructionKind::ArrayInit { elements: Vec::new() },
+                            Type::Array(Box::new(Type::Void)),
+                            TextSpan::default(),
+                        ),
                     ))
                 }
             };
@@ -251,7 +256,7 @@ impl FunctionBuilder {
                     bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
-                        Instruction::new(InstructionKind::Value(value), ty)
+                        Instruction::new(InstructionKind::Value(value), ty, statement.span.clone())
                     );
                 }
             }
@@ -266,7 +271,7 @@ impl FunctionBuilder {
                     let instruct_idx = bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
-                        Instruction::new(InstructionKind::Value(value), expr.ty.clone().into())
+                        Instruction::new(InstructionKind::Value(value), expr.ty.clone().into(), statement.span.clone())
                     );
 
                     self.write_variable(*var_idx, bb_builder.current, instruct_idx);
@@ -338,7 +343,7 @@ impl FunctionBuilder {
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Value(value.unwrap_or(Value::Constant(Constant::Void))), ty),
+                    Instruction::new(InstructionKind::Value(value.unwrap_or(Value::Constant(Constant::Void))), ty, statement.span.clone()),
                 );
 
                 self.write_variable(*var_idx, bb_builder.current, instruct_idx);
@@ -413,12 +418,17 @@ impl FunctionBuilder {
                             .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
                             .collect();
 
+                        let element_span_refs: Vec<&TextSpan> = elements.iter()
+                            .map(|elem| &elem.span)
+                            .collect();
+
                         let instruct_ref = bb_builder.add_instruction(
                             basic_blocks,
                             &mut self.function,
                             Instruction::new(
                                 InstructionKind::ArrayInit { elements: element_values.clone() },
-                                Type::Array(Box::new(element_type.clone().into()))
+                                Type::Array(Box::new(element_type.clone().into())),
+                                TextSpan::combine_refs(&element_span_refs),
                             ),
                         );
 
@@ -434,9 +444,10 @@ impl FunctionBuilder {
                             Instruction::new(
                                 InstructionKind::ArrayAlloc { 
                                     element_type: element_type.clone().into(), 
-                                    size 
+                                    size,
                                 },
-                                Type::Array(Box::new(element_type.clone().into()))
+                                Type::Array(Box::new(element_type.clone().into())),
+                                TextSpan::default(),
                             ),
                         );
 
@@ -445,12 +456,17 @@ impl FunctionBuilder {
                                 .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
                                 .collect();
 
+                            let element_span_refs: Vec<&TextSpan> = elements.iter()
+                                .map(|elem| &elem.span)
+                                .collect();
+
                             let init_ref = bb_builder.add_instruction(
                                 basic_blocks,
                                 &mut self.function,
                                 Instruction::new(
                                     InstructionKind::ArrayInit { elements: element_values },
-                                    Type::Array(Box::new(element_type.clone().into()))
+                                    Type::Array(Box::new(element_type.clone().into())),
+                                    TextSpan::combine_refs(&element_span_refs),
                                 ),
                             );
 
@@ -466,6 +482,7 @@ impl FunctionBuilder {
                 let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
 
                 if *bounds_check {
+                    let combined_span = TextSpan::combine_refs(&[&object.span, &index.span]);
                     let index_val_ref = bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
@@ -473,7 +490,8 @@ impl FunctionBuilder {
                             InstructionKind::IndexVal { 
                                 array_len: index_val.clone(),
                             },
-                            Type::Usize
+                            Type::Usize,
+                            index.span.clone(),
                         ),
                     );
 
@@ -486,7 +504,8 @@ impl FunctionBuilder {
                                 left: Value::InstructionRef(index_val_ref),
                                 right: object_val.clone(),
                             },
-                            Type::Bool
+                            Type::Bool,
+                            combined_span,
                         ),
                     );
 
@@ -516,44 +535,59 @@ impl FunctionBuilder {
                             array: object_val, 
                             index: index_val 
                         }, 
-                        Type::from(expr.ty.clone())
+                        Type::from(expr.ty.clone()),
+                        TextSpan::combine_two(&object.span, &index.span),
                     ),
                 );
 
                 Value::InstructionRef(instruct_ref)
             }
             HIRExprKind::Binary { operator, left, right } => {
-                let left = self.build_expr(basic_blocks, bb_builder, global_scope, left);
-                let right = self.build_expr(basic_blocks, bb_builder, global_scope, right);
+                let left_value = self.build_expr(basic_blocks, bb_builder, global_scope, left);
+                let right_value = self.build_expr(basic_blocks, bb_builder, global_scope, right);
                 let ty = expr.ty.clone().into();
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Binary { operator: (*operator).into(), left, right }, ty),
+                    Instruction::new(
+                        InstructionKind::Binary { operator: (*operator).into(), left: left_value, right: right_value },
+                        ty,
+                        TextSpan::combine_two(&left.span, &right.span),
+                    ),
                 );
 
                 Value::InstructionRef(instruct_ref)
             },
             HIRExprKind::Unary { operator, operand } => {
-                let operand = self.build_expr(basic_blocks, bb_builder, global_scope, operand);
+                let operand_value = self.build_expr(basic_blocks, bb_builder, global_scope, operand);
                 let ty = expr.ty.clone().into();
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Unary { operator: (*operator).into(), operand }, ty)
+                    Instruction::new(
+                        InstructionKind::Unary { operator: (*operator).into(), operand: operand_value },
+                        ty,
+                        operand.span.clone(),
+                    )
                 );
 
                 Value::InstructionRef(instruct_ref)
             },
             HIRExprKind::Call { fx_idx, args } => {
-                let args = args.iter()
+                let args_values = args.iter()
                     .map(|arg| self.build_expr(basic_blocks, bb_builder, global_scope, arg))
                     .collect();
+                let args_span_refs: Vec<&TextSpan> = args.iter()
+                    .map(|arg| &arg.span).collect();
                 let ty = expr.ty.clone().into();
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
-                    Instruction::new(InstructionKind::Call { fx_idx: FunctionIdx::first(), args }, ty)
+                    Instruction::new(
+                        InstructionKind::Call { fx_idx: FunctionIdx::first(), args: args_values },
+                        ty,
+                        TextSpan::combine_refs(&args_span_refs),
+                    )
                 );
 
                 self.calls_to_resolve.push((instruct_idx, *fx_idx));
@@ -722,7 +756,8 @@ impl FunctionBuilder {
         &mut self, basic_blocks: &mut BasicBlocks, var_idx: VariableIndex, bb: BasicBlockIdx, global_scope: &GlobalScope
     ) -> InstructionIdx {
         let instruct_ref = self.function.instructions.push(Instruction::new(
-            InstructionKind::Phi(PhiNode::operandless()), global_scope.variables[var_idx].ty.clone().into()));
+            InstructionKind::Phi(PhiNode::operandless()), global_scope.variables[var_idx].ty.clone().into(), TextSpan::default()
+        ));
         let instructions = basic_blocks.get_or_panic(bb).instructions.clone();
         let mut new_instructions = vec![instruct_ref];
 
