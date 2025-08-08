@@ -54,7 +54,7 @@ Thus far, the current compiler architecture is highlighted below:
             }
         }
         ```
-    * TODO: Proper span tracking for diagnostics
+    * Proper span tracking for diagnostics
 
     - [x] *Mid-level IR (MIR)* [completed 28.04.2025]
     * Based on a control-flow graph (CFG)

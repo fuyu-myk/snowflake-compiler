@@ -991,7 +991,7 @@ impl CompilationUnit {
             self.ast.visit(&mut eval);
         }
 
-        println!("Result: {:?}", eval.last_value);
+        println!("Result: {:?}\n", eval.last_value);
     }
 
     fn check_diagnostics(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) -> Result<(), ()> {

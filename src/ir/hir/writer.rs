@@ -44,7 +44,7 @@ impl <W> HIRWriter<W> where W: Write {
             }
             
             if fx_opt.is_some() {
-                writeln!(writer, "}}")?;
+                writeln!(writer, "}}\n")?;
             } else {
                 writeln!(writer)?;
             }

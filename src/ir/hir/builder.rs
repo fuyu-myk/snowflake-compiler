@@ -1,6 +1,7 @@
 use std::{cell::Cell, collections::HashMap};
 
 use snowflake_compiler::{bug_report, Idx};
+use tracing::span;
 
 use crate::{ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}, ir::hir::{AllocType, HIRContext, HIRExprKind, HIRExpression, HIRNodeId, HIRStatement, HIRStmtKind, ScopeId, HIR}, text::span::TextSpan, typings::Type};
 
@@ -53,16 +54,14 @@ impl HIRBuilder {
     }
 
     /// Method to create a HIRStatement with proper ID and span
-    fn create_statement(&mut self, kind: HIRStmtKind) -> HIRStatement {
+    fn create_statement(&mut self, kind: HIRStmtKind, span: TextSpan) -> HIRStatement {
         let id = self.next_node_id();
-        let span = self.default_span();
         HIRStatement { kind, id, span }
     }
 
     /// Method to create a HIRExpression with proper ID and span
-    fn create_expression(&mut self, kind: HIRExprKind, ty: Type) -> HIRExpression {
+    fn create_expression(&mut self, kind: HIRExprKind, ty: Type, span: TextSpan) -> HIRExpression {
         let id = self.next_node_id();
-        let span = self.default_span();
         HIRExpression { kind, ty, id, span }
     }
 
@@ -96,6 +95,7 @@ impl HIRBuilder {
 
     fn build_statement(&mut self, stmt_id: StatementId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, _temp_needed: bool) {
         let statement = ast.query_statement(stmt_id);
+        let span = statement.span.clone();
         let kind = match &statement.kind {
             StatementKind::Expression(expr) => {
                 let expr = self.build_expression(*expr, ast, global_scope, ctx, false);
@@ -113,26 +113,31 @@ impl HIRBuilder {
                     self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false);
                 }
 
-                let break_expr = self.create_expression(HIRExprKind::Break, Type::Void);
-                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr });
+                let break_expr = self.create_expression(HIRExprKind::Break, Type::Void, TextSpan::default());
+                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr }, TextSpan::default());
                 let if_stmt = self.create_statement(HIRStmtKind::If {
                     condition,
                     then_block: body_ctx.statements,
                     else_block: vec![break_stmt],
-                });
+                }, TextSpan::default());
 
                 HIRStmtKind::Loop { body: vec![if_stmt] }
             }
             StatementKind::Return(return_statement) => {
                 let expr = return_statement.return_value.as_ref().copied()
                     .map(|expr_id| self.build_expression(expr_id, ast, global_scope, ctx, true))
-                    .unwrap_or_else(|| self.create_expression(HIRExprKind::Unit, Type::Void));
-                
+                    .unwrap_or_else(|| {
+                        match return_statement.return_value {
+                            Some(value) => self.create_expression(HIRExprKind::Unit, Type::Void, ast.query_expression(value).span.clone()),
+                            None => self.create_expression(HIRExprKind::Unit, Type::Void, TextSpan::default()),
+                        }
+                    });
+
                 HIRStmtKind::Return { expr }
             }
         };
 
-        ctx.statements.push(self.create_statement(kind));
+        ctx.statements.push(self.create_statement(kind, span));
     }
 
     fn build_expression(&mut self, expr_id: ExpressionId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, temp_needed: bool) -> HIRExpression {
@@ -167,10 +172,11 @@ impl HIRBuilder {
             ExpressionKind::Variable(var_expr) => HIRExprKind::Var(var_expr.variable_index),
             ExpressionKind::Assignment(assign_expr) => {
                 let expr = self.build_expression(assign_expr.expression, ast, global_scope, ctx, true);
+                let span = expr.span.clone();
                 let statement = self.create_statement(HIRStmtKind::Assignment {
                     var_idx: assign_expr.variable_index,
                     expr,
-                });
+                }, span);
 
                 ctx.statements.push(statement);
 
@@ -212,16 +218,16 @@ impl HIRBuilder {
                     ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
                         var_idx: temp_var_idx, 
                         init: None 
-                    }));
-                    
+                    }, TextSpan::default()));
+
                     *then_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
                         var_idx: temp_var_idx, 
-                        expr: then_expr 
-                    });
+                        expr: then_expr
+                    }, TextSpan::default());
                     *else_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
                         var_idx: temp_var_idx, 
                         expr: else_expr 
-                    });
+                    }, TextSpan::default());
 
                     HIRExprKind::Var(temp_var_idx)
                 };
@@ -229,8 +235,8 @@ impl HIRBuilder {
                 ctx.statements.push(self.create_statement(HIRStmtKind::If {
                     condition,
                     then_block: then_ctx.statements,
-                    else_block: else_ctx.statements
-                }));
+                    else_block: else_ctx.statements,
+                }, expr.span.clone()));
 
                 expr_kind
             },
@@ -255,12 +261,12 @@ impl HIRBuilder {
                         ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
                             var_idx: temp_var_idx, 
                             init: None 
-                        }));
+                        }, TextSpan::default()));
 
                         *last_stmt = self.create_statement(HIRStmtKind::Assignment { 
                             var_idx: temp_var_idx, 
                             expr: expr.clone() 
-                        });
+                        }, TextSpan::default());
 
                         HIRExprKind::Var(temp_var_idx)
                     } else {
@@ -268,12 +274,12 @@ impl HIRBuilder {
                     }
                 };
 
-                // For now, use a default scope_id - this should be properly managed
+                // For now, use a default scope_id
                 let scope_id = self.current_scope_id();
                 ctx.statements.push(self.create_statement(HIRStmtKind::Block { 
                     body: block_ctx.statements,
                     scope_id,
-                }));
+                }, expr.span.clone()));
 
                 expr_kind
             },
@@ -322,7 +328,7 @@ impl HIRBuilder {
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };
 
-        self.create_expression(kind, expr.ty.clone())
+        self.create_expression(kind, expr.ty.clone(), expr.span.clone())
     }
 
     fn declare_next_temp_var(&self, global_scope: &mut GlobalScope, ty: Type) -> VariableIndex {
