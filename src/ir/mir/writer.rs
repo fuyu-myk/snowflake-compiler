@@ -175,12 +175,6 @@ impl<W> MIRWriter<W> where W: Write {
                 Self::write_value(writer, index)?;
                 write!(writer, "]")?;
             }
-            InstructionKind::Index { object, index } => {
-                Self::write_value(writer, object)?;
-                write!(writer, "[")?;
-                Self::write_value(writer, index)?;
-                write!(writer, "]")?;
-            }
             InstructionKind::Phi(phi) => {
                 write!(writer, "phi {{")?;
 

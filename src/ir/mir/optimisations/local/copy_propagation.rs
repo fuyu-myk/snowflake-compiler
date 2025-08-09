@@ -68,14 +68,6 @@ impl MIRPassLocal for CopyPropagation {
                         changes += 1;
                     }
                 }
-                InstructionKind::Index { object, index } => {
-                    if object.replace_with_copied_ref(&copies) {
-                        changes += 1;
-                    }
-                    if index.replace_with_copied_ref(&copies) {
-                        changes += 1;
-                    }
-                }
                 InstructionKind::Phi(_) | InstructionKind::IndexVal { .. }=> {}
             }
         }

@@ -164,7 +164,6 @@ impl Instruction {
             InstructionKind::ArrayInit { .. } => false,
             InstructionKind::ArrayIndex { .. } => true,
             InstructionKind::IndexVal { .. } => true,
-            InstructionKind::Index { .. } => true,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
             InstructionKind::Call { .. } => false,
@@ -189,10 +188,6 @@ pub enum InstructionKind {
     },
     IndexVal {
         array_len: Value,
-    },
-    Index {
-        object: Box<Value>,
-        index: Box<Value>,
     },
     Binary {
         operator: BinOp,

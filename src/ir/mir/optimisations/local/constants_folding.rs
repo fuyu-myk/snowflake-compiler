@@ -159,18 +159,6 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::Index { object, index } => {
-                    if let Some(value) = constants.get_constant_value(object) {
-                        if object.replace_if_unequal(value) {
-                            changes += 1;
-                        }
-                    }
-                    if let Some(value) = constants.get_constant_value(index) {
-                        if index.replace_if_unequal(value) {
-                            changes += 1;
-                        }
-                    }
-                }
                 InstructionKind::Phi(_) | InstructionKind::IndexVal { .. } | InstructionKind::ArrayAlloc { .. } => {}
             }
         }

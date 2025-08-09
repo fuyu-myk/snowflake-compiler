@@ -82,7 +82,6 @@ impl MIRPassLocal for AlgebraicSimplification {
                 InstructionKind::ArrayAlloc { .. } => {}
                 InstructionKind::IndexVal { .. } => {}
                 InstructionKind::ArrayIndex { .. } => {}
-                InstructionKind::Index { .. } => {}
                 InstructionKind::Phi(_) => {}
             }
         }
