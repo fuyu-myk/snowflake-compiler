@@ -80,7 +80,12 @@ fn main() -> Result<()> {
     //MIRWriter::write_txt(&mut optimised_mir_output, &mir)?;
     //println!("{}", optimised_mir_output);
 
-    // LIR (todo)
+    // LIR
+    let lir_builder = ir::lir::builder::LIRBuilder::new(&mir, &compilation_unit.global_scope);
+    let lir = lir_builder.build();
+    dbg!(lir);
+
+    // TODO: asm codegen
 
     Ok(())
 }

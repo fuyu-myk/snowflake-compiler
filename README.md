@@ -6,7 +6,7 @@ Thus far, the current compiler architecture is highlighted below:
 
 `input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [IR Lowering + optimisations] -> [x86_64 backend]
 
-* A C transpiler backend is used for this compiler for now
+* An iced_x86 backend will be used for now
 * The final goal will be to adopt an LLVM backend 
 
 ## Current features
@@ -71,7 +71,8 @@ Thus far, the current compiler architecture is highlighted below:
         }
         ```
         * Locals - function arguments, local variables etc.
-    * TODO: Proper span tracking for diagnostics
+    * Proper span tracking for diagnostics
+    * TODO: Proper handling of Assert Terminator
     
     - [x] *MIR Optimisations* [completed 30.07.2025]
     * Optimisations that aims to enhance the performance and efficiency of the executed code
@@ -83,7 +84,10 @@ Thus far, the current compiler architecture is highlighted below:
         * Constant Folding - Variables that can be computed at compile time are computed
         * Algebraic Simplification - Using mathematical properties to reduce complexity of expressions in the code
     
-    -[ ] *Low-level IR (LIR)*
+    -[x] *Low-level IR (LIR)* [completed 09.08.2025]
+    * Further lowering of MIR to facilitate iced_x86 codegen
+        * Instructions become more 'assembly-like'
+    * TODO: Further improvements to param ref and array init
 
 ### Types supported
 * Integers

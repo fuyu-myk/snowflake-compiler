@@ -8,7 +8,7 @@
 
 use std::fmt::{Display, Formatter};
 
-use snowflake_compiler::{idx, Idx};
+use snowflake_compiler::{bug_report, idx, Idx};
 
 use crate::ir::mir::{InstructionIdx, Terminator, TerminatorKind};
 
@@ -44,6 +44,11 @@ impl BasicBlock {
         if !self.is_terminated() {
             self.set_terminator(kind);
         }
+    }
+    
+    #[inline]
+    pub(crate) fn terminator(&self) -> &Terminator {
+        self.terminator.as_ref().unwrap_or_else(|| bug_report!("Invalid terminator state in {:?}", self.idx))
     }
 }
 
