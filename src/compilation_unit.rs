@@ -1,4 +1,4 @@
-use snowflake_compiler::{Idx, idx, IndexVec};
+use snowflake_compiler::{idx, IndexVec};
 
 use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
