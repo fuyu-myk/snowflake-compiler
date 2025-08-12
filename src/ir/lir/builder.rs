@@ -39,7 +39,7 @@ impl<'mir> LIRBuilder<'mir> {
 
             for bb_idx in mir_fx.basic_blocks.iter().copied() {
                 let bb = self.mir.basic_blocks.get_or_panic(bb_idx);
-                let lir_bb = self.set_basic_block();
+                let _lir_bb = self.set_basic_block();
 
                 for instruct_idx in bb.instructions.iter().copied() {
                     let mir_instruction = &mir_fx.instructions[instruct_idx];
@@ -323,7 +323,7 @@ impl<'mir> LIRBuilder<'mir> {
                     kind: OperandKind::Location(location),
                 }
             },
-            Value::ParamRef(param_idx) => {
+            Value::ParamRef(_param_idx) => {
                 // todo: map param indices to their locations
                 let ty = Type::Int32; // Default type, should be determined from function signature
                 let location = self.create_location(ty.clone());

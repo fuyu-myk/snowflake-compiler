@@ -270,7 +270,7 @@ pub enum ConstValue {
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub idx: LocationIdx,
     pub ty: Type,
