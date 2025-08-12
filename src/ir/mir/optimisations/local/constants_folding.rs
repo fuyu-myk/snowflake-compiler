@@ -77,9 +77,9 @@ impl MIRPassLocal for ConstantsFolding {
                     let right_int = constants.get_constant_int(right);
                     if let (Some(left_int), Some(right_int)) = (left_int, right_int) {
                         let result = match operator {
-                            BinOp::Add => left_int + right_int,
-                            BinOp::Sub => left_int - right_int,
-                            BinOp::Mul => left_int * right_int,
+                            BinOp::Add => left_int.wrapping_add(right_int),
+                            BinOp::Sub => left_int.wrapping_sub(right_int),
+                            BinOp::Mul => left_int.wrapping_mul(right_int),
                             BinOp::Div => {
                                 if right_int == 0 {
                                     // Division by zero should have been caught at compile time
@@ -119,7 +119,7 @@ impl MIRPassLocal for ConstantsFolding {
                     let operand_int = constants.get_constant_int(operand);
                     if let Some(operand_int) = operand_int {
                         let result = match operator {
-                            UnOp::Neg => -operand_int,
+                            UnOp::Neg => operand_int.wrapping_neg(),
                             UnOp::Not => !operand_int,
                         };
 
