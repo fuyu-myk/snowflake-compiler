@@ -37,7 +37,7 @@ impl Optimiser {
 
             if changes == 0 {
                 let end = std::time::Instant::now();
-                println!("Optimisation completed in {}s", (end - start).as_secs_f64());
+                println!("Optimisation completed in {}s\n", (end - start).as_secs_f64());
                 return;
             }
         }

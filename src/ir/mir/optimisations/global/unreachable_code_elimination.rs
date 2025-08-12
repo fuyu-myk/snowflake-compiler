@@ -1,5 +1,3 @@
-use snowflake_compiler::Idx;
-
 use crate::ir::mir::{basic_block::BasicBlockIdx, optimisations::MIRPass, InstructionKind, MIR};
 
 
@@ -15,8 +13,10 @@ impl MIRPass for UnreachableCodeElimination {
             let successors = function.successors(&mir.basic_blocks);
 
             // For bb that do not have predecessors, ie unreachable, remove them
-            for bb in function.basic_blocks.iter().copied() {
-                if bb == BasicBlockIdx::first() {
+            // But never remove the entry block of the function (first basic block in the function)
+            for (i, bb) in function.basic_blocks.iter().copied().enumerate() {
+                // Skip the entry block (first basic block in this function)
+                if i == 0 {
                     continue;
                 }
 
