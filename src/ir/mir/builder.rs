@@ -329,6 +329,10 @@ impl FunctionBuilder {
 
                 basic_blocks.get_mut_or_panic(then_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
                 basic_blocks.get_mut_or_panic(else_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
+                
+                // Set current basic block to the if end block for subsequent statements
+                bb_builder.set_bb(if_end_bb);
+                self.seal_block(basic_blocks, if_end_bb, global_scope);
                 tracing::debug!("If terminator built");
             }
             HIRStmtKind::Declaration { var_idx, init } => {

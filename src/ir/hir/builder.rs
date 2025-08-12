@@ -213,11 +213,7 @@ impl HIRBuilder {
 
                     let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
                     let temp_span = expr.span.clone();
-                    ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
-                        var_idx: temp_var_idx, 
-                        init: None 
-                    }, temp_span.clone()));
-
+                    
                     *then_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
                         var_idx: temp_var_idx, 
                         expr: then_expr
