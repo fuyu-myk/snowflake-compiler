@@ -72,7 +72,6 @@ Thus far, the current compiler architecture is highlighted below:
         ```
         * Locals - function arguments, local variables etc.
     * Proper span tracking for diagnostics
-    * TODO: Proper handling of Assert Terminator
     
     - [x] *MIR Optimisations* [completed 30.07.2025]
     * Optimisations that aims to enhance the performance and efficiency of the executed code
@@ -87,7 +86,7 @@ Thus far, the current compiler architecture is highlighted below:
     -[x] *Low-level IR (LIR)* [completed 09.08.2025]
     * Further lowering of MIR to facilitate iced_x86 codegen
         * Instructions become more 'assembly-like'
-    * TODO: Further improvements to param ref and array init
+    * TODO: Further improvements to array init
 
 ### Types supported
 * Integers

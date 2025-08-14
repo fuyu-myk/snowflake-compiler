@@ -406,7 +406,7 @@ impl FunctionBuilder {
             HIRExprKind::Number(value) => Value::Constant(Constant::Int(*value as i32)),
             HIRExprKind::Usize(value) => Value::Constant(Constant::Usize(*value)),
             HIRExprKind::String(value) => Value::Constant(Constant::String(value.clone())),
-            HIRExprKind::Bool(value) => Value::Constant(Constant::Int(if *value { 1 } else { 0 })),
+            HIRExprKind::Bool(value) => Value::Constant(Constant::Bool(*value)),
             HIRExprKind::Unit => Value::Constant(Constant::Void),
             HIRExprKind::Var(var_idx) => {
                 let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();

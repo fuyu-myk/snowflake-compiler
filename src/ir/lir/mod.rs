@@ -219,7 +219,9 @@ pub enum Terminator {
         default_target: BasicBlockIdx,
     },
     /// Unreachable code
-    Unreachable,
+    Unreachable{
+        error: String,
+    },
 }
 
 #[derive(Debug)]
@@ -321,7 +323,9 @@ impl Type {
         match self {
             Type::Int8 | Type::UInt8 | Type::Bool => Layout { size: 1, alignment: 1 },
             Type::Int16 | Type::UInt16 => Layout { size: 2, alignment: 2 },
-            Type::Int32 | Type::UInt32 | Type::Float32 => Layout { size: 4, alignment: 4 },
+            
+            // Use 8-byte allocation for Int32 to match 64-bit operations
+            Type::Int32 | Type::UInt32 | Type::Float32 => Layout { size: 8, alignment: 8 },
             Type::Int64 | Type::UInt64 | Type::Float64 => Layout { size: 8, alignment: 8 },
             Type::String | Type::Pointer(_) => Layout { size: 8, alignment: 8 }, // 64-bit pointers
             Type::Array { element_type, size } => {

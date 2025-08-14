@@ -80,6 +80,10 @@ impl GlobalScope {
         self.variables[var_idx].ty = ty;
     }
 
+    pub fn get_variable_type(&self, var_idx: &VariableIndex) -> Option<Type> {
+        Some(self.variables.get(*var_idx).ty.clone())
+    }
+
     pub fn lookup_fx(&self, identifier: &str) -> Option<FunctionIndex> {
         self.functions.indexed_iter().find(|(_, function)| function.name == identifier).map(|(idx, _)| idx)
     }

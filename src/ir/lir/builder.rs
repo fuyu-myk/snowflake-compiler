@@ -11,6 +11,7 @@ pub struct LIRBuilder<'mir> {
     current_bb: Option<BasicBlockIdx>,
     var_to_location: HashMap<VariableIndex, LocationIdx>,
     instruction_to_location: HashMap<InstructionIdx, LocationIdx>,
+    param_to_location: HashMap<usize, LocationIdx>,
     curr_fx_idx: Option<MirFunctionIdx>, // From MIR
 }
 
@@ -23,6 +24,7 @@ impl<'mir> LIRBuilder<'mir> {
             current_bb: None,
             var_to_location: HashMap::new(),
             instruction_to_location: HashMap::new(),
+            param_to_location: HashMap::new(),
             curr_fx_idx: None,
         }
     }
@@ -30,11 +32,29 @@ impl<'mir> LIRBuilder<'mir> {
     pub fn build(mut self) -> LIR {
         for (mir_fx_idx, mir_fx) in self.mir.functions.indexed_iter() {
             self.curr_fx_idx = Some(mir_fx_idx);
+            
+            // Clear mappings for new function
+            self.var_to_location.clear();
+            self.instruction_to_location.clear();
+            self.param_to_location.clear();
+            
+            // Create parameter locations
+            let mut param_locations = Vec::new();
+            for (param_idx, _param_var) in mir_fx.params.iter().enumerate() {
+                let param_type = mir_fx.locals.iter()
+                    .find_map(|(param_instruct_idx, _var_idx)| Some(mir_fx.instructions.get(*param_instruct_idx).ty.clone()))
+                    .map(|ty| ty.into())
+                    .unwrap_or(Type::Int32); // Default to Int32 if type not found
+                let location = self.create_location(param_type);
+                self.param_to_location.insert(param_idx, location);
+                param_locations.push(location);
+            }
+            
             let fx_idx = self.lir.functions.push(Function {
                 name: mir_fx.name.clone(),
                 return_type: mir_fx.return_type.clone().into(),
                 basic_blocks: Vec::new(),
-                params: Vec::new(),
+                params: param_locations,
             });
 
             for bb_idx in mir_fx.basic_blocks.iter().copied() {
@@ -257,17 +277,23 @@ impl<'mir> LIRBuilder<'mir> {
                             default_target: BasicBlockIdx::new(default.as_index()),
                         }
                     }
-                    mir::TerminatorKind::Assert { condition, message: _, default } => {
+                    mir::TerminatorKind::Assert { condition, message, default } => {
                         // Convert assert to a conditional branch that either continues or goes to unreachable
                         let condition_operand = self.build_operand(condition);
+                        let unreachable_bb = self.lir.basic_blocks.push(BasicBlock {
+                            instructions: Vec::new(),
+                            terminator: Some(Terminator::Unreachable { error: message.clone() }),
+                        });
                         
                         Terminator::Branch {
                             condition: condition_operand,
                             true_target: BasicBlockIdx::new(default.as_index()),
-                            false_target: BasicBlockIdx::new(default.as_index()), // todo: improve this logic (ie exit bb?)
+                            false_target: unreachable_bb,
                         }
                     }
-                    mir::TerminatorKind::Unresolved => Terminator::Unreachable,
+                    mir::TerminatorKind::Unresolved => Terminator::Unreachable {
+                        error: "Unresolved terminator".to_string(),
+                    },
                 };
 
                 self.current_basic_block().terminator = Some(terminator);
@@ -323,11 +349,18 @@ impl<'mir> LIRBuilder<'mir> {
                     kind: OperandKind::Location(location),
                 }
             },
-            Value::ParamRef(_param_idx) => {
-                // todo: map param indices to their locations
-                let ty = Type::Int32; // Default type, should be determined from function signature
-                let location = self.create_location(ty.clone());
-                
+            Value::ParamRef(param_idx) => {
+                // Use the pre-allocated parameter location
+                let location = self.param_to_location.get(param_idx)
+                    .copied()
+                    .expect("Parameter location should have been created");
+                let param_loc_idx = self.param_to_location.get(param_idx)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        panic!("Parameter index {} not found in param_to_location", param_idx);
+                    });
+                let ty = self.lir.locations.get(param_loc_idx).ty.clone().into();
+
                 Operand {
                     ty,
                     kind: OperandKind::Location(location),
