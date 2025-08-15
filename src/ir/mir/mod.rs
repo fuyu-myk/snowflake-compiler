@@ -424,12 +424,13 @@ impl PhiNode {
 
     /// Adds an operand to the phi node and checks if it becomes trivial
     /// Returns Some(instruction_idx) if the phi becomes trivial and should be replaced
-    pub fn add_operand_with_elimination(&mut self, bb: BasicBlockIdx, inst: InstructionIdx) -> Option<InstructionIdx> {
+    pub fn add_operand_with_elimination(&mut self, bb: BasicBlockIdx, inst: InstructionIdx, self_idx: InstructionIdx) -> Option<InstructionIdx> {
         self.operands.push((bb, inst));
-        Self::check_trivial(&self.operands)
+        self.is_trivial(self_idx)
     }
 
     /// Checks if the given operands would form a trivial phi node
+    /// This is used when we don't have a self instruction index yet
     fn check_trivial(operands: &Operands) -> Option<InstructionIdx> {
         if operands.is_empty() {
             return None;

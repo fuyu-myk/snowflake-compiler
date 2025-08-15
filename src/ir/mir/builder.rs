@@ -383,12 +383,16 @@ impl FunctionBuilder {
                 self.push_loop(loop_entry_bb);
 
                 for statement in body.iter() {
+                    // todo: look @ what the problem is here - everything unit var for some reason
                     self.build_statement(basic_blocks, bb_builder, global_scope, statement);
                 }
 
                 if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
                     bb_builder.terminate(basic_blocks, TerminatorKind::Goto(loop_entry_bb));
-                    self.seal_block(basic_blocks, bb_builder.current, global_scope);
+
+                    if !self.is_sealed(bb_builder.current) {
+                        self.seal_block(basic_blocks, bb_builder.current, global_scope);
+                    }
                 }
 
                 // todo: Change once continue is supported
@@ -640,7 +644,7 @@ impl FunctionBuilder {
                                   incomplete_phi, replacement_idx, var_idx);
                     self.write_variable(var_idx, bb_idx, replacement_idx);
                     
-                    self.function.instructions[incomplete_phi].kind = InstructionKind::Value(Value::Constant(Constant::Void));
+                    self.function.instructions[incomplete_phi].kind = InstructionKind::Value(Value::InstructionRef(replacement_idx));
                 }
             }
         }
@@ -677,17 +681,15 @@ impl FunctionBuilder {
             let var_ref = self.latest_variable_def(basic_blocks, var_idx, pred, global_scope)
                 .unwrap_or_else(|| bug_report!("No definition for variable {:?} in block {:?}", var_idx, pred));
             
-            // Check if adding this operand would make the phi trivial
             let phi_node = self.function.instructions[phi].kind.as_phi_mut().unwrap();
-            if let Some(replacement_idx) = phi_node.add_operand_with_elimination(pred, var_ref) {
-                tracing::debug!("Phi node {:?} became trivial, replacing with {:?}", phi, replacement_idx);
-                return Some(replacement_idx);
-            }
+            phi_node.operands.push((pred, var_ref));
             operands_added = true;
         }
 
+        // Check for triviality only at the end
         if operands_added {
-            None
+            let phi_node = &self.function.instructions[phi].kind.as_phi().unwrap();
+            phi_node.is_trivial(phi)
         } else {
             let phi_node = &self.function.instructions[phi].kind.as_phi().unwrap();
             phi_node.is_trivial(phi)
@@ -745,7 +747,7 @@ impl FunctionBuilder {
                               instruct_ref, replacement_idx, var_idx);
                 self.write_variable(var_idx, bb_idx, replacement_idx);
                 
-                self.function.instructions[instruct_ref].kind = InstructionKind::Value(Value::Constant(Constant::Void));
+                self.function.instructions[instruct_ref].kind = InstructionKind::Value(Value::InstructionRef(replacement_idx));
                 replacement_idx
             } else {
                 instruct_ref
