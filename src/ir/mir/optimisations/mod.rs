@@ -17,6 +17,7 @@ impl Optimiser {
     pub fn new() -> Self {
         Self {
             passes: vec![
+                Box::new(global::phi_elimination::PhiElimination),
                 Box::new(global::branch_elimination::BranchElimination),
                 Box::new(global::dead_code_elimination::DeadCodeElimination),
                 Box::new(global::unreachable_code_elimination::UnreachableCodeElimination),

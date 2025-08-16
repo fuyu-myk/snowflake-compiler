@@ -383,7 +383,6 @@ impl FunctionBuilder {
                 self.push_loop(loop_entry_bb);
 
                 for statement in body.iter() {
-                    // todo: look @ what the problem is here - everything unit var for some reason
                     self.build_statement(basic_blocks, bb_builder, global_scope, statement);
                 }
 
@@ -395,7 +394,7 @@ impl FunctionBuilder {
                     }
                 }
 
-                // todo: Change once continue is supported
+                // Seal the loop entry block after the loop body is built
                 self.seal_block(basic_blocks, loop_entry_bb, global_scope);
 
                 let exit_block = bb_builder.new_bb(basic_blocks, &mut self.function);

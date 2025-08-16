@@ -176,7 +176,7 @@ pub enum InstructionKind {
     },
     ArrayLength {
         target: LocationIdx,
-        array: Operand,
+        length: Operand,
     },
     Call {
         target: Option<LocationIdx>,

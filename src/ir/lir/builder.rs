@@ -221,29 +221,27 @@ impl<'mir> LIRBuilder<'mir> {
                             let array_operand = self.build_operand(array_len);
                             InstructionKind::ArrayLength {
                                 target: self.get_ref_location(instruct_idx),
-                                array: array_operand,
+                                length: array_operand,
                             }
                         }
                         mir::InstructionKind::Phi(phi_node) => {
-                            let operands: Vec<(BasicBlockIdx, Operand)> = phi_node.operands.iter()
-                                .map(|(bb_idx, instr_idx)| {
-                                    // Create operand that references the instruction result
-                                    let operand = Operand {
-                                        ty: self.get_current_fx().instructions.get(*instr_idx).ty.clone().into(),
+                            // Phi handled through move instructions at basic block boundaries
+                            // For now, just create a move from the first operand if available
+                            if let Some((_, first_operand_idx)) = phi_node.operands.first() {
+                                InstructionKind::Move {
+                                    target: self.get_ref_location(instruct_idx),
+                                    source: Operand {
+                                        ty: self.get_current_fx().instructions.get(*first_operand_idx).ty.clone().into(),
                                         kind: OperandKind::Location(
-                                            self.instruction_to_location.get(instr_idx)
+                                            self.instruction_to_location.get(first_operand_idx)
                                                 .copied()
-                                                .unwrap_or_else(|| self.create_temp_location(*instr_idx))
+                                                .unwrap_or_else(|| self.create_temp_location(*first_operand_idx))
                                         ),
-                                    };
-
-                                    (BasicBlockIdx::new(bb_idx.as_index()), operand)
-                                })
-                                .collect();
-                            
-                            InstructionKind::Phi {
-                                target: self.get_ref_location(instruct_idx),
-                                operands,
+                                    },
+                                }
+                            } else {
+                                // No operands, create a no-op
+                                InstructionKind::Nop
                             }
                         }
                     };
