@@ -32,7 +32,7 @@ Thus far, the current compiler architecture is highlighted below:
 - [x] **C transpiler**
 * A basic C transpiler has been implemented as a temporary backend
 
-- [ ] **Intermediate Representation (IR) Lowering**
+- [x] **Intermediate Representation (IR) Lowering** [completed 09.08.2025]
 * Transformation of IR to lower-level representation
     * Essentially preparing the IR for efficient backend code generation
 
@@ -87,6 +87,13 @@ Thus far, the current compiler architecture is highlighted below:
     * Further lowering of MIR to facilitate iced_x86 codegen
         * Instructions become more 'assembly-like'
     * TODO: Further improvements to array init
+
+-[x] **X86_64 Assembly Code Generation** [completed 15.08.2025]
+* Utilising the [`iced_x86`](https://github.com/icedland/iced) library to generate assembly instructions
+* Limited type support for now
+* Incredibly unoptimised
+* *Huge WIP as I am unfamiliar with assembly*
+* *Also, I am not going to do codegen for all instruction types; pivoting to LLVM instead*
 
 ### Types supported
 * Integers

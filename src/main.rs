@@ -14,6 +14,11 @@ mod ir;
 
 
 fn main() -> Result<()> {
+    unsafe {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+    tracing_subscriber::fmt::init();
+
     // Get command line arguments
     let args: Vec<String> = env::args().collect();
     
@@ -73,19 +78,23 @@ fn main() -> Result<()> {
     let mut optimiser = Optimiser::new();
     optimiser.optimise(&mut mir);
     let mut optimised_mir_graphviz = String::new();
-    //let mut optimised_mir_output = String::new();
+    let mut optimised_mir_output = String::new();
 
     MIRWriter::write_graphviz(&mut optimised_mir_graphviz, &mir)?;
     File::create("optimised-mir.dot")?.write_all(optimised_mir_graphviz.as_bytes())?;
-    //MIRWriter::write_txt(&mut optimised_mir_output, &mir)?;
-    //println!("{}", optimised_mir_output);
+    MIRWriter::write_txt(&mut optimised_mir_output, &mir)?;
+    println!("{}", optimised_mir_output);
 
     // LIR
     let lir_builder = ir::lir::builder::LIRBuilder::new(&mir, &compilation_unit.global_scope);
     let lir = lir_builder.build();
-    dbg!(lir);
+    //dbg!(&lir);
 
-    // TODO: asm codegen
+    // Asm codegen
+    let mut asm = codegen::x86_64::X86_64Codegen::new();
+    asm.generate(&lir)?;
+    let asm_output = asm.get_asm_output()?;
+    println!("{}", asm_output);
 
     Ok(())
 }
