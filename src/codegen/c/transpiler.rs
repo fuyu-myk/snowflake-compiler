@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{ast::{Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, Item, ItemKind, StatementId, StatementKind, UnaryExpression, UnaryOp, UnaryOpKind},
-    codegen::c::ast::{CAssignExpr, CAst, CBinExpr, CBinOp, CBlockStatement, CBool, CCallExpr, CExpr, CFxDecl, CFxImpl, CIfStatement, CItem, CNumber, CParams, CReturn, CStatement, CType, CUnaryExpr, CUnaryOp, CUsize, CVarDecl, CVarExpr, CWhileStatement}, compilation_unit::{GlobalScope, VariableIndex},
+    codegen::c::ast::{CAssignExpr, CAst, CBinExpr, CBinOp, CBlockStatement, CBool, CCallExpr, CExpr, CFloat, CFxDecl, CFxImpl, CIfStatement, CItem, CNumber, CParams, CReturn, CStatement, CType, CUnaryExpr, CUnaryOp, CUsize, CVarDecl, CVarExpr, CWhileStatement}, compilation_unit::{GlobalScope, VariableIndex},
     typings::Type};
 
 
@@ -115,6 +115,10 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Number(number) => (
                 None, 
                 CExpr::Number(CNumber { value: number.number }),
+            ),
+            ExpressionKind::Float(float) => (
+                None, 
+                CExpr::Float(CFloat { value: float.number }),
             ),
             ExpressionKind::Usize(usize_expr) => (
                 None,
@@ -298,6 +302,7 @@ impl <'a> CTranspiler<'a> {
     fn transpile_type(ty: &Type) -> String {
         return match ty {
             Type::Int => "int".to_string(),
+            Type::Float => "float".to_string(),
             Type::String => "char*".to_string(),
             Type::Bool => "int".to_string(),
             Type::Void => "void".to_string(),
@@ -342,6 +347,7 @@ impl <'a> CTranspiler<'a> {
 
         return match &expr.kind {
             ExpressionKind::Number(_) => true,
+            ExpressionKind::Float(_) => true,
             ExpressionKind::Usize(_) => true,
             ExpressionKind::String(_) => true,
             ExpressionKind::Boolean(_) => true,

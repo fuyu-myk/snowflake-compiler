@@ -313,24 +313,136 @@ impl X86_64Codegen {
                     Some(terminator) => match terminator {
                         Terminator::Return { value } => {
                             if let Some(value) = value {
+                                let return_register = match &value.ty {
+                                    Type::Float32 | Type::Float64 => Register::XMM0,
+                                    _ => Register::RAX,
+                                };
+
                                 match &value.kind {
                                     OperandKind::Const(const_op) => match const_op {
-                                        ConstValue::Int32(value) => {
+                                        ConstValue::Int32(int_value) => {
                                             self.asm.add_instruction(Instruction::with2(
                                                 Code::Mov_rm64_imm32,
                                                 Register::RAX,
-                                                *value as i32,
+                                                *int_value as i32,
                                             )?)?;
                                         }
-                                        _ => unimplemented!("Only Int32 constants are supported for return"),
+                                        ConstValue::Float32(float_value) => {
+                                            let bits = float_value.to_bits() as u32;
+                                            
+                                            self.asm.add_instruction(Instruction::with2(
+                                                Code::Mov_rm64_imm32,
+                                                Register::RAX,
+                                                bits as i32,
+                                            )?)?;
+                                            
+                                            self.asm.add_instruction(Instruction::with2(
+                                                Code::Movq_xmm_rm64,
+                                                Register::XMM0,
+                                                Register::RAX,
+                                            )?)?;
+                                        }
+                                        _ => unimplemented!("Only Int32 and Float32 constants are supported for return"),
                                     }
                                     OperandKind::Deref(loc) => {
                                         let deref_loc = *self.allocator.get_location_or_panic(loc);
-                                        self.mov(&Location::Register(Register::RAX), &deref_loc)?;
+                                        match return_register {
+                                            Register::XMM0 => {
+                                                match &value.ty {
+                                                    Type::Float32 => {
+                                                        match deref_loc {
+                                                            Location::Register(src_reg) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movq_xmm_rm64,
+                                                                    Register::XMM0,
+                                                                    src_reg,
+                                                                )?)?;
+                                                            }
+                                                            Location::Stack(entry_idx) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movss_xmm_xmmm32,
+                                                                    Register::XMM0,
+                                                                    self.memory_op_from_stack_entry(entry_idx),
+                                                                )?)?;
+                                                            }
+                                                        }
+                                                    }
+                                                    Type::Float64 => {
+                                                        match deref_loc {
+                                                            Location::Register(src_reg) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movq_xmm_rm64,
+                                                                    Register::XMM0,
+                                                                    src_reg,
+                                                                )?)?;
+                                                            }
+                                                            Location::Stack(entry_idx) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movsd_xmm_xmmm64,
+                                                                    Register::XMM0,
+                                                                    self.memory_op_from_stack_entry(entry_idx),
+                                                                )?)?;
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => unreachable!("Non-float type with XMM0 return register"),
+                                                }
+                                            }
+                                            Register::RAX => {
+                                                self.mov(&Location::Register(Register::RAX), &deref_loc)?;
+                                            }
+                                            _ => unreachable!("Unexpected return register"),
+                                        }
                                     }
                                     OperandKind::Location(loc) => {
                                         let location = *self.allocator.get_location_or_panic(loc);
-                                        self.mov(&Location::Register(Register::RAX), &location)?;
+                                        match return_register {
+                                            Register::XMM0 => {
+                                                match &value.ty {
+                                                    Type::Float32 => {
+                                                        match location {
+                                                            Location::Register(src_reg) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movq_xmm_rm64,
+                                                                    Register::XMM0,
+                                                                    src_reg,
+                                                                )?)?;
+                                                            }
+                                                            Location::Stack(entry_idx) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movss_xmm_xmmm32,
+                                                                    Register::XMM0,
+                                                                    self.memory_op_from_stack_entry(entry_idx),
+                                                                )?)?;
+                                                            }
+                                                        }
+                                                    }
+                                                    Type::Float64 => {
+                                                        match location {
+                                                            Location::Register(src_reg) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movq_xmm_rm64,
+                                                                    Register::XMM0,
+                                                                    src_reg,
+                                                                )?)?;
+                                                            }
+                                                            Location::Stack(entry_idx) => {
+                                                                self.asm.add_instruction(Instruction::with2(
+                                                                    Code::Movsd_xmm_xmmm64,
+                                                                    Register::XMM0,
+                                                                    self.memory_op_from_stack_entry(entry_idx),
+                                                                )?)?;
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => unreachable!("Non-float type with XMM0 return register"),
+                                                }
+                                            }
+                                            Register::RAX => {
+                                                self.mov(&Location::Register(Register::RAX), &location)?;
+                                            }
+                                            _ => unreachable!("Unexpected return register"),
+                                        }
                                     }
                                     _ => unimplemented!("Unsupported operand kind for return: {:?}", value.kind),
                                 }

@@ -132,6 +132,9 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Number(number) => {
                 write!(writer, "{}", number)?;
             }
+            HIRExprKind::Float(float) => {
+                write!(writer, "{}", float)?;
+            }
             HIRExprKind::Usize(number) => {
                 write!(writer, "{}", number)?;
             }

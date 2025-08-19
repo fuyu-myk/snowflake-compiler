@@ -372,6 +372,7 @@ impl From<mir::Type> for Type {
     fn from(value: mir::Type) -> Self {
         match value {
             mir::Type::Int => Type::Int32,
+            mir::Type::Float => Type::Float32,
             mir::Type::Usize => Type::UInt64, // 64-bit platform
             mir::Type::String => Type::String,
             mir::Type::Bool => Type::Bool,

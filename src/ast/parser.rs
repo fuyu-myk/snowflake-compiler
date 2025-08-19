@@ -530,6 +530,7 @@ impl <'a> Parser<'a> {
 
         return match &token.kind {
             TokenKind::Number(number) => self.ast.number_expression(token.clone(), *number),
+            TokenKind::Float(number) => self.ast.float_expression(token.clone(), *number),
             TokenKind::Usize(number) => self.ast.usize_expression(token.clone(), *number),
             TokenKind::String(value) => self.ast.string_expression(token.clone(), value.clone()),
             TokenKind::LeftParen => {

@@ -97,6 +97,7 @@ Thus far, the current compiler architecture is highlighted below:
 
 ### Types supported
 * Integers
+* Floats
 * Boolean
 * Strings
 

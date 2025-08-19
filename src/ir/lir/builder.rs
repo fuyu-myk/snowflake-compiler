@@ -319,6 +319,10 @@ impl<'mir> LIRBuilder<'mir> {
                 ty: Type::Int32,
                 kind: OperandKind::Const(ConstValue::Int32(*value)),
             },
+            Value::Constant(Constant::Float(value)) => Operand {
+                ty: Type::Float32,
+                kind: OperandKind::Const(ConstValue::Float32(*value)),
+            },
             Value::Constant(Constant::Bool(value)) => Operand {
                 ty: Type::Bool,
                 kind: OperandKind::Const(ConstValue::Bool(*value)),

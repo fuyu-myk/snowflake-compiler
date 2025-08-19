@@ -181,6 +181,9 @@ impl CCodegen {
             CExpr::Number(number) => {
                 self.write(format!("{}", number.value).as_str());
             }
+            CExpr::Float(float) => {
+                self.write(format!("{}", float.value).as_str());
+            }
             CExpr::Usize(number) => {
                 self.write(format!("{}", number.value).as_str());
             }

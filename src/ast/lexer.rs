@@ -7,6 +7,7 @@ use crate::text::span::TextSpan;
 pub enum TokenKind {
     // literals
     Number(i64),
+    Float(f64),
     Usize(usize),
     String(String),
 
@@ -69,6 +70,7 @@ pub enum TokenKind {
     Arrow,
     SemiColon,
     DoubleQuote,
+    Period,
 
     // comments (handled by lexer, not tokenized)
     LineComment, // // for single line comments
@@ -105,6 +107,7 @@ impl Display for TokenKind {
         match self {
             // literals
             TokenKind::Number(_) => write!(f, "Number"),
+            TokenKind::Float(_) => write!(f, "Float"),
             TokenKind::Usize(_) => write!(f, "Usize"),
             TokenKind::String(_) => write!(f, "String"),
 
@@ -167,6 +170,7 @@ impl Display for TokenKind {
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::SemiColon => write!(f, "Semicolon"),
             TokenKind::DoubleQuote => write!(f, "\""),
+            TokenKind::Period => write!(f, "Period"),
 
             // comments
             TokenKind::LineComment => write!(f, "LineComment"),
@@ -191,6 +195,13 @@ impl Token {
     pub fn new(kind: TokenKind, span: TextSpan) -> Self {
         Self { kind, span }
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum NumberResult {
+    Integer(i64, Option<String>),
+    Float(f64, Option<String>),
+    Malformed,
 }
 
 pub struct Lexer<'a> {
@@ -224,15 +235,24 @@ impl <'a> Lexer<'a> {
             let mut kind = TokenKind::Bad; // If there is a token that we cannot lext
 
             if Self::is_number_start(&c) {
-                let (number, suffix) = self.consume_number();
-                kind = match suffix.as_deref() {
-                    Some("usize") => TokenKind::Usize(number as usize),
-                    Some("u32") | Some("u64") => TokenKind::Usize(number as usize), // temp
-                    None => TokenKind::Number(number),
-                    _ => {
-                        // todo: error reporting for unsupported suffixes
-                        TokenKind::Number(number)
-                    }
+                let number_result = self.consume_number();
+                kind = match number_result {
+                    NumberResult::Integer(number, suffix) => {
+                        match suffix.as_deref() {
+                            Some("usize") => TokenKind::Usize(number as usize),
+                            Some("u32") | Some("u64") => TokenKind::Usize(number as usize), // temp
+                            None => TokenKind::Number(number),
+                            _ => {
+                                // todo: error reporting for unsupported suffixes
+                                TokenKind::Number(number)
+                            }
+                        }
+                    },
+                    NumberResult::Float(float_val, _suffix) => {
+                        // For now, ignore float suffixes, but you could handle "f", "d", etc.
+                        TokenKind::Float(float_val)
+                    },
+                    NumberResult::Malformed => TokenKind::Bad,
                 };
             } else if c == '"' {
                 self.consume();
@@ -270,20 +290,68 @@ impl <'a> Lexer<'a> {
         });
     }
 
-    fn consume_number(&mut self) -> (i64, Option<String>) {
-        let mut number: i64 = 0;
+    fn consume_number(&mut self) -> NumberResult {
+        let start_pos = self.current_pos;
+        let mut has_decimal = false;
+        let mut has_exponent = false;
         
-        // Consume numeral
+        // Consume integer part
         while let Some(c) = self.current_char() {
             if c.is_digit(10) {
                 self.consume().unwrap();
-                number = number * 10 + c.to_digit(10).unwrap() as i64;
             } else {
                 break;
             }
         }
         
-        // Check for suffix (like "usize", "u32", etc.)
+        // Check for decimal point
+        if let Some('.') = self.current_char() {
+            // Look ahead to ensure it's not a method call (e.g., "123.method()")
+            if let Some(next_char) = self.peek_char() {
+                if next_char.is_digit(10) {
+                    has_decimal = true;
+                    self.consume().unwrap();
+                    
+                    while let Some(c) = self.current_char() {
+                        if c.is_digit(10) {
+                            self.consume().unwrap();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check for exponent (e or E)
+        if let Some(c) = self.current_char() {
+            if c == 'e' || c == 'E' {
+                has_exponent = true;
+                self.consume().unwrap();
+                
+                if let Some(sign) = self.current_char() {
+                    if sign == '+' || sign == '-' {
+                        self.consume().unwrap();
+                    }
+                }
+                
+                let mut has_exponent_digits = false;
+                while let Some(c) = self.current_char() {
+                    if c.is_digit(10) {
+                        has_exponent_digits = true;
+                        self.consume().unwrap();
+                    } else {
+                        break;
+                    }
+                }
+                
+                if !has_exponent_digits {
+                    return NumberResult::Malformed;
+                }
+            }
+        }
+        
+        // Check for suffix (like "f", "d", "usize", "u32", etc.)
         let mut suffix = String::new();
         while let Some(c) = self.current_char() {
             if c.is_alphabetic() {
@@ -294,8 +362,22 @@ impl <'a> Lexer<'a> {
             }
         }
         
+        let number_str = &self.input[start_pos..self.current_pos - suffix.len()];
         let suffix_option = if suffix.is_empty() { None } else { Some(suffix) };
-        (number, suffix_option)
+        
+        if has_decimal || has_exponent {
+            // Parse as floating point
+            match number_str.parse::<f64>() {
+                Ok(float_val) => NumberResult::Float(float_val, suffix_option),
+                Err(_) => NumberResult::Malformed,
+            }
+        } else {
+            // Parse as integer
+            match number_str.parse::<i64>() {
+                Ok(int_val) => NumberResult::Integer(int_val, suffix_option),
+                Err(_) => NumberResult::Malformed,
+            }
+        }
     }
 
     fn consume_string_literal(&mut self) -> String {
@@ -564,6 +646,10 @@ impl <'a> Lexer<'a> {
 
     fn current_char(&self) -> Option<char> {
         self.input.chars().nth(self.current_pos)
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.input.chars().nth(self.current_pos + 1)
     }
 
     fn consume(&mut self) -> Option<char> {

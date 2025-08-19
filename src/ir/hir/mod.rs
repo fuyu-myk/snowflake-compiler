@@ -130,6 +130,7 @@ pub struct HIRExpression {
 #[derive(Debug, Clone)]
 pub enum HIRExprKind {
     Number(i64),
+    Float(f64),
     Usize(usize),
     String(String),
     Bool(bool),

@@ -90,6 +90,10 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), number.number));
     }
 
+    fn visit_float_expression(&mut self, _ast: &mut Ast, float: &FloatExpression, _expr: &Expression) {
+        self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), float.number));
+    }
+
     fn visit_usize_expression(&mut self, _ast: &mut Ast, number: &UsizeExpression, _expr: &Expression) {
         self.result.push_str(&format!("{}{}", Self::NUMBER_COLOUR.fg_str(), number.number));
     }

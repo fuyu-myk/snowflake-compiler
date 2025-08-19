@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
 use crate::text::span::TextSpan;
 
 
@@ -73,6 +73,9 @@ pub trait ASTVisitor {
         match &expression.kind {
             ExpressionKind::Number(number) => {
                 self.visit_number_expression(ast, number, &expression);
+            }
+            ExpressionKind::Float(float) => {
+                self.visit_float_expression(ast, float, &expression);
             }
             ExpressionKind::Usize(number) => {
                 self.visit_usize_expression(ast, number, &expression);
@@ -194,6 +197,8 @@ pub trait ASTVisitor {
     fn visit_usize_expression(&mut self, ast: &mut Ast, number: &super::UsizeExpression, expr: &Expression);
 
     fn visit_number_expression(&mut self, ast: &mut Ast, number: &NumberExpression, expr: &Expression);
+
+    fn visit_float_expression(&mut self, ast: &mut Ast, float: &FloatExpression, expr: &Expression);
 
     fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan);
 

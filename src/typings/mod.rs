@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter, Result};
 #[derive(Debug, Clone)]
 pub enum Type {
     Int,
+    Float,
     Bool,
     String,
     Void,
@@ -17,6 +18,7 @@ impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         let type_name = match self {
             Type::Int => "int".to_string(),
+            Type::Float => "float".to_string(),
             Type::Bool => "bool".to_string(),
             Type::String => "string".to_string(),
             Type::Void => "void".to_string(),
@@ -34,6 +36,7 @@ impl Type {
     pub fn is_assignable_to(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Int, Type::Int) => true,
+            (Type::Float, Type::Float) => true,
             (Type::Bool, Type::Bool) => true,
             (Type::String, Type::String) => true,
             (Type::Usize, Type::Usize) => true,
@@ -49,6 +52,7 @@ impl Type {
     pub fn from_str(s: &str) -> Option<Type> {
         match s {
             "int" => Some(Type::Int),
+            "float" => Some(Type::Float),
             "bool" => Some(Type::Bool),
             "string" => Some(Type::String),
             "void" => Some(Type::Void),

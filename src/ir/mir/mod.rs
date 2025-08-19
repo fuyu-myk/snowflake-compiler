@@ -79,6 +79,7 @@ impl DerefMut for BasicBlocks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Int,
+    Float,
     Usize,
     String,
     Bool,
@@ -90,6 +91,7 @@ impl From<compilation_unit::Type> for Type {
     fn from(value: crate::typings::Type) -> Self {
         match value {
             compilation_unit::Type::Int => Self::Int,
+            compilation_unit::Type::Float => Self::Float,
             compilation_unit::Type::String => Self::String,
             compilation_unit::Type::Bool => Self::Bool,
             compilation_unit::Type::Void => Self::Void,
@@ -221,16 +223,17 @@ impl InstructionKind {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     InstructionRef(InstructionIdx),
     ParamRef(usize),
     Constant(Constant),
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
     Int(i32),
+    Float(f32),
     Usize(usize),
     Bool(bool),
     String(String),
@@ -242,6 +245,7 @@ impl Value {
     pub fn is_const(&self) -> bool {
         matches!(self,
             Self::Constant(Constant::Int(_)) |
+            Self::Constant(Constant::Float(_)) |
             Self::Constant(Constant::String(_)) |
             Self::Constant(Constant::Usize(_)) |
             Self::Constant(Constant::Void)
@@ -504,7 +508,7 @@ impl Terminator {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TerminatorKind {
     Return {
         value: Value,

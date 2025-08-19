@@ -144,6 +144,11 @@ impl FunctionBuilder {
                                  self.function.name, self.function.return_type);
                     Value::Constant(Constant::Int(0))
                 }
+                Type::Float => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0.0", 
+                                 self.function.name, self.function.return_type);
+                    Value::Constant(Constant::Float(0.0))
+                }
                 Type::String => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty string return", 
                                  self.function.name, self.function.return_type);
@@ -407,6 +412,7 @@ impl FunctionBuilder {
     pub fn build_expr(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, expr: &HIRExpression) -> Value {
         match &expr.kind {
             HIRExprKind::Number(value) => Value::Constant(Constant::Int(*value as i32)),
+            HIRExprKind::Float(value) => Value::Constant(Constant::Float(*value as f32)),
             HIRExprKind::Usize(value) => Value::Constant(Constant::Usize(*value)),
             HIRExprKind::String(value) => Value::Constant(Constant::String(value.clone())),
             HIRExprKind::Bool(value) => Value::Constant(Constant::Bool(*value)),

@@ -141,6 +141,7 @@ impl HIRBuilder {
         let expr = ast.query_expression(expr_id);
         let kind = match &expr.kind {
             ExpressionKind::Number(number_expr) => HIRExprKind::Number(number_expr.number),
+            ExpressionKind::Float(float_expr) => HIRExprKind::Float(float_expr.number),
             ExpressionKind::Usize(usize_expr) => HIRExprKind::Usize(usize_expr.number),
             ExpressionKind::String(string_expr) => HIRExprKind::String(string_expr.string.clone()),
             ExpressionKind::Boolean(bool_expr) => HIRExprKind::Bool(bool_expr.value),

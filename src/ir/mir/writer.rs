@@ -204,6 +204,9 @@ impl<W> MIRWriter<W> where W: Write {
             Value::Constant(Constant::Int(value)) => {
                 write!(writer, "{}", value)?;
             }
+            Value::Constant(Constant::Float(value)) => {
+                write!(writer, "{}", value)?;
+            }
             Value::Constant(Constant::Bool(value)) => {
                 write!(writer, "{}", value)?;
             }

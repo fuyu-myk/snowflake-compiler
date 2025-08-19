@@ -17,6 +17,7 @@ impl CAst {
 #[derive(Debug, Clone)]
 pub enum CType {
     Int,
+    Float,
     String,
     Bool,
     Void,
@@ -26,6 +27,7 @@ impl Display for CType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         return match self {
             CType::Int => write!(f, "int"),
+            CType::Float => write!(f, "float"),
             CType::String => write!(f, "char*"),
             CType::Bool => write!(f, "bool"),
             CType::Void => write!(f, "void"),
@@ -39,6 +41,7 @@ impl TryFrom<&Type> for CType {
     fn try_from(value: &Type) -> Result<Self, Self::Error> {
         return match value {
             Type::Int => Ok(CType::Int),
+            Type::Float => Ok(CType::Float),
             Type::String => Ok(CType::String),
             Type::Bool => Ok(CType::Bool),
             Type::Void => Ok(CType::Void),
@@ -119,6 +122,7 @@ pub struct CBlockStatement {
 #[derive(Debug, Clone)]
 pub enum CExpr {
     Number(CNumber),
+    Float(CFloat),
     Usize(CUsize),
     String(String),
     Bool(CBool),
@@ -133,6 +137,11 @@ pub enum CExpr {
 #[derive(Debug, Clone)]
 pub struct CNumber {
     pub value: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CFloat {
+    pub value: f64,
 }
 
 #[derive(Debug, Clone)]

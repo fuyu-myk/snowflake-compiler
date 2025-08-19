@@ -220,6 +220,11 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Number(NumberExpression { token, number }), span)
     }
 
+    pub fn float_expression(&mut self, token: Token, number: f64) -> &Expression {
+        let span = token.span.clone();
+        self.expression_from_kind(ExpressionKind::Float(FloatExpression { token, number }), span)
+    }
+
     pub fn usize_expression(&mut self, token: Token, number: usize) -> &Expression {
         let span = token.span.clone();
         self.expression_from_kind(ExpressionKind::Usize(UsizeExpression { token, number }), span)
@@ -618,6 +623,7 @@ impl Statement {
 #[derive(Debug, Clone)]
 pub enum ExpressionKind {
     Number(NumberExpression),
+    Float(FloatExpression),
     Usize(UsizeExpression),
     String(StringExpression),
     Binary(BinaryExpression),
@@ -931,6 +937,12 @@ pub struct NumberExpression {
 }
 
 #[derive(Debug, Clone)]
+pub struct FloatExpression {
+    pub token: Token,
+    pub number: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct UsizeExpression {
     pub token: Token,
     pub number: usize,
@@ -965,6 +977,7 @@ impl Expression {
     pub fn span(&self, ast: &Ast) -> TextSpan {
         match &self.kind {
             ExpressionKind::Number(expr) => expr.token.span.clone(),
+            ExpressionKind::Float(expr) => expr.token.span.clone(),
             ExpressionKind::Usize(expr) => expr.token.span.clone(),
             ExpressionKind::String(expr) => expr.token.span.clone(),
             ExpressionKind::Binary(expr) => {
@@ -1076,9 +1089,10 @@ mod tests {
     use crate::compilation_unit::CompilationUnit;
 
 
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Debug, PartialEq)]
     enum TestASTNode {
         Number(i64),
+        Float(f64),
         Usize(usize),
         Boolean(bool),
         String(String),
@@ -1146,6 +1160,10 @@ mod tests {
 
         fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::Number(number.number));
+        }
+
+        fn visit_float_expression(&mut self, _ast: &mut Ast, float: &FloatExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Float(float.number));
         }
 
         fn visit_usize_expression(&mut self, _ast: &mut Ast, usize_expression: &UsizeExpression, _expr: &Expression) {

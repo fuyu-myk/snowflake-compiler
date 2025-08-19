@@ -69,6 +69,7 @@ fn update(&mut self, index: VariableIndex, value: Value) {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Number(i64),
+    Float(f64),
     Usize(usize),
     Boolean(bool),
     String(String),
@@ -90,6 +91,15 @@ impl Value {
             Value::Number(value) => *value,
             Value::Usize(value) => *value as i64,
             _ => panic!("Expected number value"),
+        }
+    }
+
+    pub fn expect_float(&self) -> f64 {
+        match self {
+            Value::Float(value) => *value,
+            Value::Number(value) => *value as f64,
+            Value::Usize(value) => *value as f64,
+            _ => panic!("Expected float value"),
         }
     }
 
@@ -131,6 +141,10 @@ impl <'a> ASTEvaluator<'a> {
 impl <'a> ASTVisitor for ASTEvaluator<'a> {
     fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
         self.last_value = Some(Value::Number(number.number));
+    }
+
+    fn visit_float_expression(&mut self, _ast: &mut Ast, float: &super::FloatExpression, _expr: &Expression) {
+        self.last_value = Some(Value::Float(float.number));
     }
 
     fn visit_usize_expression(&mut self, _ast: &mut Ast, number: &super::UsizeExpression, _expr: &Expression) {

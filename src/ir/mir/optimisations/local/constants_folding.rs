@@ -28,6 +28,7 @@ impl ComputedConstants {
     fn get_constant_value(&self, value: &Value) -> Option<Value> {
         match value {
             Value::Constant(Constant::Int(value)) => Some(Value::Constant(Constant::Int(*value))),
+            Value::Constant(Constant::Float(value)) => Some(Value::Constant(Constant::Float(*value))),
             Value::Constant(Constant::Bool(value)) => Some(Value::Constant(Constant::Bool(*value))),
             Value::Constant(Constant::String(value)) => Some(Value::Constant(Constant::String(value.clone()))),
             Value::Constant(Constant::Usize(value)) => Some(Value::Constant(Constant::Usize(*value))),
