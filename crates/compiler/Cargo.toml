@@ -1,0 +1,17 @@
+[package]
+name = "snowflake-compiler"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "snowflake-compiler"
+path = "src/main.rs"
+
+[dependencies]
+snowflake-common = { workspace = true }
+snowflake-front = { workspace = true }
+snowflake-middle = { workspace = true }
+snowflake-codegen = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

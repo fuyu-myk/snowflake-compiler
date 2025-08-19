@@ -1,0 +1,8 @@
+[package]
+name = "snowflake-front"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+snowflake-common = { workspace = true }
+termion = { workspace = true }

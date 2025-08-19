@@ -1,11 +1,23 @@
-[package]
-name = "snowflake-compiler"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/front",
+    "crates/middle", 
+    "crates/codegen",
+    "crates/common",
+    "crates/compiler",
+    "crates/tests"
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1.0.98"
 termion = "4.0.5"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 iced-x86 = { version = "1.21.0", features = ["code_asm"] }
+
+# Internal dependencies
+snowflake-front = { path = "crates/front" }
+snowflake-middle = { path = "crates/middle" }
+snowflake-codegen = { path = "crates/codegen" }
+snowflake-common = { path = "crates/common" }

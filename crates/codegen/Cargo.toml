@@ -1,0 +1,11 @@
+[package]
+name = "snowflake-codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+snowflake-common = { workspace = true }
+snowflake-front = { workspace = true }
+snowflake-middle = { workspace = true }
+anyhow = { workspace = true }
+iced-x86 = { workspace = true }

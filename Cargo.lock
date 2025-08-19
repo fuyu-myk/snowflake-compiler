@@ -141,14 +141,62 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "snowflake-compiler"
+name = "snowflake-codegen"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "iced-x86",
+ "snowflake-common",
+ "snowflake-front",
+ "snowflake-middle",
+]
+
+[[package]]
+name = "snowflake-common"
+version = "0.1.0"
+dependencies = [
  "termion",
+]
+
+[[package]]
+name = "snowflake-compiler"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "snowflake-codegen",
+ "snowflake-common",
+ "snowflake-front",
+ "snowflake-middle",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "snowflake-front"
+version = "0.1.0"
+dependencies = [
+ "snowflake-common",
+ "termion",
+]
+
+[[package]]
+name = "snowflake-middle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "snowflake-common",
+ "snowflake-front",
+ "tracing",
+]
+
+[[package]]
+name = "snowflake-tests"
+version = "0.1.0"
+dependencies = [
+ "snowflake-codegen",
+ "snowflake-common",
+ "snowflake-front",
+ "snowflake-middle",
 ]
 
 [[package]]

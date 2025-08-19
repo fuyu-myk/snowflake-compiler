@@ -1,0 +1,97 @@
+use std::{env, fs::File, io::Write, rc::Rc};
+
+use snowflake_front::compilation_unit::CompilationUnit;
+use snowflake_middle::ir::{
+    hir::{HIRBuilder, HIRWriter}, 
+    mir::{optimisations::Optimiser, MIRBuilder, MIRWriter},
+    lir::builder::LIRBuilder
+};
+
+use anyhow::{anyhow, Result};
+
+
+fn main() -> Result<()> {
+    unsafe {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+    tracing_subscriber::fmt::init();
+
+    // Get command line arguments
+    let args: Vec<String> = env::args().collect();
+    
+    // Check if a file path was provided
+    if args.len() != 2 {
+        eprintln!("Usage: {} <file.snow>", args[0]);
+        return Err(anyhow!("Please provide a .snow file to compile"));
+    }
+    
+    let file_path = &args[1];
+    
+    // Check if the file has the correct extension
+    if !file_path.ends_with(".snow") {
+        return Err(anyhow!("File must have .snow extension"));
+    }
+    
+    // Read the input file
+    let input = std::fs::read_to_string(file_path)
+        .map_err(|e| anyhow!("Failed to read file '{}': {}", file_path, e))?;
+
+    // Compile the input code ^0^
+    let mut compilation_unit = CompilationUnit::compile(&input)
+        .map_err(|err| {
+            if err.borrow().diagnostics.len() == 1 {
+                anyhow!("Could not compile `{}` due to {} previous error", file_path, err.borrow().diagnostics.len())
+            } else {
+                anyhow!("Could not compile `{}` due to {} previous errors", file_path, err.borrow().diagnostics.len())
+            }
+        })?;
+    compilation_unit.run_compiler();
+
+    // GCC codegen
+    //let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);
+    //let c_return_value = program.run()?;
+    //println!("C program returned {}", c_return_value);
+
+    // HIR
+    let hir_builder = HIRBuilder::new();
+    let hir = hir_builder.build(&compilation_unit.ast, &mut compilation_unit.global_scope);
+    let mut hir_output = Vec::new();
+
+    HIRWriter::write(&mut hir_output, &hir, &compilation_unit.global_scope, 0)?;
+    println!("{}", String::from_utf8(hir_output)?); // display HIR output
+
+    // MIR unoptimised
+    let mir_builder = MIRBuilder::new(Rc::clone(&compilation_unit.diagnostics_report));
+    let mut mir = mir_builder.build(&hir, &compilation_unit.global_scope);
+    let mut mir_output = String::new();
+    let mut mir_graphviz = String::new();
+
+    MIRWriter::write_graphviz(&mut mir_graphviz, &mir)?;
+    File::create("mir.dot")?.write_all(mir_graphviz.as_bytes())?;
+    MIRWriter::write_txt(&mut mir_output, &mir)?;
+    println!("{}", mir_output);
+
+    // MIR optimisations
+    let mut optimiser = Optimiser::new();
+    optimiser.optimise(&mut mir);
+    let mut optimised_mir_graphviz = String::new();
+    let mut optimised_mir_output = String::new();
+
+    MIRWriter::write_graphviz(&mut optimised_mir_graphviz, &mir)?;
+    File::create("optimised-mir.dot")?.write_all(optimised_mir_graphviz.as_bytes())?;
+    MIRWriter::write_txt(&mut optimised_mir_output, &mir)?;
+    println!("{}", optimised_mir_output);
+
+    // LIR
+    let lir_builder = LIRBuilder::new(&mir, &compilation_unit.global_scope);
+    let lir = lir_builder.build();
+    //dbg!(&lir);
+
+    // Asm codegen
+    let mut asm = snowflake_codegen::backends::x86_64::X86_64Codegen::new();
+    asm.generate(&lir)?;
+    let asm_output = asm.get_asm_output()?;
+    println!("{}", asm_output);
+
+    Ok(())
+}
