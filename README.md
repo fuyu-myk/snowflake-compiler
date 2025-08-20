@@ -4,10 +4,13 @@ This project documents my journey in learning Rust and subsequently coding a com
 ## Compiler architecture
 Thus far, the current compiler architecture is highlighted below:
 
-`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [IR Lowering + optimisations] -> [x86_64 backend]
+`input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [IR Lowering + optimisations] -> [Backend]
 
-* An iced_x86 backend will be used for now
-* The final goal will be to adopt an LLVM backend 
+### Backends explored
+* C-transpiler
+* [`iced_x86`](https://github.com/icedland/iced)
+* LLVM (WIP)
+    * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my umfamiliarity with LLVM
 
 ## Current features
 

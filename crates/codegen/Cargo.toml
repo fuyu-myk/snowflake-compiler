@@ -9,3 +9,4 @@ snowflake-front = { workspace = true }
 snowflake-middle = { workspace = true }
 anyhow = { workspace = true }
 iced-x86 = { workspace = true }
+inkwell = { version = "0.5", features = ["llvm18-0"] }
