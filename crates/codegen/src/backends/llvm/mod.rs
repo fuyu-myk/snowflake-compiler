@@ -7,7 +7,7 @@ use inkwell::{
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     IntPredicate, FloatPredicate, AddressSpace,
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, result};
 
 use snowflake_middle::ir::lir::{
     self, LIR, Function, InstructionKind, Operand, OperandKind, ConstValue, 
@@ -85,6 +85,19 @@ impl<'ctx> LLVMBackend<'ctx> {
             self.basic_blocks.insert(bb_idx, basic_block);
         }
 
+        let first_bb = self.basic_blocks[&function.basic_blocks[0]];
+        self.builder.position_at_end(first_bb);
+        
+        for (i, &param_loc) in function.params.iter().enumerate() {
+            let param_value = fn_value.get_nth_param(i as u32).unwrap();
+            let location = &lir.locations[param_loc];
+            let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+            
+            let alloca = self.builder.build_alloca(llvm_type, &format!("param_{}", i))?;
+            self.builder.build_store(alloca, param_value)?;
+            self.locations.insert(param_loc, alloca);
+        }
+
         for &bb_idx in &function.basic_blocks {
             let basic_block = self.basic_blocks[&bb_idx];
             self.builder.position_at_end(basic_block);
@@ -110,9 +123,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let right_val = self.compile_operand(right, lir)?;
                 
                 let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
-                    self.builder.build_int_add(left_val.into_int_value(), right_val.into_int_value(), "add")?.into()
+                    self.builder.build_int_add(
+                        left_val.into_int_value(), right_val.into_int_value(), "add"
+                    )?.into()
                 } else {
-                    self.builder.build_float_add(left_val.into_float_value(), right_val.into_float_value(), "fadd")?.into()
+                    self.builder.build_float_add(
+                        left_val.into_float_value(), right_val.into_float_value(), "fadd"
+                    )?.into()
                 };
                 
                 self.store_to_location(*target, result)?;
@@ -122,9 +139,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let right_val = self.compile_operand(right, lir)?;
                 
                 let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
-                    self.builder.build_int_sub(left_val.into_int_value(), right_val.into_int_value(), "sub")?.into()
+                    self.builder.build_int_sub(
+                        left_val.into_int_value(), right_val.into_int_value(), "sub"
+                    )?.into()
                 } else {
-                    self.builder.build_float_sub(left_val.into_float_value(), right_val.into_float_value(), "fsub")?.into()
+                    self.builder.build_float_sub(
+                        left_val.into_float_value(), right_val.into_float_value(), "fsub"
+                    )?.into()
                 };
                 
                 self.store_to_location(*target, result)?;
@@ -134,9 +155,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let right_val = self.compile_operand(right, lir)?;
                 
                 let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
-                    self.builder.build_int_mul(left_val.into_int_value(), right_val.into_int_value(), "mul")?.into()
+                    self.builder.build_int_mul(
+                        left_val.into_int_value(), right_val.into_int_value(), "mul"
+                    )?.into()
                 } else {
-                    self.builder.build_float_mul(left_val.into_float_value(), right_val.into_float_value(), "fmul")?.into()
+                    self.builder.build_float_mul(
+                        left_val.into_float_value(), right_val.into_float_value(), "fmul"
+                    )?.into()
                 };
                 
                 self.store_to_location(*target, result)?;
@@ -146,11 +171,128 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let right_val = self.compile_operand(right, lir)?;
                 
                 let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
-                    self.builder.build_int_signed_div(left_val.into_int_value(), right_val.into_int_value(), "div")?.into()
+                    self.builder.build_int_signed_div(
+                        left_val.into_int_value(), right_val.into_int_value(), "div"
+                    )?.into()
                 } else {
-                    self.builder.build_float_div(left_val.into_float_value(), right_val.into_float_value(), "fdiv")?.into()
+                    self.builder.build_float_div(
+                        left_val.into_float_value(), right_val.into_float_value(), "fdiv"
+                    )?.into()
                 };
                 
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Mod { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_signed_rem(
+                        left_val.into_int_value(), right_val.into_int_value(), "mod"
+                    )?.into()
+                } else {
+                    self.builder.build_float_rem(
+                        left_val.into_float_value(), right_val.into_float_value(), "frem"
+                    )?.into()
+                };
+                
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Eq { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::EQ, left_val.into_int_value(), right_val.into_int_value(), "eq"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::OEQ, left_val.into_float_value(), right_val.into_float_value(), "feq"
+                    )?.into()
+                };
+
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Ne { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::NE, left_val.into_int_value(), right_val.into_int_value(), "ne"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::ONE, left_val.into_float_value(), right_val.into_float_value(), "fne"
+                    )?.into()
+                };
+
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Lt { target, left, right } => {
+                // TODO: Think about unsigned comparisons (for all lt/gt/le/ge)
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::SLT, left_val.into_int_value(), right_val.into_int_value(), "lt"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::OLT, left_val.into_float_value(), right_val.into_float_value(), "flt"
+                    )?.into()
+                };
+
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Gt { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::SGT, left_val.into_int_value(), right_val.into_int_value(), "gt"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::OGT, left_val.into_float_value(), right_val.into_float_value(), "fgt"
+                    )?.into()
+                };
+
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Le { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::SLE, left_val.into_int_value(), right_val.into_int_value(), "le"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::OLE, left_val.into_float_value(), right_val.into_float_value(), "fle"
+                    )?.into()
+                };
+
+                self.store_to_location(*target, result)?;
+            }
+            InstructionKind::Ge { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+
+                let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    self.builder.build_int_compare(
+                        IntPredicate::SGE, left_val.into_int_value(), right_val.into_int_value(), "ge"
+                    )?.into()
+                } else {
+                    self.builder.build_float_compare(
+                        FloatPredicate::OGE, left_val.into_float_value(), right_val.into_float_value(), "fge"
+                    )?.into()
+                };
+
                 self.store_to_location(*target, result)?;
             }
             InstructionKind::Move { target, source } => {
@@ -182,6 +324,38 @@ impl<'ctx> LLVMBackend<'ctx> {
                     self.builder.build_store(ptr, val)?;
                 }
             }
+            InstructionKind::Call { target, function, args } => {
+                let fn_value = self.functions[function];
+                let mut arg_values = Vec::new();
+                
+                for arg in args {
+                    let arg_val = self.compile_operand(arg, lir)?;
+                    arg_values.push(arg_val.into());
+                }
+                
+                let call_site = self.builder.build_call(fn_value, &arg_values, "call")?;
+                
+                if let Some(target_loc) = target {
+                    if let Some(return_value) = call_site.try_as_basic_value().left() {
+                        self.store_to_location(*target_loc, return_value)?;
+                    }
+                }
+            }
+            InstructionKind::Phi { target, operands } => {
+                // In LLVM, phi nodes must be at the beginning of a basic block
+                let target_location = &lir.locations[*target];
+                let llvm_type = self.lir_type_to_llvm(&target_location.ty).unwrap();
+                
+                let phi = self.builder.build_phi(llvm_type, "phi")?;
+                
+                for (bb_idx, operand) in operands {
+                    let value = self.compile_operand(operand, lir)?;
+                    let bb = self.basic_blocks[bb_idx];
+                    phi.add_incoming(&[(&value, bb)]);
+                }
+                
+                self.store_to_location(*target, phi.as_basic_value())?;
+            }
             _ => {
                 unimplemented!("Instruction {:?} not implemented", instruction.kind);
             }
@@ -207,12 +381,33 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let target_bb = self.basic_blocks[target];
                 self.builder.build_unconditional_branch(target_bb)?;
             }
+            Terminator::Switch { value, targets, default_target } => {
+                let condition_val = self.compile_operand(value, lir)?;
+                
+                let switch_val = if condition_val.is_int_value() {
+                    let int_val = condition_val.into_int_value();
+                    if int_val.get_type().get_bit_width() == 1 {
+                        self.builder.build_int_z_extend(int_val, self.context.i32_type(), "bool_to_int")?
+                    } else {
+                        int_val
+                    }
+                } else {
+                    condition_val.into_int_value()
+                };
+                
+                let cases: Vec<(inkwell::values::IntValue, inkwell::basic_block::BasicBlock)> = targets.iter().map(|(case_value, target)| {
+                    let case_bb = self.basic_blocks[target];
+                    let value = self.compile_const_value(case_value);
+                    (value.into_int_value(), case_bb)
+                }).collect();
+
+                self.builder.build_switch(switch_val, self.basic_blocks[default_target], &cases)?;
+            }
             Terminator::Branch { condition, true_target, false_target } => {
-                // You'll need to implement condition compilation
+                let condition = self.compile_operand(condition, lir)?;
                 let true_bb = self.basic_blocks[true_target];
                 let false_bb = self.basic_blocks[false_target];
-                // For now, just branch to true target
-                self.builder.build_unconditional_branch(true_bb)?;
+                self.builder.build_conditional_branch(condition.into_int_value(), true_bb, false_bb)?;
             }
             _ => {
                 unimplemented!("Terminator {:?} not implemented", terminator);
@@ -226,7 +421,9 @@ impl<'ctx> LLVMBackend<'ctx> {
         match &operand.kind {
             OperandKind::Location(loc_idx) => {
                 if let Some(alloca) = self.locations.get(loc_idx) {
-                    let loaded = self.builder.build_load(self.context.i32_type(), *alloca, "load_loc")?;
+                    let location = &lir.locations[*loc_idx];
+                    let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                    let loaded = self.builder.build_load(llvm_type, *alloca, "load_loc")?;
                     Ok(loaded)
                 } else {
                     // Create a temporary value - this shouldn't happen in well-formed LIR
@@ -241,6 +438,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let ptr = self.builder.build_load(self.context.ptr_type(inkwell::AddressSpace::default()), *alloca, "load_ptr")?;
                     if ptr.is_pointer_value() {
                         let ptr_val = ptr.into_pointer_value();
+                        // TODO: resolve pointer element type
                         let loaded = self.builder.build_load(self.context.i32_type(), ptr_val, "deref")?;
                         Ok(loaded)
                     } else {
