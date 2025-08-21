@@ -39,7 +39,7 @@ impl<W> MIRWriter<W> where W: Write {
                             writeln!(writer, "        {} -> {};", Self::format_bb_idx(bb_idx), Self::format_bb_idx(*case_target))?;
                         }
                     }
-                    TerminatorKind::Assert { condition: _, message: _, default } => {
+                    TerminatorKind::Assert { condition: _, check: _, message: _, default } => {
                         writeln!(writer, "        {} -> {};", Self::format_bb_idx(bb_idx), Self::format_bb_idx(*default))?;
                     }
                     TerminatorKind::Unresolved => {}
@@ -112,10 +112,10 @@ impl<W> MIRWriter<W> where W: Write {
                 writeln!(writer)?;
                 write!(writer, "    }}")?;
             }
-            TerminatorKind::Assert { condition, message, default } => {
+            TerminatorKind::Assert { condition, check: _, message, default } => {
                 write!(writer, "assert(")?;
                 Self::write_value(writer, condition)?;
-                write!(writer, ", \"{}\"", message)?;
+                write!(writer, ", \"{}\"", message.message())?;
                 write!(writer, ") -> [success: {}]", Self::format_bb_idx(*default))?;
             }
             TerminatorKind::Unresolved => { write!(writer, "unresolved")?; }

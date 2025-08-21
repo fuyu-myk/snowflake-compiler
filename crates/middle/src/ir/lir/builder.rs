@@ -63,10 +63,17 @@ impl<'mir> LIRBuilder<'mir> {
                 params: param_locations,
             });
 
+            // PASS 1: Create all basic blocks and build mapping
             for bb_idx in mir_fx.basic_blocks.iter().copied() {
-                let bb = self.mir.basic_blocks.get_or_panic(bb_idx);
                 let lir_bb = self.set_basic_block();
                 self.mir_to_lir_bb.insert(bb_idx.index, lir_bb);
+            }
+
+            // PASS 2: Process instructions and terminators
+            for bb_idx in mir_fx.basic_blocks.iter().copied() {
+                let bb = self.mir.basic_blocks.get_or_panic(bb_idx);
+                let lir_bb = *self.mir_to_lir_bb.get(&bb_idx.index).unwrap();
+                self.current_bb = Some(lir_bb);
 
                 for instruct_idx in bb.instructions.iter().copied() {
                     let mir_instruction = &mir_fx.instructions[instruct_idx];
@@ -187,9 +194,13 @@ impl<'mir> LIRBuilder<'mir> {
                                 args,
                             }
                         }
-                        mir::InstructionKind::Value(value) => InstructionKind::Move {
-                            target: self.get_ref_location(instruct_idx),
-                            source: self.build_operand(value),
+                        mir::InstructionKind::Value(value) => {
+                            let source = self.build_operand(value);
+                            let target = self.get_ref_location_for_move(instruct_idx, &source);
+                            InstructionKind::Move {
+                                target,
+                                source,
+                            }
                         },
                         mir::InstructionKind::ArrayAlloc { element_type, size } => {
                             let size_operand = self.build_operand(size);
@@ -200,18 +211,59 @@ impl<'mir> LIRBuilder<'mir> {
                             }
                         }
                         mir::InstructionKind::ArrayInit { elements } => {
-                            // For array initialization, we need to allocate space and then store each element
-                            // This is a simplified approach
-                            let target = self.get_ref_location(instruct_idx);
+                            let target = self.get_ref_location_for_array_init(instruct_idx, elements.len());
                             
-                            // Create a simple move instruction for now
-                            // todo: instructions to initialise each element
-                            if let Some(first_element) = elements.first() {
-                                InstructionKind::Move {
-                                    target,
-                                    source: self.build_operand(first_element),
-                                }
+                            if elements.is_empty() {
+                                // Empty array initialization
+                                InstructionKind::Nop
                             } else {
+                                // Determine element type from first element
+                                let element_type = match elements.first() {
+                                    Some(first_element) => {
+                                        match first_element {
+                                            mir::Value::Constant(constant) => {
+                                                match constant {
+                                                    mir::Constant::Int(_) => Type::Int32,
+                                                    mir::Constant::Float(_) => Type::Float32,
+                                                    mir::Constant::Bool(_) => Type::Bool,
+                                                    mir::Constant::String(_) => Type::String,
+                                                    mir::Constant::Usize(_) => Type::UInt64,
+                                                    mir::Constant::Void => Type::Void,
+                                                }
+                                            }
+                                            _ => Type::Int32, // Default fallback
+                                        }
+                                    }
+                                    None => Type::Int32, // Default fallback
+                                };
+                                
+                                for (index, element) in elements.iter().enumerate() {
+                                    let index_operand = Operand {
+                                        ty: Type::UInt64,
+                                        kind: OperandKind::Const(ConstValue::UInt64(index as u64)),
+                                    };
+                                    
+                                    let array_operand = Operand {
+                                        ty: Type::Array { 
+                                            element_type: Box::new(element_type.clone()), 
+                                            size: elements.len() 
+                                        },
+                                        kind: OperandKind::Location(target),
+                                    };
+                                    
+                                    let value_operand = self.build_operand(element);
+                                    
+                                    let store_instruction = InstructionKind::ArrayStore {
+                                        array: array_operand,
+                                        index: index_operand,
+                                        value: value_operand,
+                                    };
+                                    
+                                    self.current_basic_block().instructions.push(Instruction {
+                                        kind: store_instruction,
+                                    });
+                                }
+                                
                                 InstructionKind::Nop
                             }
                         }
@@ -307,34 +359,61 @@ impl<'mir> LIRBuilder<'mir> {
                         Terminator::Return { value }
                     }
                     mir::TerminatorKind::Goto(target) => Terminator::Goto {
-                        target: BasicBlockIdx::new(target.as_index()),
+                        target: *self.mir_to_lir_bb.get(&target.as_index()).expect("Target basic block not found in mapping"),
                     },
                     mir::TerminatorKind::SwitchInt { value, targets, default } => {
                         let value_operand = self.build_operand(value);
                         let switch_targets: Vec<(ConstValue, BasicBlockIdx)> = targets.iter()
                             .map(|(val, bb_idx)| {
-                                (ConstValue::Int32(*val), BasicBlockIdx::new(bb_idx.as_index()))
+                                (ConstValue::Int32(*val), *self.mir_to_lir_bb.get(&bb_idx.as_index()).expect("Target basic block not found in mapping"))
                             })
                             .collect();
                         
                         Terminator::Switch {
                             value: value_operand,
                             targets: switch_targets,
-                            default_target: BasicBlockIdx::new(default.as_index()),
+                            default_target: *self.mir_to_lir_bb.get(&default.as_index()).expect("Default basic block not found in mapping"),
                         }
                     }
-                    mir::TerminatorKind::Assert { condition, message, default } => {
-                        // Convert assert to a conditional branch that either continues or goes to unreachable
+                    mir::TerminatorKind::Assert { condition, check, message, default } => {
                         let condition_operand = self.build_operand(condition);
-                        let unreachable_bb = self.lir.basic_blocks.push(BasicBlock {
-                            instructions: Vec::new(),
-                            terminator: Some(Terminator::Unreachable { error: message.clone() }),
+                        let check_operand = Operand {
+                            ty: Type::Bool,
+                            kind: OperandKind::Const(ConstValue::Bool(*check)),
+                        };
+                        
+                        // If condition == check, continue to default block
+                        // If condition != check, panic with message
+                        
+                        let comparison_result_loc = self.create_location(Type::Bool);
+                        
+                        self.current_basic_block().instructions.push(Instruction {
+                            kind: InstructionKind::Eq {
+                                target: comparison_result_loc,
+                                left: condition_operand,
+                                right: check_operand,
+                            },
                         });
                         
+                        let panic_bb = self.lir.basic_blocks.push(BasicBlock::default());
+                        let fx = self.lir.functions.get_mut(fx_idx);
+                        fx.basic_blocks.push(panic_bb);
+                        
+                        self.lir.basic_blocks[panic_bb].terminator = Some(Terminator::Panic {
+                            message: message.message(),
+                        });
+                        
+                        let default_lir_bb = self.mir_to_lir_bb.get(&default.as_index())
+                            .copied()
+                            .unwrap_or_else(|| panic!("Default basic block {} not found in mapping. Available mappings: {:?}", default.as_index(), self.mir_to_lir_bb));
+                        
                         Terminator::Branch {
-                            condition: condition_operand,
-                            true_target: BasicBlockIdx::new(default.as_index()),
-                            false_target: unreachable_bb,
+                            condition: Operand {
+                                ty: Type::Bool,
+                                kind: OperandKind::Location(comparison_result_loc),
+                            },
+                            true_target: default_lir_bb,
+                            false_target: panic_bb,
                         }
                     }
                     mir::TerminatorKind::Unresolved => Terminator::Unreachable {
@@ -388,11 +467,10 @@ impl<'mir> LIRBuilder<'mir> {
                 kind: OperandKind::Const(ConstValue::Null),
             },
             Value::InstructionRef(instr_idx) => {
-                let instruction = self.get_current_fx().instructions.get(*instr_idx);
-                let ty = instruction.ty.clone().into();
                 let location = self.instruction_to_location.get(instr_idx)
                     .copied()
                     .unwrap_or_else(|| self.create_temp_location(*instr_idx));
+                let ty = self.lir.locations.get(location).ty.clone();
                 
                 Operand {
                     ty,
@@ -444,6 +522,38 @@ impl<'mir> LIRBuilder<'mir> {
         }
     }
 
+    fn get_ref_location_for_array_init(&mut self, instruction_idx: InstructionIdx, array_size: usize) -> LocationIdx {
+        let instruction = self.get_current_fx().instructions.get(instruction_idx);
+        let aliased_var = self.get_current_fx().locals.get(&instruction_idx).copied();
+
+        let array_type = match &instruction.ty {
+            mir::Type::Array(element_type) => Type::Array {
+                element_type: Box::new(Type::from((**element_type).clone())),
+                size: array_size,
+            },
+            _ => instruction.ty.clone().into(), // Fallback to normal conversion
+        };
+
+        match aliased_var {
+            Some(aliased_var) => match self.var_to_location.get(&aliased_var) {
+                Some(location) => *location,
+                None => {
+                    let location = self.create_location(array_type);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
+            None => match self.instruction_to_location.get(&instruction_idx) {
+                Some(location) => *location,
+                None => {
+                    let location = self.create_location(array_type);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
+        }
+    }
+
     fn get_current_fx(&self) -> &mir::Function {
         self.mir.functions.get(self.curr_fx_idx.expect("No current function found"))
     }
@@ -458,5 +568,44 @@ impl<'mir> LIRBuilder<'mir> {
         let location = self.create_location(ty);
         self.instruction_to_location.insert(instruction_idx, location);
         location
+    }
+
+    fn get_ref_location_for_move(&mut self, instruction_idx: InstructionIdx, source: &Operand) -> LocationIdx {
+        let instruction = self.get_current_fx().instructions.get(instruction_idx);
+        
+        let ty = match &source.kind {
+            OperandKind::Location(loc_idx) => {
+                let source_location = self.lir.locations.get(*loc_idx);
+                match &source_location.ty {
+                    Type::Array { element_type, size } => Type::Array { 
+                        element_type: element_type.clone(), 
+                        size: *size 
+                    },
+                    _ => instruction.ty.clone().into(),
+                }
+            },
+            _ => instruction.ty.clone().into(),
+        };
+        
+        let aliased_var = self.get_current_fx().locals.get(&instruction_idx).copied();
+
+        match aliased_var {
+            Some(aliased_var) => match self.var_to_location.get(&aliased_var) {
+                Some(location) => *location,
+                None => {
+                    let location = self.create_location(ty);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
+            None => match self.instruction_to_location.get(&instruction_idx) {
+                Some(location) => *location,
+                None => {
+                    let location = self.create_location(ty);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
+        }
     }
 }

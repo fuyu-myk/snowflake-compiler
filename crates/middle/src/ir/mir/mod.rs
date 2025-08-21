@@ -537,9 +537,30 @@ pub enum TerminatorKind {
     /// If false, execution stops and diagnostic (message) is printed
     Assert {
         condition: Value,
-        message: String,
+        check: bool,
+        message: Box<AssertMessage>,
         default: BasicBlockIdx,
     },
     /// Used for unknown targets
     Unresolved,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssertKind {
+    ArrayIndexOutOfBounds {
+        len: Value,
+        index: Value,
+    },
+}
+
+pub type AssertMessage = AssertKind;
+
+impl AssertKind {
+    pub fn message(&self) -> String {
+        match self {
+            AssertKind::ArrayIndexOutOfBounds { len, index } => {
+                format!("Array index out of bounds: index {:?} is greater than or equal to length {:?}", index, len)
+            }
+        }
+    }
 }

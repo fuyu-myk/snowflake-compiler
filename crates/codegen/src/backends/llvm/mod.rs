@@ -132,7 +132,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
                 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Sub { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -148,7 +148,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
                 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Mul { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -164,7 +164,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
                 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Div { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -180,7 +180,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
                 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Mod { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -196,7 +196,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
                 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Eq { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -212,7 +212,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Ne { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -228,7 +228,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Lt { target, left, right } => {
                 // TODO: Think about unsigned comparisons (for all lt/gt/le/ge)
@@ -236,8 +236,24 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let right_val = self.compile_operand(right, lir)?;
 
                 let result: BasicValueEnum = if left_val.is_int_value() && right_val.is_int_value() {
+                    let left_int = left_val.into_int_value();
+                    let right_int = right_val.into_int_value();
+                    
+                    // Ensure both operands have the same type by casting to the larger type
+                    let (left_casted, right_casted) = if left_int.get_type().get_bit_width() != right_int.get_type().get_bit_width() {
+                        if left_int.get_type().get_bit_width() < right_int.get_type().get_bit_width() {
+                            let left_casted = self.builder.build_int_s_extend(left_int, right_int.get_type(), "sext")?;
+                            (left_casted, right_int)
+                        } else {
+                            let right_casted = self.builder.build_int_s_extend(right_int, left_int.get_type(), "sext")?;
+                            (left_int, right_casted)
+                        }
+                    } else {
+                        (left_int, right_int)
+                    };
+                    
                     self.builder.build_int_compare(
-                        IntPredicate::SLT, left_val.into_int_value(), right_val.into_int_value(), "lt"
+                        IntPredicate::SLT, left_casted, right_casted, "lt"
                     )?.into()
                 } else {
                     self.builder.build_float_compare(
@@ -245,7 +261,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Gt { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -261,7 +277,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Le { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -277,7 +293,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Ge { target, left, right } => {
                 let left_val = self.compile_operand(left, lir)?;
@@ -293,11 +309,32 @@ impl<'ctx> LLVMBackend<'ctx> {
                     )?.into()
                 };
 
-                self.store_to_location(*target, result)?;
+                self.store_to_location(*target, result, lir)?;
             }
             InstructionKind::Move { target, source } => {
-                let value = self.compile_operand(source, lir)?;
-                self.store_to_location(*target, value)?;
+                match &source.ty {
+                    Type::Array { .. } => {
+                        // Create alias for arrays
+                        match &source.kind {
+                            OperandKind::Location(src_loc_idx) => {
+                                if let Some(src_alloca) = self.locations.get(src_loc_idx) {
+                                    self.locations.insert(*target, *src_alloca);
+                                } else {
+                                    return Err(anyhow::anyhow!("Source array location not found"));
+                                }
+                            }
+                            _ => {
+                                let value = self.compile_operand(source, lir)?;
+                                self.store_to_location(*target, value, lir)?;
+                            }
+                        }
+                    }
+                    _ => {
+                        // Default handling
+                        let value = self.compile_operand(source, lir)?;
+                        self.store_to_location(*target, value, lir)?;
+                    }
+                }
             }
             InstructionKind::AllocInit { target, value } => {
                 let val = self.compile_operand(value, lir)?;
@@ -313,7 +350,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                 if source_val.is_pointer_value() {
                     let ptr = source_val.into_pointer_value();
                     let loaded = self.builder.build_load(self.context.i32_type(), ptr, "load")?;
-                    self.store_to_location(*target, loaded)?;
+                    self.store_to_location(*target, loaded, lir)?;
                 }
             }
             InstructionKind::Store { target, value } => {
@@ -323,6 +360,12 @@ impl<'ctx> LLVMBackend<'ctx> {
                     let ptr = target_val.into_pointer_value();
                     self.builder.build_store(ptr, val)?;
                 }
+            }
+            InstructionKind::ArrayAlloc { target, element_type, size } => {
+                let arr_size = self.compile_operand(size, lir)?;
+                let element_ty = self.lir_type_to_llvm(element_type).unwrap();
+                let ptr = self.builder.build_array_alloca(element_ty, arr_size.into_int_value(), "array_alloc")?;
+                self.locations.insert(*target, ptr);
             }
             InstructionKind::Call { target, function, args } => {
                 let fn_value = self.functions[function];
@@ -337,9 +380,99 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 if let Some(target_loc) = target {
                     if let Some(return_value) = call_site.try_as_basic_value().left() {
-                        self.store_to_location(*target_loc, return_value)?;
+                        self.store_to_location(*target_loc, return_value, lir)?;
                     }
                 }
+            }
+            InstructionKind::ArrayIndex { target, array, index } => {
+                let index_val = self.compile_operand(index, lir)?;
+                let ptr_type = self.lir_type_to_llvm(&array.ty).unwrap();
+                let array_ptr = match &array.kind {
+                    OperandKind::Location(loc_idx) => {
+                        if let Some(alloca) = self.locations.get(loc_idx) {
+                            *alloca
+                        } else {
+                            return Err(anyhow::anyhow!("Array location not found for indexing"));
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!("ArrayIndex requires array operand to be a location"));
+                    }
+                };
+                
+                // Use two indices: 0 (to get the array pointer) and the actual index
+                let zero = self.context.i32_type().const_int(0, false);
+                let index_int = index_val.into_int_value();
+                let indices = [zero.into(), index_int.into()];
+                
+                let element_ptr = unsafe {
+                    self.builder.build_gep(
+                        ptr_type,
+                        array_ptr,
+                        &indices,
+                        "array_gep"
+                    )?
+                };
+                
+                // Load the value from the computed address
+                let element_type = match &array.ty {
+                    Type::Array { element_type, size: _ } => self.lir_type_to_llvm(element_type).unwrap(),
+                    _ => self.context.i32_type().into(), // fallback
+                };
+                
+                let loaded_val = self.builder.build_load(
+                    element_type,
+                    element_ptr,
+                    "array_load"
+                )?;
+                
+                self.store_to_location(*target, loaded_val, lir)?;
+            }
+            InstructionKind::ArrayStore { array, index, value } => {
+                let array_ptr = match &array.kind {
+                    OperandKind::Location(loc_idx) => {
+                        if !self.locations.contains_key(loc_idx) {
+                            let location = &lir.locations[*loc_idx];
+                            let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                            let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index))?;
+                            self.locations.insert(*loc_idx, alloca);
+                        }
+                        
+                        if let Some(alloca) = self.locations.get(loc_idx) {
+                            *alloca
+                        } else {
+                            return Err(anyhow::anyhow!("Array location not found after allocation"));
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!("ArrayStore requires array operand to be a location"));
+                    }
+                };
+                
+                let index_val = self.compile_operand(index, lir)?;
+                let value_val = self.compile_operand(value, lir)?;
+                let ptr_type = self.lir_type_to_llvm(&array.ty).unwrap();
+                
+                // Use two indices: 0 (to get the array pointer) and the actual index
+                let zero = self.context.i32_type().const_int(0, false);
+                let index_int = index_val.into_int_value();
+                let indices = [zero.into(), index_int.into()];
+                
+                let element_ptr = unsafe {
+                    self.builder.build_gep(
+                        ptr_type,
+                        array_ptr,
+                        &indices,
+                        "array_store_gep"
+                    )?
+                };
+                
+                // Store the value at the computed address
+                self.builder.build_store(element_ptr, value_val)?;
+            }
+            InstructionKind::ArrayLength { target, length } => {
+                let length_val = self.compile_operand(length, lir)?;
+                self.store_to_location(*target, length_val, lir)?;
             }
             InstructionKind::Phi { target, operands } => {
                 // In LLVM, phi nodes must be at the beginning of a basic block
@@ -354,7 +487,10 @@ impl<'ctx> LLVMBackend<'ctx> {
                     phi.add_incoming(&[(&value, bb)]);
                 }
                 
-                self.store_to_location(*target, phi.as_basic_value())?;
+                self.store_to_location(*target, phi.as_basic_value(), lir)?;
+            }
+            InstructionKind::Nop => {
+                // No operation - do nothing
             }
             _ => {
                 unimplemented!("Instruction {:?} not implemented", instruction.kind);
@@ -409,9 +545,20 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let false_bb = self.basic_blocks[false_target];
                 self.builder.build_conditional_branch(condition.into_int_value(), true_bb, false_bb)?;
             }
-            _ => {
-                unimplemented!("Terminator {:?} not implemented", terminator);
+            Terminator::Unreachable { error } => {
+                // TODO: emit a runtime error with the message
+                self.builder.build_unreachable()?;
             }
+            Terminator::Panic { message } => {
+                // For now, generate an unreachable instruction
+                // In a full implementation, you would:
+                // 1. Print the panic message
+                // 2. Call abort() or similar
+                // 3. Mark as unreachable
+                // TODO: Call a runtime panic function with the message
+                self.builder.build_unreachable()?;
+            }
+            _ => unimplemented!("Terminator {:?} not implemented", terminator),
         }
         
         Ok(())
@@ -456,21 +603,38 @@ impl<'ctx> LLVMBackend<'ctx> {
 
     fn compile_const_value(&self, const_val: &ConstValue) -> BasicValueEnum<'ctx> {
         match const_val {
+            ConstValue::Int8(val) => self.context.i8_type().const_int(*val as u64, true).into(),
+            ConstValue::Int16(val) => self.context.i16_type().const_int(*val as u64, true).into(),
             ConstValue::Int32(val) => self.context.i32_type().const_int(*val as u64, true).into(),
             ConstValue::Int64(val) => self.context.i64_type().const_int(*val as u64, true).into(),
+            ConstValue::UInt8(val) => self.context.i8_type().const_int(*val as u64, false).into(),
+            ConstValue::UInt16(val) => self.context.i16_type().const_int(*val as u64, false).into(),
+            ConstValue::UInt32(val) => self.context.i32_type().const_int(*val as u64, false).into(),
+            ConstValue::UInt64(val) => self.context.i64_type().const_int(*val, false).into(),
             ConstValue::Float32(val) => self.context.f32_type().const_float(*val as f64).into(),
             ConstValue::Float64(val) => self.context.f64_type().const_float(*val).into(),
             ConstValue::Bool(val) => self.context.bool_type().const_int(if *val { 1 } else { 0 }, false).into(),
-            _ => self.context.i32_type().const_int(0, false).into(), // Default fallback
+            ConstValue::String(_) => {
+                // TODO: Implement string constants
+                self.context.ptr_type(AddressSpace::default()).const_null().into()
+            }
+            ConstValue::Null => {
+                self.context.ptr_type(AddressSpace::default()).const_null().into()
+            }
         }
     }
 
-    fn store_to_location(&mut self, loc_idx: LocationIdx, value: BasicValueEnum<'ctx>) -> Result<()> {
+    fn store_to_location(&mut self, loc_idx: LocationIdx, value: BasicValueEnum<'ctx>, lir: &LIR) -> Result<()> {
         if let Some(alloca) = self.locations.get(&loc_idx) {
             self.builder.build_store(*alloca, value)?;
         } else {
             // Create alloca for this location if it doesn't exist
-            let llvm_type = value.get_type();
+            let location = &lir.locations[loc_idx];
+            let llvm_type = if let Some(ty) = self.lir_type_to_llvm(&location.ty) {
+                ty
+            } else {
+                value.get_type()
+            };
             let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index))?;
             self.builder.build_store(alloca, value)?;
             self.locations.insert(loc_idx, alloca);

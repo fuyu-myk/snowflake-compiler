@@ -303,6 +303,9 @@ impl X86_64Codegen {
                             // Phi nodes should be resolved before code generation
                             bug_report!("Phi nodes should be resolved before code generation: {:?}", operands);
                         }
+                        InstructionKind::ArrayStore { array, index, value } => {
+                            unimplemented!("ArrayStore instruction not yet implemented for x86_64 backend");
+                        }
                         InstructionKind::Nop => {
                             // nothing
                         }
@@ -462,6 +465,10 @@ impl X86_64Codegen {
                         }
                         Terminator::Unreachable { error } => {
                             panic!("Error: {}", error)
+                        }
+                        Terminator::Panic { message } => {
+                            // TODO: runtime panic here
+                            self.asm.ud2()?;
                         }
                     }
                     None => bug_report!("Basic block {:?} has no terminator", bb_idx),
@@ -2413,6 +2420,7 @@ impl X86_64Codegen {
             InstructionKind::Phi { target, .. } => Some(*target),
             InstructionKind::Call { target, .. } => *target,
             InstructionKind::Store { .. } |
+            InstructionKind::ArrayStore { .. } |
             InstructionKind::Nop => None,
         }
     }

@@ -11,7 +11,7 @@ use snowflake_common::{
 
 use crate::ir::{
     hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, 
-    mir::{basic_block::{BasicBlock, BasicBlockIdx}, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}
+    mir::{basic_block::{BasicBlock, BasicBlockIdx}, AssertMessage, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}
 };
 
 
@@ -507,17 +507,6 @@ impl FunctionBuilder {
 
                 if *bounds_check {
                     let combined_span = TextSpan::combine_refs(&[&object.span, &index.span]);
-                    let index_val_ref = bb_builder.add_instruction(
-                        basic_blocks,
-                        &mut self.function,
-                        Instruction::new(
-                            InstructionKind::IndexVal { 
-                                array_len: index_val.clone(),
-                            },
-                            Type::Usize,
-                            index.span.clone(),
-                        ),
-                    );
 
                     let bounds_check_ref = bb_builder.add_instruction(
                         basic_blocks,
@@ -525,8 +514,8 @@ impl FunctionBuilder {
                         Instruction::new(
                             InstructionKind::Binary { 
                                 operator: BinOp::Lt,
-                                left: Value::InstructionRef(index_val_ref),
-                                right: length_val,
+                                left: index_val.clone(),
+                                right: length_val.clone(),
                             },
                             Type::Bool,
                             combined_span,
@@ -542,7 +531,8 @@ impl FunctionBuilder {
                         basic_blocks,
                         TerminatorKind::Assert {
                             condition: Value::InstructionRef(bounds_check_ref),
-                            message: "Array index out of bounds".to_string(),
+                            check: true,
+                            message: Box::new(AssertMessage::ArrayIndexOutOfBounds { len: length_val, index: index_val.clone() }),
                             default: array_access_bb,
                         }
                     );

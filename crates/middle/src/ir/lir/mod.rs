@@ -178,6 +178,11 @@ pub enum InstructionKind {
         target: LocationIdx,
         length: Operand,
     },
+    ArrayStore {
+        array: Operand,
+        index: Operand,
+        value: Operand,
+    },
     Call {
         target: Option<LocationIdx>,
         function: FunctionIdx,
@@ -221,6 +226,10 @@ pub enum Terminator {
     /// Unreachable code
     Unreachable{
         error: String,
+    },
+    /// Runtime panic with message
+    Panic {
+        message: String,
     },
 }
 
