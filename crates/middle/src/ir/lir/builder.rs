@@ -13,6 +13,7 @@ pub struct LIRBuilder<'mir> {
     var_to_location: HashMap<VariableIndex, LocationIdx>,
     instruction_to_location: HashMap<InstructionIdx, LocationIdx>,
     param_to_location: HashMap<usize, LocationIdx>,
+    mir_to_lir_bb: HashMap<usize, BasicBlockIdx>,
     curr_fx_idx: Option<MirFunctionIdx>, // From MIR
 }
 
@@ -26,6 +27,7 @@ impl<'mir> LIRBuilder<'mir> {
             var_to_location: HashMap::new(),
             instruction_to_location: HashMap::new(),
             param_to_location: HashMap::new(),
+            mir_to_lir_bb: HashMap::new(),
             curr_fx_idx: None,
         }
     }
@@ -38,13 +40,16 @@ impl<'mir> LIRBuilder<'mir> {
             self.var_to_location.clear();
             self.instruction_to_location.clear();
             self.param_to_location.clear();
+            self.mir_to_lir_bb.clear();
             
             // Create parameter locations
             let mut param_locations = Vec::new();
-            for (param_idx, _param_var) in mir_fx.params.iter().enumerate() {
-                let param_type = mir_fx.locals.iter()
-                    .find_map(|(param_instruct_idx, _var_idx)| Some(mir_fx.instructions.get(*param_instruct_idx).ty.clone()))
-                    .map(|ty| ty.into())
+            for (param_idx, param_var) in mir_fx.params.iter().enumerate() {
+                let param_type = self.scope.get_variable_type(param_var)
+                    .map(|common_ty| {
+                        let mir_ty: mir::Type = common_ty.into();
+                        mir_ty.into()
+                    })
                     .unwrap_or(Type::Int32); // Default to Int32 if type not found
                 let location = self.create_location(param_type);
                 self.param_to_location.insert(param_idx, location);
@@ -60,7 +65,8 @@ impl<'mir> LIRBuilder<'mir> {
 
             for bb_idx in mir_fx.basic_blocks.iter().copied() {
                 let bb = self.mir.basic_blocks.get_or_panic(bb_idx);
-                let _lir_bb = self.set_basic_block();
+                let lir_bb = self.set_basic_block();
+                self.mir_to_lir_bb.insert(bb_idx.index, lir_bb);
 
                 for instruct_idx in bb.instructions.iter().copied() {
                     let mir_instruction = &mir_fx.instructions[instruct_idx];
@@ -226,22 +232,64 @@ impl<'mir> LIRBuilder<'mir> {
                             }
                         }
                         mir::InstructionKind::Phi(phi_node) => {
-                            // For now, convert phi to move instruction using first operand
-                            if let Some((_, first_instruct_idx)) = phi_node.operands.first() {
-                                let value = Value::InstructionRef(*first_instruct_idx);
-                                InstructionKind::Move {
-                                    target: self.get_ref_location(instruct_idx),
-                                    source: self.build_operand(&value),
+                            let mut lir_operands = Vec::new();
+                            for (mir_bb_idx, instruction_idx) in &phi_node.operands {
+                                if let Some(&lir_bb_idx) = self.mir_to_lir_bb.get(&mir_bb_idx.index) {
+                                    let current_fx = self.get_current_fx();
+                                    let instruction = current_fx.instructions.get(*instruction_idx);
+                                    let operand = match &instruction.kind {
+                                        mir::InstructionKind::Value(value) => {
+                                            match value {
+                                                mir::Value::Constant(constant) => {
+                                                    match constant {
+                                                        mir::Constant::Int(val) => Operand {
+                                                            ty: Type::Int32,
+                                                            kind: OperandKind::Const(ConstValue::Int32(*val)),
+                                                        },
+                                                        mir::Constant::Float(val) => Operand {
+                                                            ty: Type::Float32,
+                                                            kind: OperandKind::Const(ConstValue::Float32(*val)),
+                                                        },
+                                                        mir::Constant::Bool(val) => Operand {
+                                                            ty: Type::Bool,
+                                                            kind: OperandKind::Const(ConstValue::Bool(*val)),
+                                                        },
+                                                        mir::Constant::String(val) => Operand {
+                                                            ty: Type::String,
+                                                            kind: OperandKind::Const(ConstValue::String(val.clone())),
+                                                        },
+                                                        mir::Constant::Usize(val) => Operand {
+                                                            ty: Type::UInt64,
+                                                            kind: OperandKind::Const(ConstValue::UInt64(*val as u64)),
+                                                        },
+                                                        mir::Constant::Void => Operand {
+                                                            ty: Type::Void,
+                                                            kind: OperandKind::Const(ConstValue::Null),
+                                                        },
+                                                    }
+                                                }
+                                                _ => {
+                                                    // For non-constant values in Value instructions, use instruction reference
+                                                    let value_ref = mir::Value::InstructionRef(*instruction_idx);
+                                                    self.build_operand(&value_ref)
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            // For other instruction types, use instruction reference
+                                            let value = mir::Value::InstructionRef(*instruction_idx);
+                                            self.build_operand(&value)
+                                        }
+                                    };
+                                    lir_operands.push((lir_bb_idx, operand));
+                                } else {
+                                    // This shouldn't happen
+                                    panic!("MIR basic block index {} not found in mapping", mir_bb_idx.index);
                                 }
-                            } else {
-                                // Empty phi node - shouldn't happen
-                                InstructionKind::Move {
-                                    target: self.get_ref_location(instruct_idx),
-                                    source: Operand {
-                                        ty: Type::Int32,
-                                        kind: OperandKind::Const(ConstValue::Int32(0)),
-                                    },
-                                }
+                            }
+                            InstructionKind::Phi {
+                                target: self.get_ref_location(instruct_idx),
+                                operands: lir_operands,
                             }
                         }
                     };
