@@ -500,9 +500,10 @@ impl FunctionBuilder {
                     }
                 }
             }
-            HIRExprKind::Index { object, index, bounds_check } => {
+            HIRExprKind::Index { object, index, bounds_check, length } => {
                 let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
                 let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+                let length_val = self.build_expr(basic_blocks, bb_builder, global_scope, length);
 
                 if *bounds_check {
                     let combined_span = TextSpan::combine_refs(&[&object.span, &index.span]);
@@ -525,7 +526,7 @@ impl FunctionBuilder {
                             InstructionKind::Binary { 
                                 operator: BinOp::Lt,
                                 left: Value::InstructionRef(index_val_ref),
-                                right: object_val.clone(),
+                                right: length_val,
                             },
                             Type::Bool,
                             combined_span,

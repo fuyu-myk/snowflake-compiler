@@ -162,7 +162,7 @@ impl <W> HIRWriter<W> where W: Write {
                 }
                 write!(writer, "]")?;
             }
-            HIRExprKind::Index { object, index, bounds_check: _ } => {
+            HIRExprKind::Index { object, index, bounds_check: _, length: _ } => {
                 Self::write_expression(writer, object, global_scope, indent)?;
                 write!(writer, "[")?;
                 Self::write_expression(writer, index, global_scope, indent)?;

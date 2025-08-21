@@ -319,11 +319,23 @@ impl HIRBuilder {
             ExpressionKind::IndexExpression(index_expr) => {
                 let object = self.build_expression(index_expr.object, ast, global_scope, ctx, true);
                 let index = self.build_expression(index_expr.index, ast, global_scope, ctx, true);
+                let len = match &object.kind {
+                    HIRExprKind::Var(var_idx) => {
+                        let var = global_scope.variables.get(*var_idx);
+                        if let Type::Array(_, len) = &var.ty {
+                            *len
+                        } else {
+                            bug_report!("Indexing non-array type")
+                        }
+                    }
+                    _ => bug_report!("Indexing non-array type"),
+                };
 
                 HIRExprKind::Index {
                     object: Box::new(object),
                     index: Box::new(index),
                     bounds_check: true, // Done as a default
+                    length: Box::new(self.create_expression(HIRExprKind::Usize(len), Type::Usize, expr.span.clone())),
                 }
             },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),

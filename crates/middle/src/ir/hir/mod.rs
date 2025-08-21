@@ -146,6 +146,7 @@ pub enum HIRExprKind {
         object: Box<HIRExpression>,
         index: Box<HIRExpression>,
         bounds_check: bool,
+        length: Box<HIRExpression>,
     },
     Binary {
         operator: BinaryOpKind,
