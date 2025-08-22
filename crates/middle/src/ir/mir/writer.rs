@@ -115,7 +115,7 @@ impl<W> MIRWriter<W> where W: Write {
             TerminatorKind::Assert { condition, check: _, message, default } => {
                 write!(writer, "assert(")?;
                 Self::write_value(writer, condition)?;
-                write!(writer, ", \"{}\"", message.message())?;
+                write!(writer, ", \"{}\"", message.debug_message())?;
                 write!(writer, ") -> [success: {}]", Self::format_bb_idx(*default))?;
             }
             TerminatorKind::Unresolved => { write!(writer, "unresolved")?; }

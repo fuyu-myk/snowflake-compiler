@@ -273,3 +273,8 @@ a += a * 2 + 3
     a
     block comment */
     ```
+
+- [x] **Runtime panics** [completed 22.08.2025]
+* Will abort the program and generate a diagnostic in the following scenarios:
+    * Illegal index access for arrays in runtime
+* Currently WIP, will improve handling and include more scenarios in future

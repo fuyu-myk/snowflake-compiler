@@ -8,9 +8,9 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use snowflake_common::{bug_report, idx, IndexVec};
+use snowflake_common::{bug_report, idx, Idx, IndexVec};
 
-use snowflake_front::{ast, compilation_unit::{self, VariableIndex}};
+use snowflake_front::{ast, compilation_unit::{self, GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 
 use basic_block::{BasicBlock, BasicBlockIdx};
@@ -379,7 +379,7 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum UnOp {
     Neg,
     Not,
@@ -556,11 +556,173 @@ pub enum AssertKind {
 pub type AssertMessage = AssertKind;
 
 impl AssertKind {
-    pub fn message(&self) -> String {
+    pub fn message(&self, function: &Function, global_scope: &GlobalScope) -> String {
+        match self {
+            AssertKind::ArrayIndexOutOfBounds { len, index } => {
+                let len_value = Self::resolve_value_for_display(len, function, global_scope);
+                let index_value = Self::resolve_value_for_display(index, function, global_scope);
+                format!("Array index out of bounds: index {} is greater than or equal to length {}", index_value, len_value)
+            }
+        }
+    }
+
+    /// Simple debug message for when full resolution is not available
+    pub fn debug_message(&self) -> String {
         match self {
             AssertKind::ArrayIndexOutOfBounds { len, index } => {
                 format!("Array index out of bounds: index {:?} is greater than or equal to length {:?}", index, len)
             }
+        }
+    }
+
+    /// Resolves `Value` to print a diagnostic for a panic 
+    fn resolve_value_for_display(value: &Value, function: &Function, global_scope: &GlobalScope) -> String {
+        if let Some(resolved_value) = Self::recursive_value_resolution(value, function, &mut std::collections::HashSet::new()) {
+            return Self::format_resolved_value(&resolved_value, function, global_scope);
+        }
+        
+        // Fallback (resolution failed)
+        match value {
+            Value::Constant(constant) => Self::format_constant(constant),
+            Value::ParamRef(param_idx) => {
+                if let Some(param_var_idx) = function.params.get(*param_idx) {
+                    let var = global_scope.variables.get(*param_var_idx);
+                    format!("parameter '{}'", var.name)
+                } else {
+                    format!("parameter #{}", param_idx)
+                }
+            }
+            Value::InstructionRef(inst_idx) => {
+                format!("instruction result #{}", inst_idx.as_index())
+            }
+        }
+    }
+
+    /// Resolves `Value` by traversing instruction chains to find the constant value
+    fn recursive_value_resolution(
+        value: &Value, 
+        function: &Function, 
+        visited: &mut std::collections::HashSet<InstructionIdx>
+    ) -> Option<Value> {
+        match value {
+            Value::Constant(_) => Some(value.clone()),
+            Value::ParamRef(_) => None, // Parameters can't be resolved to constants at compile time
+            Value::InstructionRef(inst_idx) => {
+                if visited.contains(inst_idx) {
+                    return None;
+                }
+                visited.insert(*inst_idx);
+                
+                let instruction = &function.instructions[*inst_idx];
+                match &instruction.kind {
+                    InstructionKind::Value(inner_value) => {
+                        Self::recursive_value_resolution(inner_value, function, visited)
+                    }
+                    InstructionKind::Binary { operator, left, right } => {
+                        if let (Some(left_val), Some(right_val)) = (
+                            Self::recursive_value_resolution(left, function, visited),
+                            Self::recursive_value_resolution(right, function, visited)
+                        ) {
+                            Self::evaluate_binary_operation(*operator, &left_val, &right_val)
+                        } else {
+                            None
+                        }
+                    }
+                    InstructionKind::Unary { operator, operand } => {
+                        if let Some(operand_val) = Self::recursive_value_resolution(operand, function, visited) {
+                            Self::evaluate_unary_operation(*operator, &operand_val)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Evaluates a binary operation on two constant values
+    fn evaluate_binary_operation(operator: BinOp, left: &Value, right: &Value) -> Option<Value> {
+        match (left, right) {
+            (Value::Constant(Constant::Int(l)), Value::Constant(Constant::Int(r))) => {
+                let result = match operator {
+                    BinOp::Add => l.wrapping_add(*r),
+                    BinOp::Sub => l.wrapping_sub(*r),
+                    BinOp::Mul => l.wrapping_mul(*r),
+                    BinOp::Div if *r != 0 => l / r,
+                    BinOp::Mod if *r != 0 => l % r,
+                    BinOp::BitAnd => l & r,
+                    BinOp::BitOr => l | r,
+                    BinOp::BitXor => l ^ r,
+                    BinOp::BitShl => l << r,
+                    BinOp::BitShr => l >> r,
+                    _ => return None,
+                };
+                Some(Value::Constant(Constant::Int(result)))
+            }
+            (Value::Constant(Constant::Usize(l)), Value::Constant(Constant::Usize(r))) => {
+                let result = match operator {
+                    BinOp::Add => l.wrapping_add(*r),
+                    BinOp::Sub => l.wrapping_sub(*r),
+                    BinOp::Mul => l.wrapping_mul(*r),
+                    BinOp::Div if *r != 0 => l / r,
+                    BinOp::Mod if *r != 0 => l % r,
+                    _ => return None,
+                };
+                Some(Value::Constant(Constant::Usize(result)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluates a unary operation on a constant value
+    fn evaluate_unary_operation(operator: UnOp, operand: &Value) -> Option<Value> {
+        match operand {
+            Value::Constant(Constant::Int(val)) => {
+                let result = match operator {
+                    UnOp::Neg => val.wrapping_neg(),
+                    UnOp::Not => !val,
+                };
+                Some(Value::Constant(Constant::Int(result)))
+            }
+            Value::Constant(Constant::Bool(val)) => {
+                match operator {
+                    UnOp::Not => Some(Value::Constant(Constant::Bool(!val))),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Formats a resolved constant value
+    fn format_resolved_value(value: &Value, function: &Function, global_scope: &GlobalScope) -> String {
+        match value {
+            Value::Constant(constant) => Self::format_constant(constant),
+            // Should not happen
+            Value::ParamRef(param_idx) => {
+                if let Some(param_var_idx) = function.params.get(*param_idx) {
+                    let var = global_scope.variables.get(*param_var_idx);
+                    format!("parameter '{}'", var.name)
+                } else {
+                    format!("parameter #{}", param_idx)
+                }
+            }
+            Value::InstructionRef(inst_idx) => {
+                format!("instruction result #{}", inst_idx.as_index())
+            }
+        }
+    }
+
+    /// Formats a constant value for display
+    fn format_constant(constant: &Constant) -> String {
+        match constant {
+            Constant::Int(val) => val.to_string(),
+            Constant::Float(val) => val.to_string(),
+            Constant::Usize(val) => val.to_string(),
+            Constant::Bool(val) => val.to_string(),
+            Constant::String(val) => format!("\"{}\"", val),
+            Constant::Void => "void".to_string(),
         }
     }
 }

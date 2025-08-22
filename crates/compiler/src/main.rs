@@ -37,7 +37,7 @@ fn main() -> Result<()> {
                 anyhow!("Could not compile `{}` due to {} previous errors", args.file_path, error_count)
             }
         })?;
-    compilation_unit.run_compiler();
+    //compilation_unit.run_compiler(); // For eval
 
     // GCC codegen
     //let program = codegen::c::CProgram::from_compilation_unit(&compilation_unit);

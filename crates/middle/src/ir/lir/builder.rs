@@ -15,6 +15,7 @@ pub struct LIRBuilder<'mir> {
     param_to_location: HashMap<usize, LocationIdx>,
     mir_to_lir_bb: HashMap<usize, BasicBlockIdx>,
     curr_fx_idx: Option<MirFunctionIdx>, // From MIR
+    panic_blocks: Vec<BasicBlockIdx>,
 }
 
 impl<'mir> LIRBuilder<'mir> {
@@ -29,6 +30,7 @@ impl<'mir> LIRBuilder<'mir> {
             param_to_location: HashMap::new(),
             mir_to_lir_bb: HashMap::new(),
             curr_fx_idx: None,
+            panic_blocks: Vec::new(),
         }
     }
 
@@ -41,6 +43,7 @@ impl<'mir> LIRBuilder<'mir> {
             self.instruction_to_location.clear();
             self.param_to_location.clear();
             self.mir_to_lir_bb.clear();
+            self.panic_blocks.clear();
             
             // Create parameter locations
             let mut param_locations = Vec::new();
@@ -396,11 +399,10 @@ impl<'mir> LIRBuilder<'mir> {
                         });
                         
                         let panic_bb = self.lir.basic_blocks.push(BasicBlock::default());
-                        let fx = self.lir.functions.get_mut(fx_idx);
-                        fx.basic_blocks.push(panic_bb);
+                        self.panic_blocks.push(panic_bb);
                         
                         self.lir.basic_blocks[panic_bb].terminator = Some(Terminator::Panic {
-                            message: message.message(),
+                            message: message.message(self.get_current_fx(), self.scope),
                         });
                         
                         let default_lir_bb = self.mir_to_lir_bb.get(&default.as_index())
@@ -425,6 +427,9 @@ impl<'mir> LIRBuilder<'mir> {
                 let fx = self.lir.functions.get_mut(fx_idx);
                 fx.basic_blocks.push(self.current_bb.expect("No current basic block set"));
             }
+            
+            let fx = self.lir.functions.get_mut(fx_idx);
+            fx.basic_blocks.extend(self.panic_blocks.iter().copied());
         }
         
         self.lir
