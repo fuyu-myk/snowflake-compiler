@@ -14,6 +14,9 @@ use snowflake_middle::ir::lir::{
     Terminator, Type, FunctionIdx, BasicBlockIdx, LocationIdx
 };
 
+mod runtime;
+use runtime::LLVMRuntime;
+
 
 pub struct LLVMBackend<'ctx> {
     context: &'ctx Context,
@@ -546,17 +549,10 @@ impl<'ctx> LLVMBackend<'ctx> {
                 self.builder.build_conditional_branch(condition.into_int_value(), true_bb, false_bb)?;
             }
             Terminator::Unreachable { error } => {
-                // TODO: emit a runtime error with the message
-                self.builder.build_unreachable()?;
+                LLVMRuntime::generate_unreachable_error(self.context, &self.module, &self.builder, error)?;
             }
             Terminator::Panic { message } => {
-                // For now, generate an unreachable instruction
-                // In a full implementation, you would:
-                // 1. Print the panic message
-                // 2. Call abort() or similar
-                // 3. Mark as unreachable
-                // TODO: Call a runtime panic function with the message
-                self.builder.build_unreachable()?;
+                LLVMRuntime::generate_panic_with_message(self.context, &self.module, &self.builder, message)?;
             }
             _ => unimplemented!("Terminator {:?} not implemented", terminator),
         }
