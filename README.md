@@ -1,5 +1,9 @@
 # Snowflake-Compiler
-This project documents my journey in learning Rust and subsequently coding a compiler. I referenced Julian Hartl's video series on YouTube for the creation of this project.
+This project documents my journey in learning Rust and subsequently coding a compiler. 
+
+Compilers have always been a black box to me, ever since I learnt C some time back. Intrigued by my friend's infectious enthusiasm on the subject, I went to do my own reading and was fascinated by how compilers work. So fascinated that I challenged myself to (attempt to) code one from scratch, doing so with an equally interesting programming language. Though there are no immediate plans on creating my own programming language, I chose to use my own syntax (for certain keywords at least) as sort of a personal touch.
+
+I referenced Julian Hartl's video series on YouTube for the creation of this project.
 
 ## Compiler architecture
 Thus far, the current compiler architecture is highlighted below:
@@ -9,7 +13,7 @@ Thus far, the current compiler architecture is highlighted below:
 ### Backends explored
 * C-transpiler
 * [`iced_x86`](https://github.com/icedland/iced)
-* LLVM (WIP)
+* LLVM
     * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my umfamiliarity with LLVM
 
 ## Current features
@@ -89,7 +93,6 @@ Thus far, the current compiler architecture is highlighted below:
     -[x] *Low-level IR (LIR)* [completed 09.08.2025]
     * Further lowering of MIR to facilitate iced_x86 codegen
         * Instructions become more 'assembly-like'
-    * TODO: Further improvements to array init
 
 -[x] **X86_64 Assembly Code Generation** [completed 15.08.2025]
 * Utilising the [`iced_x86`](https://github.com/icedland/iced) library to generate assembly instructions
@@ -97,6 +100,11 @@ Thus far, the current compiler architecture is highlighted below:
 * Incredibly unoptimised
 * *Huge WIP as I am unfamiliar with assembly*
 * *Also, I am not going to do codegen for all instruction types; pivoting to LLVM instead*
+
+-[x] **LLVM IR Generation** [WIP]
+* The inkwell wrapper is used to lower complexity
+* The generated IR is then written to a temp file, eg: `temp.ll`
+* An executable is then generated through `Clang`
 
 ### Types supported
 * Integers
@@ -106,14 +114,21 @@ Thus far, the current compiler architecture is highlighted below:
 
 ### Data Structures supported
 * Arrays [completed 05.08.2025]
-    * TODO: Improve handling in MIR; support repeat definition; multidimensional arrays
     * Defined and indexed as follows:
 ```
+// One dimensional array
 let arr: [int, 3] = [1, 2, 3];
-let b: int = a[0];
+let a: int = a[0]; // 1
+
+// Multi-dimensional array
+let matrix: [[int; 3]; 3] = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+let b: int = matrix[0][2] + matrix[2][0]; // 10
 ```
 * Type is defined as `[T, len]`
+> [!NOTE]
+> `T` can be of type `[T, len]` in multi-dimensional arrays
 * Indexes are of type `usize`
+* TODO: Slice indexes
 
 ### Operators
 - [x] **Basic arithmetic support** [completed 05.06.2025]
