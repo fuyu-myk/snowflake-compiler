@@ -176,7 +176,7 @@ impl Instruction {
             InstructionKind::Value(_) => true,
             InstructionKind::ArrayAlloc { .. } => false,
             InstructionKind::ArrayInit { .. } => false,
-            InstructionKind::ArrayIndex { .. } => true,
+            InstructionKind::ArrayIndex { .. } => false,
             InstructionKind::IndexVal { .. } => true,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
