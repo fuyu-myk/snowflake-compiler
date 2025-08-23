@@ -183,7 +183,9 @@ impl ASTVisitor for ASTVerifier {
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
         self.actual.push(TestASTNode::Index);
         self.visit_expression(ast, index_expression.object);
-        self.visit_expression(ast, index_expression.index);
+        for array_index in &index_expression.indexes {
+            self.visit_expression(ast, array_index.index);
+        }
     }
 }
 

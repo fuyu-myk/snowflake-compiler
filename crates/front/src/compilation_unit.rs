@@ -1,6 +1,6 @@
 use snowflake_common::{idx, IndexVec};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, TypeKind, StringExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -361,32 +361,52 @@ impl Resolver {
 }
 
 pub fn resolve_type_from_annotation(diagnostics: &DiagnosticsReportCell, type_annotation: &StaticTypeAnnotation) -> Type {
-    // Check if it's an array type annotation like [int; 3]
-    if let (Some(_open_bracket), Some(length_token), Some(_close_bracket)) = 
-        (&type_annotation.open_square_bracket, &type_annotation.length, &type_annotation.close_square_bracket) {
-        
-        // Parse the element type
-        let element_type = Type::from_str(&type_annotation.type_name.span.literal);
-        let element_type = match element_type {
-            Some(ty) => ty,
-            None => {
-                diagnostics.borrow_mut().report_undeclared_type(&type_annotation.type_name);
-                Type::Error
+    match &type_annotation.type_kind {
+        TypeKind::Array { element_type, length, .. } => {
+            let resolved_element_type = resolve_type_kind(diagnostics, element_type);
+            let length_str = &length.span.literal;
+            match length_str.parse::<usize>() {
+                Ok(len) => Type::Array(Box::new(resolved_element_type), len),
+                Err(_) => {
+                    // TODO: Proper reporting of wrong array len
+                    diagnostics.borrow_mut().report_undeclared_type(length);
+                    Type::Error
+                }
             }
-        };
-        
-        // Parse the array length
-        let length_str = &length_token.span.literal;
-        match length_str.parse::<usize>() {
-            Ok(length) => Type::Array(Box::new(element_type), length),
-            Err(_) => {
-                diagnostics.borrow_mut().report_undeclared_type(length_token);
-                Type::Error
-            }
+        },
+        TypeKind::Slice { element_type, .. } => {
+            let _resolved_element_type = resolve_type_kind(diagnostics, element_type);
+            // TODO: Implement slices
+            Type::Error
+        },
+        TypeKind::Simple { type_name } => {
+            resolve_type_from_string(diagnostics, type_name)
         }
-    } else {
-        // Regular type like int, bool, etc.
-        resolve_type_from_string(diagnostics, &type_annotation.type_name)
+    }
+}
+
+pub fn resolve_type_kind(diagnostics: &DiagnosticsReportCell, type_kind: &TypeKind) -> Type {
+    match type_kind {
+        TypeKind::Array { element_type, length, .. } => {
+            let resolved_element_type = resolve_type_kind(diagnostics, element_type);
+            let length_str = &length.span.literal;
+            match length_str.parse::<usize>() {
+                Ok(len) => Type::Array(Box::new(resolved_element_type), len),
+                Err(_) => {
+                    // TODO: Proper reporting of wrong array len
+                    diagnostics.borrow_mut().report_undeclared_type(length);
+                    Type::Error
+                }
+            }
+        },
+        TypeKind::Slice { element_type, .. } => {
+            let _resolved_element_type = resolve_type_kind(diagnostics, element_type);
+            // TODO: Implement slices
+            Type::Error
+        },
+        TypeKind::Simple { type_name } => {
+            resolve_type_from_string(diagnostics, type_name)
+        }
     }
 }
 
@@ -805,44 +825,52 @@ impl ASTVisitor for Resolver {
 
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, expr: &Expression) {
         self.visit_expression(ast, index_expression.object);
-        self.visit_expression(ast, index_expression.index);
         
         let object = ast.query_expression(index_expression.object);
-        let index = ast.query_expression(index_expression.index);
-
-        let object_ty = object.ty.clone();
+        let mut current_type = object.ty.clone();
         let object_span = object.span(ast);
-        let index_ty = index.ty.clone();
-        let index_span = index.span(ast);
-        let index_literal = index_span.literal.clone();
+        
+        for array_index in &index_expression.indexes {
+            self.visit_expression(ast, array_index.index);
+            
+            let index = ast.query_expression(array_index.index);
+            let index_ty = index.ty.clone();
+            let index_span = index.span(ast);
+            let index_literal = index_span.literal.clone();
 
-        // Check for negative array index patterns
-        let is_neg_idx = self.check_for_negative_array_index(ast, index, &index_span);
+            // Check for negative array index patterns
+            let is_neg_idx = self.check_for_negative_array_index(ast, index, &index_span);
 
-        self.expect_index_type(Type::Usize, &index_ty, &index_span, is_neg_idx);
+            self.expect_index_type(Type::Usize, &index_ty, &index_span, is_neg_idx);
 
-        match &object_ty {
-            Type::Array(element_type, object_size) => {
-                let element_type_cloned = *element_type.clone();
-                ast.set_type(expr.id, element_type_cloned);
+            match &current_type {
+                Type::Array(element_type, array_size) => {
+                    let element_type_cloned = *element_type.clone();
+                    let array_size_cloned = *array_size;
 
-                // Compile-time bounds checking for constant indices
-                if let Ok(idx) = index_literal.parse::<usize>() {
-                    if idx >= *object_size {
-                        self.diagnostics.borrow_mut().report_index_out_of_bounds(
-                            &index_span,
-                            object_size.to_string(),
-                            &object_span,
-                        );
+                    // Compile-time bounds checking for constant indices
+                    if let Ok(idx) = index_literal.parse::<usize>() {
+                        if idx >= array_size_cloned {
+                            self.diagnostics.borrow_mut().report_index_out_of_bounds(
+                                &index_span,
+                                array_size_cloned.to_string(),
+                                &object_span,
+                            );
+                        }
                     }
+                    
+                    current_type = element_type_cloned;
+                }
+                _ => {
+                    // Error: trying to index a non-array type
+                    self.diagnostics.borrow_mut().report_cannot_index_type(&current_type, &object_span);
+                    current_type = Type::Error;
+                    break;
                 }
             }
-            _ => {
-                // Error: trying to index a non-array type
-                self.diagnostics.borrow_mut().report_cannot_index_type(&object_ty, &object_span);
-                ast.set_type(expr.id, Type::Error);
-            }
         }
+        
+        ast.set_type(expr.id, current_type);
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

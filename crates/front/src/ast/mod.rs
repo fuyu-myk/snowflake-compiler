@@ -114,17 +114,16 @@ impl Ast {
     pub fn let_statement(
         &mut self, ast: &Ast, identifier: Token, initialiser: ExpressionId, type_annotation: Option<StaticTypeAnnotation>
     ) -> &Statement {
-        let mut span_refs = Vec::new();
+        let mut spans = Vec::new();
         
-        span_refs.push(&identifier.span);
-        
-        let initializer_span = self.query_expression(initialiser).span(ast);
-        span_refs.push(&initializer_span);
+        spans.push(identifier.span.clone());
+        spans.push(self.query_expression(initialiser).span(ast));
         
         if let Some(ref annotation) = type_annotation {
-            span_refs.extend(annotation.collect_spans());
+            spans.extend(annotation.collect_spans());
         }
         
+        let span_refs: Vec<&TextSpan> = spans.iter().collect();
         let span = TextSpan::combine_refs(&span_refs);
 
         self.statement_from_kind(
@@ -357,8 +356,14 @@ impl Ast {
         let span_refs = vec![&object_span, &open_square_bracket.span, &index_span, &close_square_bracket.span];
         let span = TextSpan::combine_refs(&span_refs);
         
+        let array_index = ArrayIndex {
+            open_square_bracket,
+            index,
+            close_square_bracket,
+        };
+        
         self.expression_from_kind(
-            ExpressionKind::IndexExpression(IndexExpression { object, open_square_bracket, index, close_square_bracket }),
+            ExpressionKind::IndexExpression(IndexExpression { object, indexes: vec![array_index] }),
             span
         )
     }
@@ -389,7 +394,7 @@ impl Ast {
         let mut param_span: Vec<TextSpan> = Vec::new();
         for param in &parameters {
             param_span.push(param.identifier.span.clone());
-            param_span.extend(param.type_annotation.collect_spans().into_iter().cloned());
+            param_span.extend(param.type_annotation.collect_spans());
         }
         
         let span = TextSpan::combine_refs(&[
@@ -502,40 +507,102 @@ pub struct ReturnStatement {
 #[derive(Debug, Clone)]
 pub struct StaticTypeAnnotation {
     pub colon: Token,
-    pub open_square_bracket: Option<Token>,
-    pub type_name: Token,
-    pub length: Option<Token>,
-    pub close_square_bracket: Option<Token>,
+    pub type_kind: TypeKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeKind {
+    /// Simple types like `int`, `float`, etc.
+    Simple {
+        type_name: Token,
+    },
+    /// Array types like `[int; 5]` or `[[int; 3]; 2]`
+    Array {
+        open_bracket: Token,
+        element_type: Box<TypeKind>,
+        semicolon: Token,
+        length: Token,
+        close_bracket: Token,
+    },
+    /// Slice types
+    // TODO
+    Slice {
+        open_bracket: Token,
+        element_type: Box<TypeKind>,
+        close_bracket: Token,
+    },
 }
 
 impl StaticTypeAnnotation {
-    pub fn new(
+    pub fn new_simple(colon: Token, type_name: Token) -> Self {
+        Self { 
+            colon, 
+            type_kind: TypeKind::Simple { type_name }
+        }
+    }
+
+    pub fn new_array(
         colon: Token,
-        open_square_bracket: Option<Token>,
-        type_name: Token,
-        length: Option<Token>,
-        close_square_bracket: Option<Token>
+        open_bracket: Token,
+        element_type: TypeKind,
+        semicolon: Token,
+        length: Token,
+        close_bracket: Token
     ) -> Self {
-        Self { colon, open_square_bracket, type_name, length, close_square_bracket }
+        Self {
+            colon,
+            type_kind: TypeKind::Array {
+                open_bracket,
+                element_type: Box::new(element_type),
+                semicolon,
+                length,
+                close_bracket,
+            }
+        }
+    }
+
+    pub fn new_slice(
+        colon: Token,
+        open_bracket: Token,
+        element_type: TypeKind,
+        close_bracket: Token
+    ) -> Self {
+        Self {
+            colon,
+            type_kind: TypeKind::Slice {
+                open_bracket,
+                element_type: Box::new(element_type),
+                close_bracket,
+            }
+        }
     }
 
     /// Collect all text spans from this type annotation
-    pub fn collect_spans(&self) -> Vec<&TextSpan> {
-        let mut spans = vec![&self.colon.span, &self.type_name.span];
-        
-        if let Some(ref bracket) = self.open_square_bracket {
-            spans.insert(1, &bracket.span); // Insert after colon, before type_name
-        }
-        
-        if let Some(ref length) = self.length {
-            spans.push(&length.span);
-        }
-        
-        if let Some(ref bracket) = self.close_square_bracket {
-            spans.push(&bracket.span);
-        }
-        
+    pub fn collect_spans(&self) -> Vec<TextSpan> {
+        let mut spans = vec![self.colon.span.clone()];
+        self.collect_type_kind_spans(&self.type_kind, &mut spans);
         spans
+    }
+
+    /// Collect spans from `TypeKind`
+    fn collect_type_kind_spans(&self, type_kind: &TypeKind, spans: &mut Vec<TextSpan>) {
+        match type_kind {
+            TypeKind::Simple { type_name } => {
+                spans.push(type_name.span.clone());
+            }
+            TypeKind::Array { open_bracket, element_type, semicolon, length, close_bracket } => {
+                spans.push(open_bracket.span.clone());
+                self.collect_type_kind_spans(element_type, spans);
+                spans.push(semicolon.span.clone());
+                spans.push(length.span.clone());
+                spans.push(close_bracket.span.clone());
+            }
+            TypeKind::Slice { open_bracket, element_type, close_bracket } => {
+                spans.push(open_bracket.span.clone());
+                self.collect_type_kind_spans(element_type, spans);
+                spans.push(close_bracket.span.clone());
+            }
+        }
     }
 }
 
@@ -601,7 +668,7 @@ impl Statement {
                 let mut spans = vec![let_statement.identifier.span.clone()];
                 if let Some(type_annotation) = &let_statement.type_annotation {
                     spans.push(type_annotation.colon.span.clone());
-                    spans.push(type_annotation.type_name.span.clone());
+                    spans.extend(type_annotation.collect_spans());
                 }
 
                 TextSpan::combine(spans)
@@ -661,6 +728,11 @@ impl ExpressionKind {
 #[derive(Debug, Clone)]
 pub struct IndexExpression {
     pub object: ExpressionId,
+    pub indexes: Vec<ArrayIndex>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArrayIndex {
     pub open_square_bracket: Token,
     pub index: ExpressionId,
     pub close_square_bracket: Token,
@@ -1072,11 +1144,15 @@ impl Expression {
             },
             ExpressionKind::IndexExpression(index_expression) => {
                 let object_span = ast.query_expression(index_expression.object).span(ast);
-                let open_square_bracket = index_expression.open_square_bracket.span.clone();
-                let index_span = ast.query_expression(index_expression.index).span(ast);
-                let close_square_bracket = index_expression.close_square_bracket.span.clone();
+                let mut spans = vec![object_span];
+                
+                for array_index in &index_expression.indexes {
+                    spans.push(array_index.open_square_bracket.span.clone());
+                    spans.push(ast.query_expression(array_index.index).span(ast));
+                    spans.push(array_index.close_square_bracket.span.clone());
+                }
 
-                TextSpan::combine(vec![object_span, open_square_bracket, index_span, close_square_bracket])
+                TextSpan::combine(spans)
             },
             ExpressionKind::Error(span) => span.clone(),
         }

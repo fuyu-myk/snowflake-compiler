@@ -1,4 +1,4 @@
-use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, UnaryOp, UnaryOpKind};
+use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind};
 use snowflake_common::token::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, GlobalScope};
 use snowflake_common::diagnostics::DiagnosticsReportCell;
@@ -119,7 +119,16 @@ impl <'a> Parser<'a> {
 
         // params as idx
         let params_idx = parameters.iter().map(|parameter| {
-            let ty = resolve_type_from_string(&self.diagnostics_report, &parameter.type_annotation.type_name);
+            let type_token = match &parameter.type_annotation.type_kind {
+                TypeKind::Simple { type_name } => type_name,
+                TypeKind::Array { element_type, .. } => self.type_kind_to_token(element_type),
+                TypeKind::Slice { .. } => {
+                    // For slices, we need to handle this differently  
+                    // For now, create a dummy token - this will need proper implementation
+                    &parameter.type_annotation.colon // placeholder
+                }
+            };
+            let ty = resolve_type_from_string(&self.diagnostics_report, type_token);
             self.global_scope.declare_variable(&parameter.identifier.span.literal, ty, false, false)
         }).collect();
 
@@ -149,6 +158,17 @@ impl <'a> Parser<'a> {
         };
 
         self.ast.func_item(fx_keyword, identifier, parameters, body, return_type, fx_idx)
+    }
+
+    fn type_kind_to_token<'b>(&self, element_type: &'b TypeKind) -> &'b Token {
+        match element_type {
+            TypeKind::Simple { type_name } => type_name,
+            TypeKind::Array { element_type, .. } => self.type_kind_to_token(element_type),
+            TypeKind::Slice { .. } => {
+                // TODO: once implemented
+                todo!()
+            }
+        }
     }
 
     fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
@@ -225,34 +245,72 @@ impl <'a> Parser<'a> {
 
     fn parse_type_annotation(&mut self) -> StaticTypeAnnotation {
         let colon = self.consume_and_check(TokenKind::Colon).clone();
-        let open_square_bracket = self.consume_if(TokenKind::OpenBracket).cloned();
-        
-        if open_square_bracket.is_some() {
-            // todo: think of a better way to handle array types
-            let type_name = self.consume_and_check(TokenKind::Identifier).clone();
-            let _semicolon = self.consume_and_check(TokenKind::SemiColon);
-            let length = self.consume().clone();
-            let close_square_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
 
-            return StaticTypeAnnotation::new(
-                colon,
-                Some(open_square_bracket.unwrap()),
-                type_name,
-                Some(length),
-                Some(close_square_bracket)
-            );
+        if self.current().kind == TokenKind::OpenBracket {
+            return self.parse_array_or_slice_ty(colon);
         } else {
             let type_name = self.consume_and_check(TokenKind::Identifier).clone();
-            let length = None;
-            let close_square_bracket = None;
+            return StaticTypeAnnotation::new_simple(colon, type_name);
+        }
+    }
 
-            return StaticTypeAnnotation::new(
+    fn parse_array_or_slice_ty(&mut self, colon: Token) -> StaticTypeAnnotation {
+        let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
+        let element_type = self.parse_type_kind();
+        
+        if self.current().kind == TokenKind::SemiColon {
+            // Array type
+            let semicolon = self.consume_and_check(TokenKind::SemiColon).clone();
+            let length = self.consume().clone(); // Length token (could be number or identifier)
+            let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+            
+            return StaticTypeAnnotation::new_array(
                 colon,
-                None,
-                type_name,
+                open_bracket,
+                element_type,
+                semicolon,
                 length,
-                close_square_bracket
+                close_bracket
             );
+        } else {
+            // Slice type
+            let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+            return StaticTypeAnnotation::new_slice(colon, open_bracket, element_type, close_bracket);
+        }
+    }
+
+    fn parse_type_kind(&mut self) -> TypeKind {
+        if self.current().kind == TokenKind::OpenBracket {
+            // Nested array/slice type
+            let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
+            let element_type = self.parse_type_kind();
+            
+            if self.current().kind == TokenKind::SemiColon {
+                // Array type
+                let semicolon = self.consume_and_check(TokenKind::SemiColon).clone();
+                let length = self.consume().clone(); // Length token
+                let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+                
+                return TypeKind::Array {
+                    open_bracket,
+                    element_type: Box::new(element_type),
+                    semicolon,
+                    length,
+                    close_bracket,
+                };
+            } else {
+                // Slice type
+                let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+                return TypeKind::Slice {
+                    open_bracket,
+                    element_type: Box::new(element_type),
+                    close_bracket,
+                };
+            }
+        } else {
+            // Simple type
+            let type_name = self.consume_and_check(TokenKind::Identifier).clone();
+            return TypeKind::Simple { type_name };
         }
     }
 

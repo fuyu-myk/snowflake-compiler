@@ -532,7 +532,7 @@ impl<'mir> LIRBuilder<'mir> {
         let aliased_var = self.get_current_fx().locals.get(&instruction_idx).copied();
 
         let array_type = match &instruction.ty {
-            mir::Type::Array(element_type) => Type::Array {
+            mir::Type::Array(element_type, _) => Type::Array {
                 element_type: Box::new(Type::from((**element_type).clone())),
                 size: array_size,
             },

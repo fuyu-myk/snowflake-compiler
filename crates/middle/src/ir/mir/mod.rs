@@ -95,7 +95,7 @@ pub enum Type {
     Usize,
     String,
     Bool,
-    Array(Box<Type>),
+    Array(Box<Type>, usize),
     Void,
 }
 
@@ -108,8 +108,8 @@ impl From<snowflake_front::compilation_unit::Type> for Type {
             compilation_unit::Type::Bool => Self::Bool,
             compilation_unit::Type::Void => Self::Void,
             compilation_unit::Type::Usize => Self::Usize,
-            compilation_unit::Type::Array(elements, _) => {
-                Self::Array(Box::new(Type::from(*elements)))
+            compilation_unit::Type::Array(elements, size) => {
+                Self::Array(Box::new(Type::from(*elements)), size)
             }
             compilation_unit::Type::Unresolved | compilation_unit::Type::Error => {
                 bug_report!("Unresolved type")

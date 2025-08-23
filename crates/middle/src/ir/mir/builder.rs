@@ -174,7 +174,7 @@ impl FunctionBuilder {
                                  self.function.name, self.function.return_type);
                     Value::Constant(Constant::Usize(0))
                 }
-                Type::Array(_) => {
+                Type::Array(_, _) => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty array return", 
                                  self.function.name, self.function.return_type);
                     Value::InstructionRef(bb_builder.add_instruction(
@@ -182,7 +182,7 @@ impl FunctionBuilder {
                         &mut self.function,
                         Instruction::new(
                             InstructionKind::ArrayInit { elements: Vec::new() },
-                            Type::Array(Box::new(Type::Void)),
+                            Type::Array(Box::new(Type::Void), 0),
                             TextSpan::default(),
                         ),
                     ))
@@ -450,7 +450,7 @@ impl FunctionBuilder {
                             &mut self.function,
                             Instruction::new(
                                 InstructionKind::ArrayInit { elements: element_values.clone() },
-                                Type::Array(Box::new(element_type.clone().into())),
+                                Type::Array(Box::new(element_type.clone().into()), elements.len()),
                                 TextSpan::combine_refs(&element_span_refs),
                             ),
                         );
@@ -469,7 +469,7 @@ impl FunctionBuilder {
                                     element_type: element_type.clone().into(), 
                                     size,
                                 },
-                                Type::Array(Box::new(element_type.clone().into())),
+                                Type::Array(Box::new(element_type.clone().into()), elements.len()),
                                 TextSpan::default(),
                             ),
                         );
@@ -488,7 +488,7 @@ impl FunctionBuilder {
                                 &mut self.function,
                                 Instruction::new(
                                     InstructionKind::ArrayInit { elements: element_values },
-                                    Type::Array(Box::new(element_type.clone().into())),
+                                    Type::Array(Box::new(element_type.clone().into()), elements.len()),
                                     TextSpan::combine_refs(&element_span_refs),
                                 ),
                             );

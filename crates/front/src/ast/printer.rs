@@ -63,17 +63,26 @@ impl ASTPrinter {
     fn add_type_annot(&mut self, type_annotation: &StaticTypeAnnotation) {
         self.add_text(":");
         self.add_whitespace();
+        self.add_type_kind(&type_annotation.type_kind);
+    }
 
-        if type_annotation.open_square_bracket.is_some() {
-            self.add_text("[");
-            self.add_type(&type_annotation.type_name.span.literal);
-            self.add_text("; ");
-            if let Some(length_token) = &type_annotation.length {
-                self.add_size(&length_token.span.literal);
+    fn add_type_kind(&mut self, type_kind: &TypeKind) {
+        match type_kind {
+            TypeKind::Simple { type_name } => {
+                self.add_type(&type_name.span.literal);
             }
-            self.add_text("]");
-        } else {
-            self.add_type(&type_annotation.type_name.span.literal);
+            TypeKind::Array { element_type, length, .. } => {
+                self.add_text("[");
+                self.add_type_kind(element_type);
+                self.add_text("; ");
+                self.add_size(&length.span.literal);
+                self.add_text("]");
+            }
+            TypeKind::Slice { element_type, .. } => {
+                self.add_text("[");
+                self.add_type_kind(element_type);
+                self.add_text("]");
+            }
         }
     }
 }
@@ -316,8 +325,10 @@ impl ASTVisitor for ASTPrinter {
 
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
         self.visit_expression(ast, index_expression.object);
-        self.add_text("[");
-        self.visit_expression(ast, index_expression.index);
-        self.add_text("]");
+        for array_index in &index_expression.indexes {
+            self.add_text("[");
+            self.visit_expression(ast, array_index.index);
+            self.add_text("]");
+        }
     }
 }

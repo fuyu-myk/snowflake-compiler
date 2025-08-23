@@ -357,32 +357,37 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
         self.visit_expression(ast, index_expression.object);
-        let object = self.expect_last_value().clone();
+        let mut current_value = self.expect_last_value().clone();
 
-        self.visit_expression(ast, index_expression.index);
-        let index_value = self.expect_last_value();
-        
-        // Handle both usize and converted numbers as array indices
-        let index = match index_value {
-            Value::Usize(val) => *val,
-            Value::Number(val) => {
-                if *val < 0 {
-                    panic!("Array index cannot be negative: {}", val);
+        for array_index in &index_expression.indexes {
+            self.visit_expression(ast, array_index.index);
+            let index_value = self.expect_last_value();
+            
+            // Handle both usize and converted numbers as array indices
+            let index = match index_value {
+                Value::Usize(val) => *val,
+                Value::Number(val) => {
+                    if *val < 0 {
+                        panic!("Array index cannot be negative: {}", val);
+                    }
+                    *val as usize
                 }
-                *val as usize
-            },
-            _ => panic!("Array index must be a number or usize, found {:?}", index_value),
-        };
+                _ => panic!("Invalid array index type: {:?}", index_value),
+            };
 
-        match object {
-            Value::Array(array) => {
-                if index >= array.len() {
-                    panic!("Array index {} out of bounds for array of length {}", index, array.len());
+            // Apply the index to the current value
+            current_value = match &current_value {
+                Value::Array(arr) => {
+                    if index >= arr.len() {
+                        panic!("Array index out of bounds: index {} >= length {}", index, arr.len());
+                    }
+                    arr[index].clone()
                 }
-                self.last_value = Some(array[index].clone());
-            }
-            _ => panic!("Indexing is only supported for arrays"),
+                _ => panic!("Cannot index into non-array value: {:?}", current_value),
+            };
         }
+
+        self.last_value = Some(current_value);
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

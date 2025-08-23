@@ -317,26 +317,40 @@ impl HIRBuilder {
                 }
             },
             ExpressionKind::IndexExpression(index_expr) => {
-                let object = self.build_expression(index_expr.object, ast, global_scope, ctx, true);
-                let index = self.build_expression(index_expr.index, ast, global_scope, ctx, true);
-                let len = match &object.kind {
-                    HIRExprKind::Var(var_idx) => {
-                        let var = global_scope.variables.get(*var_idx);
-                        if let Type::Array(_, len) = &var.ty {
-                            *len
-                        } else {
-                            bug_report!("Indexing non-array type")
-                        }
-                    }
-                    _ => bug_report!("Indexing non-array type"),
-                };
+                let mut object = self.build_expression(index_expr.object, ast, global_scope, ctx, true);
+                
+                for array_index in &index_expr.indexes {
+                    let index = self.build_expression(array_index.index, ast, global_scope, ctx, true);
+                    
+                    // Get the length from the current object type (not the object kind)
+                    let len = match &object.ty {
+                        Type::Array(_, len) => *len,
+                        _ => bug_report!("Indexing non-array type"),
+                    };
 
-                HIRExprKind::Index {
-                    object: Box::new(object),
-                    index: Box::new(index),
-                    bounds_check: true, // Done as a default
-                    length: Box::new(self.create_expression(HIRExprKind::Usize(len), Type::Usize, expr.span.clone())),
+                    // Get the element type from the current object type
+                    let element_type = match &object.ty {
+                        Type::Array(element_type, _) => *element_type.clone(),
+                        _ => Type::Error,
+                    };
+
+                    let span_clone = expr.span.clone();
+                    let length_expr = self.create_expression(HIRExprKind::Usize(len), Type::Usize, span_clone);
+
+                    // Create a new index operation for each dimension
+                    object = self.create_expression(
+                        HIRExprKind::Index {
+                            object: Box::new(object),
+                            index: Box::new(index),
+                            bounds_check: true, // Done as a default
+                            length: Box::new(length_expr),
+                        },
+                        element_type,
+                        expr.span.clone()
+                    );
                 }
+
+                return object;
             },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };

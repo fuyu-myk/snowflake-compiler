@@ -385,9 +385,9 @@ impl From<mir::Type> for Type {
             mir::Type::Usize => Type::UInt64, // 64-bit platform
             mir::Type::String => Type::String,
             mir::Type::Bool => Type::Bool,
-            mir::Type::Array(element_type) => Type::Array {
+            mir::Type::Array(element_type, size) => Type::Array {
                 element_type: Box::new(Type::from(*element_type)),
-                size: 0, // Determined at runtime or by separate analysis
+                size,
             },
             mir::Type::Void => Type::Void,
         }

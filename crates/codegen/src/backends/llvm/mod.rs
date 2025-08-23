@@ -389,7 +389,7 @@ impl<'ctx> LLVMBackend<'ctx> {
             }
             InstructionKind::ArrayIndex { target, array, index } => {
                 let index_val = self.compile_operand(index, lir)?;
-                let ptr_type = self.lir_type_to_llvm(&array.ty).unwrap();
+                
                 let array_ptr = match &array.kind {
                     OperandKind::Location(loc_idx) => {
                         if let Some(alloca) = self.locations.get(loc_idx) {
@@ -402,6 +402,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                         return Err(anyhow::anyhow!("ArrayIndex requires array operand to be a location"));
                     }
                 };
+                
+                // Get the type of the array location
+                let array_location = match &array.kind {
+                    OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
+                    _ => return Err(anyhow::anyhow!("ArrayIndex requires array operand to be a location")),
+                };
+                let ptr_type = self.lir_type_to_llvm(&array_location.ty).unwrap();
                 
                 // Use two indices: 0 (to get the array pointer) and the actual index
                 let zero = self.context.i32_type().const_int(0, false);
@@ -454,7 +461,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 let index_val = self.compile_operand(index, lir)?;
                 let value_val = self.compile_operand(value, lir)?;
-                let ptr_type = self.lir_type_to_llvm(&array.ty).unwrap();
+                
+                // Get the type of the array location
+                let array_location = match &array.kind {
+                    OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
+                    _ => return Err(anyhow::anyhow!("ArrayStore requires array operand to be a location")),
+                };
+                let ptr_type = self.lir_type_to_llvm(&array_location.ty).unwrap();
                 
                 // Use two indices: 0 (to get the array pointer) and the actual index
                 let zero = self.context.i32_type().const_int(0, false);
