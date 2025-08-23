@@ -90,18 +90,18 @@ Thus far, the current compiler architecture is highlighted below:
         * Constant Folding - Variables that can be computed at compile time are computed
         * Algebraic Simplification - Using mathematical properties to reduce complexity of expressions in the code
     
-    -[x] *Low-level IR (LIR)* [completed 09.08.2025]
+    - [x] *Low-level IR (LIR)* [completed 09.08.2025]
     * Further lowering of MIR to facilitate iced_x86 codegen
         * Instructions become more 'assembly-like'
 
--[x] **X86_64 Assembly Code Generation** [completed 15.08.2025]
+- [x] **X86_64 Assembly Code Generation** [completed 15.08.2025]
 * Utilising the [`iced_x86`](https://github.com/icedland/iced) library to generate assembly instructions
 * Limited type support for now
 * Incredibly unoptimised
 * *Huge WIP as I am unfamiliar with assembly*
 * *Also, I am not going to do codegen for all instruction types; pivoting to LLVM instead*
 
--[x] **LLVM IR Generation** [WIP]
+- [x] **LLVM IR Generation** [WIP]
 * The inkwell wrapper is used to lower complexity
 * The generated IR is then written to a temp file, eg: `temp.ll`
 * An executable is then generated through `Clang`
@@ -156,7 +156,7 @@ a += 5 -= 1 // lhs must have same type (int) as rhs
 ```
 a += a * 2 + 3
 ```
-* Todo: Perhaps find a better way of handling spans
+* TODO: Perhaps find a better way of handling spans
 
 ### Functionalities
 - [x] **Error reporting** [WIP]
@@ -289,7 +289,7 @@ a += a * 2 + 3
     block comment */
     ```
 
-- [x] **Runtime panics** [completed 22.08.2025]
+- [ ] **Runtime panics** [WIP]
 * Will abort the program and generate a diagnostic in the following scenarios:
     * Illegal index access for arrays in runtime
 * Currently WIP, will improve handling and include more scenarios in future
