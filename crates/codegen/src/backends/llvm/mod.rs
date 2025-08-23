@@ -4,10 +4,10 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{BasicType, BasicTypeEnum},
-    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    values::{BasicValueEnum, FunctionValue, PointerValue},
     IntPredicate, FloatPredicate, AddressSpace,
 };
-use std::{collections::HashMap, result};
+use std::{collections::HashMap};
 
 use snowflake_middle::ir::lir::{
     self, LIR, Function, InstructionKind, Operand, OperandKind, ConstValue, 
@@ -554,7 +554,6 @@ impl<'ctx> LLVMBackend<'ctx> {
             Terminator::Panic { message } => {
                 LLVMRuntime::generate_panic_with_message(self.context, &self.module, &self.builder, message)?;
             }
-            _ => unimplemented!("Terminator {:?} not implemented", terminator),
         }
         
         Ok(())
@@ -610,9 +609,9 @@ impl<'ctx> LLVMBackend<'ctx> {
             ConstValue::Float32(val) => self.context.f32_type().const_float(*val as f64).into(),
             ConstValue::Float64(val) => self.context.f64_type().const_float(*val).into(),
             ConstValue::Bool(val) => self.context.bool_type().const_int(if *val { 1 } else { 0 }, false).into(),
-            ConstValue::String(_) => {
-                // TODO: Implement string constants
-                self.context.ptr_type(AddressSpace::default()).const_null().into()
+            ConstValue::String(str) => {
+                let string_ptr = runtime::LLVMRuntime::create_string_literal(self.context, &self.module, str).unwrap();
+                string_ptr.into()
             }
             ConstValue::Null => {
                 self.context.ptr_type(AddressSpace::default()).const_null().into()
