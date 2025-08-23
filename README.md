@@ -14,7 +14,7 @@ Thus far, the current compiler architecture is highlighted below:
 * C-transpiler
 * [`iced_x86`](https://github.com/icedland/iced)
 * LLVM
-    * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my umfamiliarity with LLVM
+    * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my unfamiliarity with LLVM
 
 ## Current features
 
