@@ -1,7 +1,3 @@
-use snowflake_common::diagnostics::{Diagnostic, DiagnosticsReport, DiagnosticKind};
-use snowflake_common::text::span::TextSpan;
-
-
 #[cfg(test)]
 mod tests {
     use std::rc::Rc;
@@ -9,7 +5,8 @@ mod tests {
     use snowflake_front::compilation_unit::CompilationUnit;
     use snowflake_middle::ir::{hir::HIRBuilder, mir::MIRBuilder};
 
-    use super::*;
+    use snowflake_common::diagnostics::{Diagnostic, DiagnosticKind};
+    use snowflake_common::text::span::TextSpan;
 
 
     struct DiagnosticsVerifier {
@@ -701,6 +698,48 @@ mod tests {
 
         let expected = vec![
             "Cannot index type 'int'"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_unknown_tuple_field_access() {
+        let input = "\
+        let a: (int, int) = (1, 2);
+        a.«5»
+        ";
+
+        let expected = vec![
+            "Unknown field: no field 5 on type (int, int)"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_field_access_on_primitive_type() {
+        let input = "\
+        let a = 5;
+        «a».0
+        ";
+
+        let expected = vec![
+            "'int' is a primitive type and therefore doesn't have any fields"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_field_access_on_array_type() {
+        let input = "\
+        let a: [int; 3] = [1, 2, 3];
+        a.«0»
+        ";
+
+        let expected = vec![
+            "Unknown field: no field 0 on type [int; 3]"
         ];
 
         assert_diagnostics(input, expected);
