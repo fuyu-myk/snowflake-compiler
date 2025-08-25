@@ -5,20 +5,20 @@ Compilers have always been a black box to me, ever since I learnt C some time ba
 
 I referenced Julian Hartl's video series on YouTube for the creation of this project.
 
-## Compiler architecture
+# Compiler architecture
 Thus far, the current compiler architecture is highlighted below:
 
 `input code` -> [Lexical Analyser] -> [Syntax Analyser] -> [Semantic Analyser] -> [IR Lowering + optimisations] -> [Backend]
 
-### Backends explored
+## Backends explored
 * C-transpiler
 * [`iced_x86`](https://github.com/icedland/iced)
 * LLVM
     * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my unfamiliarity with LLVM
 
-## Current features
+# Current features
 
-### Architecture
+## Architecture
 
 - [x] **Lexer** [completed 04.06.2025]
 * Takes in an input and transforms it to a token stream
@@ -106,12 +106,12 @@ Thus far, the current compiler architecture is highlighted below:
 * The generated IR is then written to a temp file, eg: `temp.ll`
 * An executable is then generated through `Clang`
 
-### Types supported
+## Types supported
+### Primitives
 * Integers
 * Floats
 * Boolean
 * Strings
-* Tuples
 
 ### Data Structures supported
 * Arrays [completed 05.08.2025]
@@ -131,7 +131,17 @@ let b: int = matrix[0][2] + matrix[2][0]; // 10
 * Indexes are of type `usize`
 * TODO: Slice indexes
 
-### Operators
+* Tuples [completed 25.08.2025]
+    * Defined and indexed as follows:
+```
+let tuple: (int, float, string) = (1, 1.01, "hello");
+let a: int = tuple.0;
+let b: float = tuple.1;
+let c: string = tuple.2;
+```
+* Type is defined as `(T1, T2)`
+
+## Operators
 - [x] **Basic arithmetic support** [completed 05.06.2025]
 * Ability to apply BODMAS to evaluate the below statement:
 ```
@@ -159,7 +169,7 @@ a += a * 2 + 3
 ```
 * TODO: Perhaps find a better way of handling spans
 
-### Functionalities
+## Functionalities
 - [x] **Error reporting** [WIP]
 * Updated as more functionality is added
 * Highlights errors in red
@@ -290,7 +300,7 @@ a += a * 2 + 3
     block comment */
     ```
 
-- [ ] **Runtime panics** [WIP]
+- [x] **Runtime panics** [WIP]
 * Will abort the program and generate a diagnostic in the following scenarios:
     * Illegal index access for arrays in runtime
 * Currently WIP, will improve handling and include more scenarios in future
