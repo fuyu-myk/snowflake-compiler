@@ -319,38 +319,90 @@ impl HIRBuilder {
             ExpressionKind::IndexExpression(index_expr) => {
                 let mut object = self.build_expression(index_expr.object, ast, global_scope, ctx, true);
                 
-                for array_index in &index_expr.indexes {
-                    let index = self.build_expression(array_index.index, ast, global_scope, ctx, true);
-                    
-                    // Get the length from the current object type (not the object kind)
-                    let len = match &object.ty {
-                        Type::Array(_, len) => *len,
-                        _ => bug_report!("Indexing non-array type"),
-                    };
+                let index = self.build_expression(index_expr.index.idx_no, ast, global_scope, ctx, true);
+                
+                // Get the length from the current object type (not the object kind)
+                let len = match &object.ty {
+                    Type::Array(_, len) => *len,
+                    _ => bug_report!("Indexing non-array type"),
+                };
 
-                    // Get the element type from the current object type
-                    let element_type = match &object.ty {
-                        Type::Array(element_type, _) => *element_type.clone(),
-                        _ => Type::Error,
-                    };
+                // Get the element type from the current object type
+                let element_type = match &object.ty {
+                    Type::Array(element_type, _) => *element_type.clone(),
+                    _ => Type::Error,
+                };
 
-                    let span_clone = expr.span.clone();
-                    let length_expr = self.create_expression(HIRExprKind::Usize(len), Type::Usize, span_clone);
+                let span_clone = expr.span.clone();
+                let length_expr = self.create_expression(HIRExprKind::Usize(len), Type::Usize, span_clone);
 
-                    // Create a new index operation for each dimension
-                    object = self.create_expression(
-                        HIRExprKind::Index {
-                            object: Box::new(object),
-                            index: Box::new(index),
-                            bounds_check: true, // Done as a default
-                            length: Box::new(length_expr),
-                        },
-                        element_type,
-                        expr.span.clone()
-                    );
-                }
+                // Create a new index operation for each dimension
+                object = self.create_expression(
+                    HIRExprKind::Index {
+                        object: Box::new(object),
+                        index: Box::new(index),
+                        bounds_check: true, // Done as a default
+                        length: Box::new(length_expr),
+                    },
+                    element_type,
+                    expr.span.clone()
+                );
 
                 return object;
+            },
+            ExpressionKind::Tuple(tuple_expr) => {
+                let elements = tuple_expr.elements.iter()
+                    .map(|elem_id| self.build_expression(*elem_id, ast, global_scope, ctx, true))
+                    .collect::<Vec<_>>();
+                let mut element_types = vec![];
+
+                for element in &elements {
+                    let element_type = element.ty.clone();
+                    element_types.push(Box::new(element_type));
+                }
+
+                HIRExprKind::Tuple {
+                    elements,
+                    element_types,
+                }
+            },
+            ExpressionKind::TupleIndexExpression(tuple_index_expr) => {
+                let mut tuple = self.build_expression(tuple_index_expr.tuple, ast, global_scope, ctx, true);
+                let index = self.build_expression(tuple_index_expr.index.idx_no, ast, global_scope, ctx, true);
+
+                // Get the element type from the current tuple type
+                let element_type = match &tuple.ty {
+                    Type::Tuple(element_types) => {
+                        let idx = match &index.kind {
+                            HIRExprKind::Usize(n) => *n,
+                            HIRExprKind::Number(n) => {
+                                if *n < 0 {
+                                    bug_report!("Tuple index cannot be negative");
+                                }
+                                *n as usize
+                            },
+                            _ => bug_report!("Tuple index is not a constant usize or number"),
+                        };
+                        if idx >= element_types.len() {
+                            Type::Error
+                        } else {
+                            *element_types[idx].clone()
+                        }
+                    },
+                    _ => Type::Error,
+                };
+
+                // Create a new tuple index operation
+                tuple = self.create_expression(
+                    HIRExprKind::TupleIndex {
+                        tuple: Box::new(tuple),
+                        index: Box::new(index),
+                    },
+                    element_type,
+                    expr.span.clone()
+                );
+
+                return tuple;
             },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };

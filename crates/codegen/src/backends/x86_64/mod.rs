@@ -303,8 +303,14 @@ impl X86_64Codegen {
                             // Phi nodes should be resolved before code generation
                             bug_report!("Phi nodes should be resolved before code generation: {:?}", operands);
                         }
-                        InstructionKind::ArrayStore { array, index, value } => {
+                        InstructionKind::ArrayStore { .. } => {
                             unimplemented!("ArrayStore instruction not yet implemented for x86_64 backend");
+                        }
+                        InstructionKind::Tuple { .. } => {
+                            unimplemented!("Tuple instruction not yet implemented for x86_64 backend");
+                        }
+                        InstructionKind::TupleIndex { .. } => {
+                            unimplemented!("TupleIndex instruction not yet implemented for x86_64 backend");
                         }
                         InstructionKind::Nop => {
                             // nothing
@@ -466,7 +472,7 @@ impl X86_64Codegen {
                         Terminator::Unreachable { error } => {
                             panic!("Error: {}", error)
                         }
-                        Terminator::Panic { message } => {
+                        Terminator::Panic { .. } => {
                             // TODO: runtime panic here
                             self.asm.ud2()?;
                         }
@@ -2421,6 +2427,8 @@ impl X86_64Codegen {
             InstructionKind::Call { target, .. } => *target,
             InstructionKind::Store { .. } |
             InstructionKind::ArrayStore { .. } |
+            InstructionKind::Tuple { .. } |
+            InstructionKind::TupleIndex { .. } |
             InstructionKind::Nop => None,
         }
     }

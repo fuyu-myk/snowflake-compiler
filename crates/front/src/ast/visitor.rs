@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, UnaryExpression, VarExpression, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, TupleExpression, TupleIndexExpression, UnaryExpression, VarExpression, WhileStatement};
 use snowflake_common::text::span::TextSpan;
 
 
@@ -125,9 +125,23 @@ pub trait ASTVisitor {
             ExpressionKind::IndexExpression(index_expression) => {
                 self.visit_index_expression(ast, &index_expression, &expression);
             }
+            ExpressionKind::Tuple(tuple_expression) => {
+                self.visit_tuple_expression(ast, &tuple_expression, &expression);
+            }
+            ExpressionKind::TupleIndexExpression(tuple_index_expression) => {
+                self.visit_tuple_index_expression(ast, &tuple_index_expression, &expression);
+            }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, &span);
             }
+        }
+    }
+
+    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression);
+
+    fn visit_tuple_expression(&mut self, ast: &mut Ast, tuple_expression: &TupleExpression, _expr: &Expression) {
+        for element in &tuple_expression.elements {
+            self.visit_expression(ast, *element);
         }
     }
 

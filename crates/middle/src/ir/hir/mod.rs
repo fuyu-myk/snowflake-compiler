@@ -148,6 +148,14 @@ pub enum HIRExprKind {
         bounds_check: bool,
         length: Box<HIRExpression>,
     },
+    Tuple {
+        elements: Vec<HIRExpression>,
+        element_types: Vec<Box<Type>>,
+    },
+    TupleIndex {
+        tuple: Box<HIRExpression>,
+        index: Box<HIRExpression>,
+    },
     Binary {
         operator: BinaryOpKind,
         left: Box<HIRExpression>,

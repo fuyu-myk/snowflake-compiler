@@ -183,6 +183,19 @@ pub enum InstructionKind {
         index: Operand,
         value: Operand,
     },
+
+    // Tuple operations
+    Tuple {
+        target: LocationIdx,
+        elements: Vec<Operand>,
+    },
+    TupleIndex {
+        target: LocationIdx,
+        tuple: Operand,
+        index: Operand,
+    },
+
+    // Movement operations
     Call {
         target: Option<LocationIdx>,
         function: FunctionIdx,
@@ -309,13 +322,16 @@ pub enum Type {
     
     // Pointer types
     Pointer(Box<Type>),
-    
-    // Array types
+
+    // Type collections
     Array {
         element_type: Box<Type>,
         size: usize,
     },
-    
+    Tuple {
+        element_types: Vec<Box<Type>>,
+    },
+
     // Void type
     Void,
 }
@@ -344,6 +360,18 @@ impl Type {
                     alignment: element_layout.alignment,
                 }
             }
+            Type::Tuple { element_types } => {
+                let mut size = 0;
+                let mut alignment = 1;
+
+                for element_type in element_types {
+                    let layout = element_type.layout();
+                    size += layout.size;
+                    alignment = alignment.max(layout.alignment);
+                }
+
+                Layout { size, alignment }
+            },
             Type::Void => Layout { size: 0, alignment: 1 },
         }
     }
@@ -388,6 +416,9 @@ impl From<mir::Type> for Type {
             mir::Type::Array(element_type, size) => Type::Array {
                 element_type: Box::new(Type::from(*element_type)),
                 size,
+            },
+            mir::Type::Tuple(element_types) => Type::Tuple {
+                element_types: element_types.into_iter().map(|t| Box::new(Type::from(*t))).collect(),
             },
             mir::Type::Void => Type::Void,
         }

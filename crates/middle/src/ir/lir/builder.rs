@@ -286,6 +286,24 @@ impl<'mir> LIRBuilder<'mir> {
                                 length: array_operand,
                             }
                         }
+                        mir::InstructionKind::Tuple { elements } => {
+                            let element_operands: Vec<Operand> = elements.iter()
+                                .map(|elem| self.build_operand(elem))
+                                .collect();
+                            InstructionKind::Tuple {
+                                target: self.get_ref_location(instruct_idx),
+                                elements: element_operands,
+                            }
+                        }
+                        mir::InstructionKind::TupleIndex { tuple, index } => {
+                            let tuple_operand = self.build_operand(tuple);
+                            let index_operand = self.build_operand(index);
+                            InstructionKind::TupleIndex {
+                                target: self.get_ref_location(instruct_idx),
+                                tuple: tuple_operand,
+                                index: index_operand,
+                            }
+                        }
                         mir::InstructionKind::Phi(phi_node) => {
                             let mut lir_operands = Vec::new();
                             for (mir_bb_idx, instruction_idx) in &phi_node.operands {

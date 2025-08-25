@@ -111,6 +111,7 @@ Thus far, the current compiler architecture is highlighted below:
 * Floats
 * Boolean
 * Strings
+* Tuples
 
 ### Data Structures supported
 * Arrays [completed 05.08.2025]

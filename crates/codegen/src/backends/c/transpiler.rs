@@ -159,11 +159,13 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::If(if_expr) => self.transpile_if_expression(ast, &expr, if_expr),
             ExpressionKind::Block(block_expr) => self.transpile_block_expression(ast, &expr, block_expr),
             ExpressionKind::Call(call_expr) => self.transpile_call_expression(ast, call_expr),
-            ExpressionKind::CompoundBinary(_) => todo!("CompoundBinary expressions not yet supported in C transpiler"),
-            ExpressionKind::Break(_) => todo!("Break expressions not yet supported in C transpiler"),
-            ExpressionKind::Continue(_) => todo!("Continue expressions not yet supported in C transpiler"),
-            ExpressionKind::Array(_) => todo!("Array expressions not yet supported in C transpiler"),
-            ExpressionKind::IndexExpression(_) => todo!("Index expressions not yet supported in C transpiler"),
+            ExpressionKind::CompoundBinary(_) => unimplemented!("CompoundBinary expressions not yet supported in C transpiler"),
+            ExpressionKind::Break(_) => unimplemented!("Break expressions not yet supported in C transpiler"),
+            ExpressionKind::Continue(_) => unimplemented!("Continue expressions not yet supported in C transpiler"),
+            ExpressionKind::Array(_) => unimplemented!("Array expressions not yet supported in C transpiler"),
+            ExpressionKind::IndexExpression(_) => unimplemented!("Index expressions not yet supported in C transpiler"),
+            ExpressionKind::Tuple(_) => unimplemented!("Tuple expressions not yet supported in C transpiler"),
+            ExpressionKind::TupleIndexExpression(_) => unimplemented!("TupleIndex expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -313,6 +315,7 @@ impl <'a> CTranspiler<'a> {
             Type::Usize => "size_t".to_string(),
             Type::Array(_, _) => panic!("Array types not supported in C codegen yet"),
             Type::Unresolved => panic!("Unresolved type"),
+            Type::Tuple(_) => panic!("Tuple types not supported in C codegen yet"),
             Type::Error => panic!("Error type"),
         }
     }
@@ -379,6 +382,8 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Continue(_) => false,
             ExpressionKind::Array(_) => false,
             ExpressionKind::IndexExpression(_) => false,
+            ExpressionKind::Tuple(_) => false,
+            ExpressionKind::TupleIndexExpression(_) => false,
             ExpressionKind::Error(_) => panic!("Error expression"),
         };
     }

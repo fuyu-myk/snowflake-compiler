@@ -68,6 +68,18 @@ impl MIRPassLocal for CopyPropagation {
                         changes += 1;
                     }
                 }
+                InstructionKind::Tuple { elements } => {
+                    for element in elements.iter_mut() {
+                        if let Some(instruct_ref) = element.as_instruct_ref() {
+                            copies.insert(instruct_ref, instruct_ref);
+                        }
+                    }
+                }
+                InstructionKind::TupleIndex { tuple, .. } => {
+                    if tuple.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
                 InstructionKind::Phi(_) | InstructionKind::IndexVal { .. }=> {}
             }
         }

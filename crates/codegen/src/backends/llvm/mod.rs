@@ -490,6 +490,106 @@ impl<'ctx> LLVMBackend<'ctx> {
                 let length_val = self.compile_operand(length, lir)?;
                 self.store_to_location(*target, length_val, lir)?;
             }
+            InstructionKind::Tuple { target, elements } => {
+                let location = &lir.locations[*target];
+                let tuple_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                let tuple_alloca = self.builder.build_alloca(tuple_type, &format!("tuple_{}", target.index))?;
+                
+                for (i, element) in elements.iter().enumerate() {
+                    let element_value = self.compile_operand(element, lir)?;
+                    let zero = self.context.i32_type().const_int(0, false);
+                    let index = self.context.i32_type().const_int(i as u64, false);
+                    let indices = [zero.into(), index.into()];
+                    
+                    // Pointer to i-th element in tuple
+                    let element_ptr = unsafe {
+                        self.builder.build_gep(
+                            tuple_type,
+                            tuple_alloca,
+                            &indices,
+                            &format!("tuple_elem_{}", i)
+                        )?
+                    };
+                    
+                    self.builder.build_store(element_ptr, element_value)?;
+                }
+                
+                self.locations.insert(*target, tuple_alloca);
+            }
+            InstructionKind::TupleIndex { target, tuple, index } => {
+                let tuple_ptr = match &tuple.kind {
+                    OperandKind::Location(loc_idx) => {
+                        if !self.locations.contains_key(loc_idx) {
+                            let location = &lir.locations[*loc_idx];
+                            let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                            let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index))?;
+                            self.locations.insert(*loc_idx, alloca);
+                        }
+                        
+                        if let Some(alloca) = self.locations.get(loc_idx) {
+                            *alloca
+                        } else {
+                            return Err(anyhow::anyhow!("Tuple location not found after allocation"));
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!("TupleIndex requires tuple operand to be a location"));
+                    }
+                };
+                
+                // Get the index (compile-time constant)
+                let index_value = match &index.kind {
+                    OperandKind::Const(ConstValue::Int32(idx)) => *idx as u32,
+                    OperandKind::Const(ConstValue::UInt64(idx)) => *idx as u32,
+                    _ => {
+                        return Err(anyhow::anyhow!("TupleIndex requires constant index, got {:?}", index.kind));
+                    }
+                };
+                
+                // Get the tuple type
+                let tuple_location = match &tuple.kind {
+                    OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
+                    _ => return Err(anyhow::anyhow!("TupleIndex requires tuple operand to be a location")),
+                };
+                let tuple_type = self.lir_type_to_llvm(&tuple_location.ty).unwrap();
+                
+                // Use GEP to point to specific tuple element
+                let zero = self.context.i32_type().const_int(0, false);
+                let field_index = self.context.i32_type().const_int(index_value as u64, false);
+                let indices = [zero.into(), field_index.into()];
+                
+                let element_ptr = unsafe {
+                    self.builder.build_gep(
+                        tuple_type,
+                        tuple_ptr,
+                        &indices,
+                        &format!("tuple_field_{}", index_value)
+                    )?
+                };
+                
+                // Get the element type for loading
+                let element_type = match &tuple_location.ty {
+                    Type::Tuple { element_types } => {
+                        if index_value < element_types.len() as u32 {
+                            self.lir_type_to_llvm(&element_types[index_value as usize]).unwrap()
+                        } else {
+                            // Should not occur
+                            return Err(anyhow::anyhow!("Tuple index {} out of bounds for tuple with {} elements", 
+                                index_value, element_types.len()));
+                        }
+                    }
+                    _ => return Err(anyhow::anyhow!("Expected tuple type, got {:?}", tuple_location.ty)),
+                };
+                
+                // Load the value from the computed address
+                let loaded_val = self.builder.build_load(
+                    element_type,
+                    element_ptr,
+                    "tuple_load"
+                )?;
+                
+                self.store_to_location(*target, loaded_val, lir)?;
+            }
             InstructionKind::Phi { target, operands } => {
                 // In LLVM, phi nodes must be at the beginning of a basic block
                 let target_location = &lir.locations[*target];
@@ -680,6 +780,17 @@ impl<'ctx> LLVMBackend<'ctx> {
                 } else {
                     None
                 }
+            }
+            Type::Tuple { element_types } => { // TODO: verify
+                let mut llvm_elem_types = Vec::new();
+                for elem_type in element_types {
+                    if let Some(llvm_type) = self.lir_type_to_llvm(elem_type) {
+                        llvm_elem_types.push(llvm_type);
+                    } else {
+                        return None;
+                    }
+                }
+                Some(self.context.struct_type(&llvm_elem_types, false).into())
             }
             Type::Void => None,
         }

@@ -1,6 +1,7 @@
 use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind};
+use snowflake_common::bug_report;
 use snowflake_common::token::{Token, TokenKind};
-use crate::compilation_unit::{resolve_type_from_string, GlobalScope};
+use crate::compilation_unit::{resolve_type_from_string, resolve_type_kind, GlobalScope};
 use snowflake_common::diagnostics::DiagnosticsReportCell;
 use snowflake_common::typings::Type;
 use std::cell::Cell;
@@ -119,16 +120,27 @@ impl <'a> Parser<'a> {
 
         // params as idx
         let params_idx = parameters.iter().map(|parameter| {
-            let type_token = match &parameter.type_annotation.type_kind {
-                TypeKind::Simple { type_name } => type_name,
-                TypeKind::Array { element_type, .. } => self.type_kind_to_token(element_type),
+            let ty = match &parameter.type_annotation.type_kind {
+                TypeKind::Simple { type_name } => resolve_type_from_string(&self.diagnostics_report, type_name),
+                TypeKind::Array { element_type, .. } => {
+                    let type_token = self.type_kind_to_token(element_type);
+                    resolve_type_from_string(&self.diagnostics_report, type_token)
+                }
                 TypeKind::Slice { .. } => {
-                    // For slices, we need to handle this differently  
-                    // For now, create a dummy token - this will need proper implementation
-                    &parameter.type_annotation.colon // placeholder
+                    unimplemented!("Slice types are not yet implemented")
+                }
+                TypeKind::Tuple { open_paren, element_types, close_paren } => {
+                    resolve_type_kind(
+                        &self.diagnostics_report,
+                        &TypeKind::Tuple {
+                            open_paren: open_paren.clone(),
+                            element_types: element_types.clone(),
+                            close_paren: close_paren.clone(),
+                        }
+                    )
                 }
             };
-            let ty = resolve_type_from_string(&self.diagnostics_report, type_token);
+            
             self.global_scope.declare_variable(&parameter.identifier.span.literal, ty, false, false)
         }).collect();
 
@@ -142,11 +154,15 @@ impl <'a> Parser<'a> {
         let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
 
         let body = Body::new(open_brace, body.clone(), close_brace);
+        let resolved_return_type = return_type.clone().map(
+            |return_type| resolve_type_kind(&self.diagnostics_report, &return_type.ty)
+        ).unwrap_or(Type::Void);
+
         let fx_idx_result = self.global_scope.create_function(
             identifier.span.literal.clone(),
             body.clone(),
             params_idx,
-            return_type.clone().map(|return_type| resolve_type_from_string(&self.diagnostics_report, &return_type.type_name)).unwrap_or(Type::Void)
+            resolved_return_type,
         );
 
         let fx_idx = match fx_idx_result {
@@ -168,16 +184,81 @@ impl <'a> Parser<'a> {
                 // TODO: once implemented
                 todo!()
             }
+            TypeKind::Tuple { .. } => bug_report!("No tuple type token")
         }
     }
 
     fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
         if self.current().kind == TokenKind::Arrow {
             let arrow = self.consume_and_check(TokenKind::Arrow).clone();
-            let type_name = self.consume_and_check(TokenKind::Identifier).clone();
 
-            return Some(FxReturnType::new(arrow, type_name));
+            if self.current().kind == TokenKind::OpenBracket {
+                // Array or slice return type
+                let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
+                let element_type = self.parse_type_kind();
+                
+                if self.current().kind == TokenKind::SemiColon {
+                    // Array type
+                    let semicolon = self.consume_and_check(TokenKind::SemiColon).clone();
+                    // TODO: check if problematic 
+                    let length = self.consume().clone(); // Length token (could be number or identifier)
+                    let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+                    
+                    return Some(FxReturnType::new(
+                        arrow, 
+                        vec![open_bracket.clone(), semicolon.clone(), length.clone(), close_bracket.clone()],
+                        TypeKind::Array {
+                            open_bracket,
+                            element_type: Box::new(element_type),
+                            semicolon,
+                            length,
+                            close_bracket,
+                        }
+                    ));
+                } else {
+                    // Slice type
+                    let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
+                    
+                    return Some(FxReturnType::new(
+                        arrow, 
+                        vec![open_bracket.clone(), close_bracket.clone()],
+                        TypeKind::Slice {
+                            open_bracket,
+                            element_type: Box::new(element_type),
+                            close_bracket,
+                        }
+                    ));
+                }
+            } else if self.current().kind == TokenKind::LeftParen {
+                // Tuple type
+                let open_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+                let mut element_types = Vec::new();
+
+                while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+                    element_types.push(Box::new(self.parse_type_kind()));
+
+                    if self.current().kind != TokenKind::RightParen {
+                        self.consume_and_check(TokenKind::Comma);
+                    }
+                }
+
+                let close_paren = self.consume_and_check(TokenKind::RightParen).clone();
+
+                return Some(FxReturnType::new(
+                    arrow,
+                    vec![open_paren.clone(), close_paren.clone()],
+                    TypeKind::Tuple { open_paren, element_types, close_paren },
+                ));
+            } else {
+                let type_name = vec![self.consume_and_check(TokenKind::Identifier).clone()];
+
+                if let Some(type_token) = type_name.first() {
+                    let type_kind = TypeKind::Simple { type_name: type_token.clone() };
+                    return Some(FxReturnType::new(arrow, type_name, type_kind));
+                }
+            }
         }
+
         return None;
     }
 
@@ -248,6 +329,21 @@ impl <'a> Parser<'a> {
 
         if self.current().kind == TokenKind::OpenBracket {
             return self.parse_array_or_slice_ty(colon);
+        } else if self.current().kind == TokenKind::LeftParen {
+            // Tuple type
+            let open_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+            let mut element_types = Vec::new();
+
+            while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+                element_types.push(self.parse_type_kind());
+
+                if self.current().kind != TokenKind::RightParen {
+                    self.consume_and_check(TokenKind::Comma);
+                }
+            }
+
+            let close_paren = self.consume_and_check(TokenKind::RightParen).clone();
+            return StaticTypeAnnotation::new_tuple(colon, open_paren, element_types, close_paren);
         } else {
             let type_name = self.consume_and_check(TokenKind::Identifier).clone();
             return StaticTypeAnnotation::new_simple(colon, type_name);
@@ -307,6 +403,21 @@ impl <'a> Parser<'a> {
                     close_bracket,
                 };
             }
+        } else if self.current().kind == TokenKind::LeftParen {
+            // Tuple type
+            let open_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+            let mut element_types = Vec::new();
+
+            while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+                element_types.push(Box::new(self.parse_type_kind()));
+
+                if self.current().kind != TokenKind::RightParen {
+                    self.consume_and_check(TokenKind::Comma);
+                }
+            }
+
+            let close_paren = self.consume_and_check(TokenKind::RightParen).clone();
+            return TypeKind::Tuple { open_paren, element_types, close_paren };
         } else {
             // Simple type
             let type_name = self.consume_and_check(TokenKind::Identifier).clone();
@@ -442,6 +553,13 @@ impl <'a> Parser<'a> {
                     let index = self.parse_index_expression();
                     let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
                     expr = self.ast.index_expression(expr, open_bracket, index, close_bracket).id;
+                }
+                TokenKind::Period => {
+                    // Tuple indexing
+                    // TODO: match arms for future method or struct field access
+                    let period = self.consume().clone();
+                    let index = self.parse_primary_expression();
+                    expr = self.ast.tuple_index_expression(expr, period, index).id;
                 }
                 _ => break,
             }
@@ -593,10 +711,29 @@ impl <'a> Parser<'a> {
             TokenKind::String(value) => self.ast.string_expression(token.clone(), value.clone()),
             TokenKind::LeftParen => {
                 let left_paren = token.clone();
-                let expr = self.parse_expression(); // because another exp in paren
-                let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+                let first_expr = self.parse_expression();
                 
-                self.ast.parenthesised_expression(left_paren, expr, right_paren)
+                // Check if this is a tuple (has comma) or parenthesized expression
+                if self.current().kind == TokenKind::Comma {
+                    // Tuple expr
+                    let mut elements = vec![first_expr];
+                    
+                    while self.current().kind == TokenKind::Comma && !self.is_at_end() {
+                        self.consume_and_check(TokenKind::Comma);
+                        if self.current().kind != TokenKind::RightParen {
+                            elements.push(self.parse_expression());
+                        } else {
+                            break; // Handle trailing comma
+                        }
+                    }
+                    
+                    let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+                    self.ast.tuple_expression(left_paren, elements, right_paren)
+                } else {
+                    // Parenthesised expr
+                    let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+                    self.ast.parenthesised_expression(left_paren, first_expr, right_paren)
+                }
             },
             TokenKind::Identifier => {
                 if matches!(self.current().kind, TokenKind::LeftParen) {

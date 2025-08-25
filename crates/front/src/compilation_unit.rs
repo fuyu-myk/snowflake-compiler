@@ -1,6 +1,6 @@
 use snowflake_common::{idx, IndexVec};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, TypeKind, StringExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, TupleExpression, TupleIndexExpression, TypeKind, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -382,6 +382,14 @@ pub fn resolve_type_from_annotation(diagnostics: &DiagnosticsReportCell, type_an
         TypeKind::Simple { type_name } => {
             resolve_type_from_string(diagnostics, type_name)
         }
+        TypeKind::Tuple { element_types, .. } => {
+            let mut resolved_types = Vec::new();
+            for elem_type in element_types {
+                let resolved_type = resolve_type_kind(diagnostics, elem_type);
+                resolved_types.push(Box::new(resolved_type));
+            }
+            Type::Tuple(resolved_types)
+        }
     }
 }
 
@@ -406,6 +414,14 @@ pub fn resolve_type_kind(diagnostics: &DiagnosticsReportCell, type_kind: &TypeKi
         },
         TypeKind::Simple { type_name } => {
             resolve_type_from_string(diagnostics, type_name)
+        }
+        TypeKind::Tuple { element_types, .. } => {
+            let mut resolved_types = Vec::new();
+            for elem_type in element_types {
+                let resolved_type = resolve_type_kind(diagnostics, elem_type);
+                resolved_types.push(Box::new(resolved_type));
+            }
+            Type::Tuple(resolved_types)
         }
     }
 }
@@ -829,44 +845,101 @@ impl ASTVisitor for Resolver {
         let object = ast.query_expression(index_expression.object);
         let mut current_type = object.ty.clone();
         let object_span = object.span(ast);
-        
-        for array_index in &index_expression.indexes {
-            self.visit_expression(ast, array_index.index);
-            
-            let index = ast.query_expression(array_index.index);
-            let index_ty = index.ty.clone();
-            let index_span = index.span(ast);
-            let index_literal = index_span.literal.clone();
 
-            // Check for negative array index patterns
-            let is_neg_idx = self.check_for_negative_array_index(ast, index, &index_span);
+        self.visit_expression(ast, index_expression.index.idx_no);
 
-            self.expect_index_type(Type::Usize, &index_ty, &index_span, is_neg_idx);
+        let index = ast.query_expression(index_expression.index.idx_no);
+        let index_ty = index.ty.clone();
+        let index_span = index.span(ast);
+        let index_literal = index_span.literal.clone();
 
-            match &current_type {
-                Type::Array(element_type, array_size) => {
-                    let element_type_cloned = *element_type.clone();
-                    let array_size_cloned = *array_size;
+        // Check for negative array index patterns
+        let is_neg_idx = self.check_for_negative_array_index(ast, index, &index_span);
 
-                    // Compile-time bounds checking for constant indices
-                    if let Ok(idx) = index_literal.parse::<usize>() {
-                        if idx >= array_size_cloned {
-                            self.diagnostics.borrow_mut().report_index_out_of_bounds(
-                                &index_span,
-                                array_size_cloned.to_string(),
-                                &object_span,
-                            );
-                        }
+        self.expect_index_type(Type::Usize, &index_ty, &index_span, is_neg_idx);
+
+        match &current_type {
+            Type::Array(element_type, array_size) => {
+                let element_type_cloned = *element_type.clone();
+                let array_size_cloned = *array_size;
+
+                // Compile-time bounds checking for constant indices
+                if let Ok(idx) = index_literal.parse::<usize>() {
+                    if idx >= array_size_cloned {
+                        self.diagnostics.borrow_mut().report_array_index_out_of_bounds(
+                            &index_span,
+                            array_size_cloned.to_string(),
+                            &object_span,
+                        );
                     }
-                    
-                    current_type = element_type_cloned;
                 }
-                _ => {
-                    // Error: trying to index a non-array type
-                    self.diagnostics.borrow_mut().report_cannot_index_type(&current_type, &object_span);
-                    current_type = Type::Error;
-                    break;
-                }
+                
+                current_type = element_type_cloned;
+            }
+            _ => {
+                // Error: trying to index a non-array type
+                self.diagnostics.borrow_mut().report_cannot_index_type(&current_type, &object_span);
+                current_type = Type::Error;
+            }
+        }
+        
+        ast.set_type(expr.id, current_type);
+    }
+
+    fn visit_tuple_expression(&mut self, ast: &mut Ast, tuple_expression: &TupleExpression, expr: &Expression) {
+        for element in &tuple_expression.elements {
+            self.visit_expression(ast, *element);
+        }
+
+        let element_types: Vec<Box<Type>> = tuple_expression.elements.iter()
+            .map(|element_id| {
+                let element = ast.query_expression(*element_id);
+                Box::new(element.ty.clone())
+            })
+            .collect();
+
+        let tuple_type = Type::Tuple(element_types);
+        ast.set_type(expr.id, tuple_type);
+    }
+
+    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, expr: &Expression) {
+        self.visit_expression(ast, tuple_index_expression.tuple);
+
+        let tuple = ast.query_expression(tuple_index_expression.tuple);
+        let mut current_type = tuple.ty.clone();
+        let tuple_type_str = format!("{}", current_type);
+        let tuple_span = tuple.span(ast);
+
+        self.visit_expression(ast, tuple_index_expression.index.idx_no);
+
+        let index = ast.query_expression(tuple_index_expression.index.idx_no);
+        let index_ty = index.ty.clone();
+        let index_span = index.span(ast);
+        let index_literal = index_span.literal.clone();
+
+        self.expect_index_type(Type::Usize, &index_ty, &index_span, false);
+
+        match &current_type {
+            Type::Tuple(element_types) => {
+                let tuple_size = element_types.len();
+
+                // Compile-time bounds checking for constant indices
+                if let Ok(idx) = index_literal.parse::<usize>() {
+                    if idx >= tuple_size {
+                        self.diagnostics.borrow_mut().report_tuple_unknown_field(
+                            &index_span,
+                            tuple_type_str,
+                        );
+                        current_type = Type::Error;
+                    } else {
+                        current_type = *element_types[idx].clone();
+                    }
+                };
+
+            }
+            _ => {
+                self.diagnostics.borrow_mut().report_no_fields_to_access(&current_type, &tuple_span, &index_span);
+                current_type = Type::Error;
             }
         }
         

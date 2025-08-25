@@ -168,6 +168,21 @@ impl <W> HIRWriter<W> where W: Write {
                 Self::write_expression(writer, index, global_scope, indent)?;
                 write!(writer, "]")?;
             }
+            HIRExprKind::Tuple { elements, .. } => {
+                write!(writer, "(")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    Self::write_expression(writer, elem, global_scope, indent)?;
+                    if i == 0 || i != elements.len() - 1 {
+                        write!(writer, ", ")?;
+                    }
+                }
+                write!(writer, ")")?;
+            }
+            HIRExprKind::TupleIndex { tuple, index } => {
+                Self::write_expression(writer, tuple, global_scope, indent)?;
+                write!(writer, ".")?;
+                Self::write_expression(writer, index, global_scope, indent)?;
+            }
             HIRExprKind::Binary { operator, left, right } => {
                 Self::write_expression(writer, left.as_ref(), global_scope, indent)?;
                 write!(writer, " {} ", operator)?;

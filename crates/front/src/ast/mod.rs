@@ -358,12 +358,49 @@ impl Ast {
         
         let array_index = ArrayIndex {
             open_square_bracket,
-            index,
+            idx_no: index,
             close_square_bracket,
         };
         
         self.expression_from_kind(
-            ExpressionKind::IndexExpression(IndexExpression { object, indexes: vec![array_index] }),
+            ExpressionKind::IndexExpression(IndexExpression { object, index: array_index }),
+            span
+        )
+    }
+
+    pub fn tuple_expression(&mut self, open_paren: Token, elements: Vec<ExpressionId>, close_paren: Token) -> &Expression {
+        let mut span_refs = vec![&open_paren.span];
+        
+        let element_spans: Vec<TextSpan> = elements.iter()
+            .map(|element_id| self.query_expression(*element_id).span(self))
+            .collect();
+        
+        for span in &element_spans {
+            span_refs.push(span);
+        }
+        
+        span_refs.push(&close_paren.span);
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(
+            ExpressionKind::Tuple(TupleExpression { open_paren, elements, close_paren }),
+            span
+        )
+    }
+
+    pub fn tuple_index_expression(&mut self, tuple: ExpressionId, period: Token, index: ExpressionId) -> &Expression {
+        let tuple_span = self.query_expression(tuple).span(self);
+        let index_span = self.query_expression(index).span(self);
+        let span_refs = vec![&tuple_span, &period.span, &index_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        let tuple_index = TupleIndex {
+            period,
+            idx_no: index,
+        };
+        
+        self.expression_from_kind(
+            ExpressionKind::TupleIndexExpression(TupleIndexExpression { tuple, index: tuple_index }),
             span
         )
     }
@@ -397,14 +434,20 @@ impl Ast {
             param_span.extend(param.type_annotation.collect_spans());
         }
         
-        let span = TextSpan::combine_refs(&[
-            &fx_keyword.span,
-            &identifier.span,
-            &TextSpan::combine(param_span),
-            &body.span(self),
-            return_type.as_ref().map_or(&TextSpan::default(), |rt| &rt.arrow.span),
-            return_type.as_ref().map_or(&TextSpan::default(), |rt| &rt.type_name.span)
-        ]);
+        let mut all_spans = vec![
+            fx_keyword.span.clone(),
+            identifier.span.clone(),
+            TextSpan::combine(param_span),
+            body.span(self),
+        ];
+        
+        if let Some(ref rt) = return_type {
+            all_spans.push(rt.arrow.span.clone());
+            let type_spans: Vec<TextSpan> = rt.type_tokens.iter().map(|token| token.span.clone()).collect();
+            all_spans.push(TextSpan::combine(type_spans));
+        }
+        
+        let span = TextSpan::combine(all_spans);
 
         self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }), span)
     }
@@ -531,6 +574,12 @@ pub enum TypeKind {
         element_type: Box<TypeKind>,
         close_bracket: Token,
     },
+    /// Tuple types like `(int, string)`
+    Tuple {
+        open_paren: Token,
+        element_types: Vec<Box<TypeKind>>,
+        close_paren: Token,
+    }
 }
 
 impl StaticTypeAnnotation {
@@ -577,6 +626,22 @@ impl StaticTypeAnnotation {
         }
     }
 
+    pub fn new_tuple(
+        colon: Token,
+        open_paren: Token,
+        element_types: Vec<TypeKind>,
+        close_paren: Token
+    ) -> Self {
+        Self {
+            colon,
+            type_kind: TypeKind::Tuple {
+                open_paren,
+                element_types: element_types.into_iter().map(Box::new).collect(),
+                close_paren,
+            }
+        }
+    }
+
     /// Collect all text spans from this type annotation
     pub fn collect_spans(&self) -> Vec<TextSpan> {
         let mut spans = vec![self.colon.span.clone()];
@@ -602,6 +667,13 @@ impl StaticTypeAnnotation {
                 self.collect_type_kind_spans(element_type, spans);
                 spans.push(close_bracket.span.clone());
             }
+            TypeKind::Tuple { open_paren, element_types, close_paren } => {
+                spans.push(open_paren.span.clone());
+                for elem_type in element_types {
+                    self.collect_type_kind_spans(elem_type, spans);
+                }
+                spans.push(close_paren.span.clone());
+            }
         }
     }
 }
@@ -615,12 +687,13 @@ pub struct FxDeclarationParams {
 #[derive(Debug, Clone)]
 pub struct FxReturnType {
     pub arrow: Token,
-    pub type_name: Token,
+    pub type_tokens: Vec<Token>,
+    pub ty: TypeKind,
 }
 
 impl FxReturnType {
-    pub fn new(arrow: Token, type_name: Token) -> Self {
-        Self { arrow, type_name }
+    pub fn new(arrow: Token, type_tokens: Vec<Token>, ty: TypeKind) -> Self {
+        Self { arrow, type_tokens, ty }
     }
 }
 
@@ -712,6 +785,8 @@ pub enum ExpressionKind {
     Continue(ContinueExpression),
     Array(ArrayExpression),
     IndexExpression(IndexExpression),
+    Tuple(TupleExpression),
+    TupleIndexExpression(TupleIndexExpression),
     Error(TextSpan),
 }
 
@@ -726,15 +801,34 @@ impl ExpressionKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct TupleIndexExpression {
+    pub tuple: ExpressionId,
+    pub index: TupleIndex,
+}
+
+#[derive(Debug, Clone)]
+pub struct TupleIndex {
+    pub period: Token,
+    pub idx_no: ExpressionId,
+}
+
+#[derive(Debug, Clone)]
+pub struct TupleExpression {
+    pub open_paren: Token,
+    pub elements: Vec<ExpressionId>,
+    pub close_paren: Token,
+}
+
+#[derive(Debug, Clone)]
 pub struct IndexExpression {
     pub object: ExpressionId,
-    pub indexes: Vec<ArrayIndex>,
+    pub index: ArrayIndex,
 }
 
 #[derive(Debug, Clone)]
 pub struct ArrayIndex {
     pub open_square_bracket: Token,
-    pub index: ExpressionId,
+    pub idx_no: ExpressionId,
     pub close_square_bracket: Token,
 }
 
@@ -1144,13 +1238,34 @@ impl Expression {
             },
             ExpressionKind::IndexExpression(index_expression) => {
                 let object_span = ast.query_expression(index_expression.object).span(ast);
-                let mut spans = vec![object_span];
-                
-                for array_index in &index_expression.indexes {
-                    spans.push(array_index.open_square_bracket.span.clone());
-                    spans.push(ast.query_expression(array_index.index).span(ast));
-                    spans.push(array_index.close_square_bracket.span.clone());
+                let spans = vec![
+                    object_span,
+                    index_expression.index.open_square_bracket.span.clone(),
+                    ast.query_expression(index_expression.index.idx_no).span(ast),
+                    index_expression.index.close_square_bracket.span.clone(),
+                ];
+
+
+                TextSpan::combine(spans)
+            },
+            ExpressionKind::Tuple(tuple_expression) => {
+                let open_paren = tuple_expression.open_paren.span.clone();
+                let close_paren = tuple_expression.close_paren.span.clone();
+                let mut spans = vec![open_paren, close_paren];
+
+                for element in &tuple_expression.elements {
+                    spans.push(ast.query_expression(*element).span(ast));
                 }
+
+                TextSpan::combine(spans)
+            },
+            ExpressionKind::TupleIndexExpression(tuple_index_expression) => {
+                let tuple_span = ast.query_expression(tuple_index_expression.tuple).span(ast);
+                let spans = vec![
+                    tuple_span,
+                    tuple_index_expression.index.period.span.clone(),
+                    ast.query_expression(tuple_index_expression.index.idx_no).span(ast)
+                ];
 
                 TextSpan::combine(spans)
             },

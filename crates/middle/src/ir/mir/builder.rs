@@ -187,6 +187,19 @@ impl FunctionBuilder {
                         ),
                     ))
                 }
+                Type::Tuple(_) => {
+                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty tuple return", 
+                                 self.function.name, self.function.return_type);
+                    Value::InstructionRef(bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(
+                            InstructionKind::Tuple { elements: Vec::new() },
+                            Type::Tuple(vec![Type::Void.into()]),
+                            TextSpan::default(),
+                        ),
+                    ))
+                }
             };
             bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: return_value });
         }
@@ -551,6 +564,43 @@ impl FunctionBuilder {
                         }, 
                         Type::from(expr.ty.clone()),
                         TextSpan::combine_two(&object.span, &index.span),
+                    ),
+                );
+
+                Value::InstructionRef(instruct_ref)
+            }
+            HIRExprKind::Tuple { elements, .. } => {
+                let element_values: Vec<Value> = elements.iter()
+                    .map(|elem| self.build_expr(basic_blocks, bb_builder, global_scope, elem))
+                    .collect();
+
+                let element_span_refs: Vec<&TextSpan> = elements.iter()
+                    .map(|elem| &elem.span)
+                    .collect();
+
+                let instruct_ref = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(
+                        InstructionKind::Tuple { elements: element_values.clone() },
+                        Type::Tuple(elements.iter().map(|e| Box::new(e.ty.clone().into())).collect()),
+                        TextSpan::combine_refs(&element_span_refs),
+                    ),
+                );
+
+                Value::InstructionRef(instruct_ref)
+            }
+            HIRExprKind::TupleIndex { tuple, index } => {
+                let tuple_val = self.build_expr(basic_blocks, bb_builder, global_scope, tuple);
+                let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+
+                let instruct_ref = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(
+                        InstructionKind::TupleIndex { tuple: tuple_val, index: index_val },
+                        Type::from(expr.ty.clone()),
+                        TextSpan::combine_two(&tuple.span, &index.span),
                     ),
                 );
 

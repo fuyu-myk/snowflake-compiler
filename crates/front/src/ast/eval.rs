@@ -1,6 +1,6 @@
 use snowflake_common::Idx;
 
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ContinueExpression, Expression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ContinueExpression, Expression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, TupleExpression, TupleIndexExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 use std::{collections::HashMap};
 
@@ -77,6 +77,7 @@ pub enum Value {
     Void,
     Function(FunctionIndex),
     Array(Vec<Value>),
+    Tuple(Vec<Value>),
 }
 
 impl Value {
@@ -154,15 +155,6 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_string_expression(&mut self, _ast: &mut Ast, string: &super::StringExpression, _expr: &Expression) {
         self.last_value = Some(Value::String(string.string.clone()));
-    }
-
-    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &super::ArrayExpression, _expr: &Expression) {
-        let elements = array_expression.elements.iter().map(|element| {
-            self.visit_expression(ast, *element);
-            self.expect_last_value().clone()
-        }).collect();
-
-        self.last_value = Some(Value::Array(elements));
     }
 
     fn visit_binary_expression(&mut self, ast: &mut Ast, binary_expr: &BinaryExpression, _expr: &Expression) {
@@ -355,37 +347,86 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.loop_continue = true;
     }
 
+    fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &super::ArrayExpression, _expr: &Expression) {
+        let elements = array_expression.elements.iter().map(|element| {
+            self.visit_expression(ast, *element);
+            self.expect_last_value().clone()
+        }).collect();
+
+        self.last_value = Some(Value::Array(elements));
+    }
+
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
         self.visit_expression(ast, index_expression.object);
         let mut current_value = self.expect_last_value().clone();
 
-        for array_index in &index_expression.indexes {
-            self.visit_expression(ast, array_index.index);
-            let index_value = self.expect_last_value();
-            
-            // Handle both usize and converted numbers as array indices
-            let index = match index_value {
-                Value::Usize(val) => *val,
-                Value::Number(val) => {
-                    if *val < 0 {
-                        panic!("Array index cannot be negative: {}", val);
-                    }
-                    *val as usize
+        self.visit_expression(ast, index_expression.index.idx_no);
+        let index_value = self.expect_last_value();
+        
+        // Handle both usize and converted numbers as array indices
+        let index = match index_value {
+            Value::Usize(val) => *val,
+            Value::Number(val) => {
+                if *val < 0 {
+                    panic!("Array index cannot be negative: {}", val);
                 }
-                _ => panic!("Invalid array index type: {:?}", index_value),
-            };
+                *val as usize
+            }
+            _ => panic!("Invalid array index type: {:?}", index_value),
+        };
 
-            // Apply the index to the current value
-            current_value = match &current_value {
-                Value::Array(arr) => {
-                    if index >= arr.len() {
-                        panic!("Array index out of bounds: index {} >= length {}", index, arr.len());
-                    }
-                    arr[index].clone()
+        // Apply the index to the current value
+        current_value = match &current_value {
+            Value::Array(arr) => {
+                if index >= arr.len() {
+                    panic!("Array index out of bounds: index {} >= length {}", index, arr.len());
                 }
-                _ => panic!("Cannot index into non-array value: {:?}", current_value),
-            };
-        }
+                arr[index].clone()
+            }
+            _ => panic!("Cannot index into non-array value: {:?}", current_value),
+        };
+
+        self.last_value = Some(current_value);
+    }
+
+    fn visit_tuple_expression(&mut self, ast: &mut Ast, tuple_expression: &TupleExpression, _expr: &Expression) {
+        let elements = tuple_expression.elements.iter().map(|element| {
+            self.visit_expression(ast, *element);
+            self.expect_last_value().clone()
+        }).collect();
+
+        self.last_value = Some(Value::Tuple(elements)); 
+    }
+
+    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression) {
+        self.visit_expression(ast, tuple_index_expression.tuple);
+        let mut current_value = self.expect_last_value().clone();
+
+        self.visit_expression(ast, tuple_index_expression.index.idx_no);
+        let index_value = self.expect_last_value();
+        
+        // Handle both usize and converted numbers as tuple indices
+        let index = match index_value {
+            Value::Usize(val) => *val,
+            Value::Number(val) => {
+                if *val < 0 {
+                    panic!("Tuple index cannot be negative: {}", val);
+                }
+                *val as usize
+            }
+            _ => panic!("Invalid tuple index type: {:?}", index_value),
+        };
+
+        // Apply the index to the current value
+        current_value = match &current_value {
+            Value::Tuple(tup) => {
+                if index >= tup.len() {
+                    panic!("Tuple index out of bounds: index {} >= length {}", index, tup.len());
+                }
+                tup[index].clone()
+            }
+            _ => panic!("Cannot index into non-tuple value: {:?}", current_value),
+        };
 
         self.last_value = Some(current_value);
     }

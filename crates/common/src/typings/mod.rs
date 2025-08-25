@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter, Result};
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Int,
     Float,
@@ -10,6 +10,7 @@ pub enum Type {
     Void,
     Usize,
     Array(Box<Type>, usize), // Fixed-size array: [type; size]
+    Tuple(Vec<Box<Type>>), // Tuple type: (type1, type2, ...)
     Unresolved, // used as a default
     Error,
 }
@@ -24,6 +25,10 @@ impl Display for Type {
             Type::Void => "void".to_string(),
             Type::Usize => "usize".to_string(),
             Type::Array(element_type, size) => format!("[{}; {}]", element_type, size),
+            Type::Tuple(element_types) => {
+                let types_str: Vec<String> = element_types.iter().map(|t| format!("{}", t)).collect();
+                format!("({})", types_str.join(", "))
+            },
             Type::Unresolved => "unresolved".to_string(),
             Type::Error => "???".to_string(),
         };
@@ -42,6 +47,10 @@ impl Type {
             (Type::Usize, Type::Usize) => true,
             (Type::Array(left_elem, left_size), Type::Array(right_elem, right_size)) => {
                 left_size == right_size && left_elem.is_assignable_to(right_elem)
+            },
+            (Type::Tuple(left_types), Type::Tuple(right_types)) => {
+                left_types.len() == right_types.len() &&
+                left_types.iter().zip(right_types.iter()).all(|(left, right)| left.is_assignable_to(right))
             },
             (Type::Error, _) => true,
             (_, Type::Error) => true,

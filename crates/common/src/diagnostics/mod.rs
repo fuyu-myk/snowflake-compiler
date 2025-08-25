@@ -87,6 +87,9 @@ impl DiagnosticsReport {
         if matches!(expected, Type::Array(_, _)) {
             self.report_array_error(expected, actual, span);
             return;
+        } else if matches!(expected, Type::Tuple(_)) {
+            self.report_tuple_error(expected, actual, span);
+            return;
         } else {
             self.report_error(format!("Expected type '{}', found '{}'", expected, actual), span.clone());
         }
@@ -134,12 +137,45 @@ impl DiagnosticsReport {
         }
     }
 
-    pub fn report_index_out_of_bounds(&mut self, index: &TextSpan, arr_size: String, array: &TextSpan) {
+    pub fn report_tuple_error(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
+        if let (Type::Tuple(expected_types), Type::Tuple(actual_types)) = (expected, actual) {
+            if expected_types.len() != actual_types.len() {
+                self.report_error(format!("Expected tuple of size {}, found one of size {}", expected_types.len(), actual_types.len()), span.clone());
+                return;
+            }
+
+            for (i, (exp_ty, act_ty)) in expected_types.iter().zip(actual_types.iter()).enumerate() {
+                if !act_ty.is_assignable_to(exp_ty) {
+                    self.report_error(format!("Type mismatch at tuple index {}: expected '{}', found '{}'", i, exp_ty, act_ty), span.clone());
+                    return;
+                }
+            }
+
+            self.report_error(format!("Expected tuple of type '{}', found one of type '{}'", expected, actual), span.clone());
+        }
+    }
+
+    pub fn report_array_index_out_of_bounds(&mut self, index: &TextSpan, arr_size: String, array: &TextSpan) {
         self.report_error(format!("Index out of bounds: the length of array `{}` is {} but the index is {}", array.literal, arr_size, index.literal), index.clone());
     }
 
+    pub fn report_tuple_unknown_field(&mut self, field: &TextSpan, wrong_ty: String) {
+        self.report_error(format!("Unknown field: no field {} on type {}", field.literal, wrong_ty), field.clone());
+    }
+    
     pub fn report_cannot_index_type(&mut self, ty: &Type, span: &TextSpan) {
         self.report_error(format!("Cannot index type '{}'", ty), span.clone());
+    }
+
+    pub fn report_no_fields_to_access(&mut self, ty: &Type, tuple_span: &TextSpan, index_span: &TextSpan) {
+        match ty {
+            Type::Array(ty, size) => {
+                self.report_tuple_unknown_field(index_span, format!("[{}; {}]", ty, size));
+            }
+            _ => {
+                self.report_error(format!("'{}' is a primitive type and therefore doesn't have any fields", ty), tuple_span.clone());
+            }
+        }
     }
 
     pub fn report_index_type_mismatch(&mut self, expected: Type, actual: &Type, span: &TextSpan) {

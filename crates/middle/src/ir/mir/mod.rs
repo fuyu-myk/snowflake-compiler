@@ -96,6 +96,7 @@ pub enum Type {
     String,
     Bool,
     Array(Box<Type>, usize),
+    Tuple(Vec<Box<Type>>),
     Void,
 }
 
@@ -110,6 +111,9 @@ impl From<snowflake_front::compilation_unit::Type> for Type {
             compilation_unit::Type::Usize => Self::Usize,
             compilation_unit::Type::Array(elements, size) => {
                 Self::Array(Box::new(Type::from(*elements)), size)
+            }
+            compilation_unit::Type::Tuple(elements) => {
+                Self::Tuple(elements.into_iter().map(|e| Box::new(Type::from(*e))).collect())
             }
             compilation_unit::Type::Unresolved | compilation_unit::Type::Error => {
                 bug_report!("Unresolved type")
@@ -178,6 +182,8 @@ impl Instruction {
             InstructionKind::ArrayInit { .. } => false,
             InstructionKind::ArrayIndex { .. } => false,
             InstructionKind::IndexVal { .. } => true,
+            InstructionKind::Tuple { .. } => true,
+            InstructionKind::TupleIndex { .. } => false,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
             InstructionKind::Call { .. } => false,
@@ -202,6 +208,13 @@ pub enum InstructionKind {
     },
     IndexVal {
         array_len: Value,
+    },
+    Tuple {
+        elements: Vec<Value>,
+    },
+    TupleIndex {
+        tuple: Value,
+        index: Value,
     },
     Binary {
         operator: BinOp,

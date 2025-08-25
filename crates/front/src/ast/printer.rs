@@ -83,6 +83,17 @@ impl ASTPrinter {
                 self.add_type_kind(element_type);
                 self.add_text("]");
             }
+            TypeKind::Tuple { element_types, .. } => {
+                self.add_text("(");
+                for (i, elem_type) in element_types.iter().enumerate() {
+                    self.add_type_kind(elem_type);
+
+                    if i == 0 ||i != element_types.len() - 1 {
+                        self.add_text(", ");
+                    }
+                }
+                self.add_text(")");
+            }
         }
     }
 }
@@ -325,10 +336,27 @@ impl ASTVisitor for ASTPrinter {
 
     fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression) {
         self.visit_expression(ast, index_expression.object);
-        for array_index in &index_expression.indexes {
-            self.add_text("[");
-            self.visit_expression(ast, array_index.index);
-            self.add_text("]");
+        self.add_text("[");
+        self.visit_expression(ast, index_expression.index.idx_no);
+        self.add_text("]");
+    }
+
+    fn visit_tuple_expression(&mut self, ast: &mut Ast, tuple_expression: &TupleExpression, _expr: &Expression) {
+        self.add_text("(");
+        for (i, element) in tuple_expression.elements.iter().enumerate() {
+            self.visit_expression(ast, *element);
+
+            if i == 0 || i != tuple_expression.elements.len() - 1 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
         }
+        self.add_text(")");
+    }
+
+    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression) {
+        self.visit_expression(ast, tuple_index_expression.tuple);
+        self.add_text(".");
+        self.visit_expression(ast, tuple_index_expression.index.idx_no);
     }
 }

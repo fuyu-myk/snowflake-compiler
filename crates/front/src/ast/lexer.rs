@@ -63,6 +63,9 @@ impl <'a> Lexer<'a> {
                 let string_value = self.consume_string_literal();
                 self.consume();
                 kind = TokenKind::String(string_value);
+            } else if c == '.' {
+                self.consume();
+                kind = TokenKind::Period;
             } else if Self::is_whitespace(&c) {
                 self.consume();
                 kind = TokenKind::Whitespace;
