@@ -516,7 +516,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 self.locations.insert(*target, tuple_alloca);
             }
-            InstructionKind::TupleIndex { target, tuple, index } => {
+            InstructionKind::TupleField { target, tuple, field: index } => {
                 let tuple_ptr = match &tuple.kind {
                     OperandKind::Location(loc_idx) => {
                         if !self.locations.contains_key(loc_idx) {
@@ -589,6 +589,62 @@ impl<'ctx> LLVMBackend<'ctx> {
                 )?;
                 
                 self.store_to_location(*target, loaded_val, lir)?;
+            }
+            InstructionKind::TupleStore { tuple, field: index, value } => {
+                let tuple_ptr = match &tuple.kind {
+                    OperandKind::Location(loc_idx) => {
+                        if !self.locations.contains_key(loc_idx) {
+                            let location = &lir.locations[*loc_idx];
+                            let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                            let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index))?;
+                            self.locations.insert(*loc_idx, alloca);
+                        }
+                        
+                        if let Some(alloca) = self.locations.get(loc_idx) {
+                            *alloca
+                        } else {
+                            return Err(anyhow::anyhow!("Tuple location not found after allocation"));
+                        }
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!("TupleStore requires tuple operand to be a location"));
+                    }
+                };
+                
+                // Get the index (compile-time constant)
+                let index_value = match &index.kind {
+                    OperandKind::Const(ConstValue::Int32(idx)) => *idx as u32,
+                    OperandKind::Const(ConstValue::UInt64(idx)) => *idx as u32,
+                    _ => {
+                        return Err(anyhow::anyhow!("TupleStore requires constant index, got {:?}", index.kind));
+                    }
+                };
+                
+                let value_val = self.compile_operand(value, lir)?;
+                
+                // Get the tuple type
+                let tuple_location = match &tuple.kind {
+                    OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
+                    _ => return Err(anyhow::anyhow!("TupleStore requires tuple operand to be a location")),
+                };
+                let tuple_type = self.lir_type_to_llvm(&tuple_location.ty).unwrap();
+                
+                // Use GEP to point to specific tuple element
+                let zero = self.context.i32_type().const_int(0, false);
+                let field_index = self.context.i32_type().const_int(index_value as u64, false);
+                let indices = [zero.into(), field_index.into()];
+                
+                let element_ptr = unsafe {
+                    self.builder.build_gep(
+                        tuple_type,
+                        tuple_ptr,
+                        &indices,
+                        &format!("tuple_store_field_{}", index_value)
+                    )?
+                };
+                
+                // Store the value at the computed address
+                self.builder.build_store(element_ptr, value_val)?;
             }
             InstructionKind::Phi { target, operands } => {
                 // In LLVM, phi nodes must be at the beginning of a basic block

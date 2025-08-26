@@ -60,22 +60,32 @@ impl <W> HIRWriter<W> where W: Write {
                 Self::write_expression(writer, expr, global_scope, indent)?;
                 writeln!(writer)?;
             }
-            HIRStmtKind::Declaration { var_idx, init } => {
-                let var = global_scope.variables.get(*var_idx);
-                write!(writer, "let {}: {}", var.name, var.ty)?;
+            HIRStmtKind::Declaration { var_idx, init_expr, is_mutable } => {
+                let var = &global_scope.variables[*var_idx];
+                let mut_keyword = if *is_mutable { "mut " } else { "" };
+                write!(writer, "let {}{}: {}", mut_keyword, var.name, var.ty)?;
 
-                if let Some(init) = init {
+                if let Some(init) = init_expr {
                     write!(writer, " = ")?;
                     Self::write_expression(writer, init, global_scope, indent)?;
                 }
 
                 writeln!(writer)?;
             }
-            HIRStmtKind::Assignment { var_idx, expr } => {
-                let var = global_scope.variables.get(*var_idx);
-                write!(writer, "{} = ", var.name)?;
+            HIRStmtKind::Assignment { target, value } => {
+                // Handle different types of assignment targets
+                match &target.kind {
+                    HIRExprKind::Var { var_idx } => {
+                        let var = &global_scope.variables[*var_idx];
+                        write!(writer, "{} = ", var.name)?;
+                    }
+                    _ => {
+                        Self::write_expression(writer, target, global_scope, indent)?;
+                        write!(writer, " = ")?;
+                    }
+                }
 
-                Self::write_expression(writer, expr, global_scope, indent)?;
+                Self::write_expression(writer, value, global_scope, indent)?;
                 writeln!(writer)?;
             }
             HIRStmtKind::If { condition, then_block, else_block } => {
@@ -148,7 +158,7 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Unit => {
                 write!(writer, "()")?;
             }
-            HIRExprKind::Var(var_idx) => {
+            HIRExprKind::Var { var_idx } => {
                 let var = global_scope.variables.get(*var_idx);
                 write!(writer, "{}", var.name)?;
             }
@@ -178,7 +188,7 @@ impl <W> HIRWriter<W> where W: Write {
                 }
                 write!(writer, ")")?;
             }
-            HIRExprKind::TupleIndex { tuple, index } => {
+            HIRExprKind::TupleField { tuple, field: index } => {
                 Self::write_expression(writer, tuple, global_scope, indent)?;
                 write!(writer, ".")?;
                 Self::write_expression(writer, index, global_scope, indent)?;

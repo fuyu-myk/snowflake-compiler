@@ -5,7 +5,7 @@
  */
 pub mod printer;
 
-use crate::text::span::TextSpan;
+use crate::text::span::{TextSpan};
 use crate::token::{Token, TokenKind};
 use crate::typings::Type;
 use std::cell::RefCell;
@@ -62,8 +62,8 @@ impl DiagnosticsReport {
         self.report_error(format!("Expected expression, found <{}>", token.kind), token.span.clone());
     }
 
-    pub fn report_undeclared_variable(&mut self, token: &Token) {
-        self.report_error(format!("Undeclared variable '{}'", token.span.literal), token.span.clone());
+    pub fn report_undeclared_variable(&mut self, var: &str, span: &TextSpan) {
+        self.report_error(format!("Undeclared variable '{}'", var), span.clone());
     }
 
     pub fn report_uncallable_expression(&mut self, callee_span: &TextSpan, callee_type: &Type) {
@@ -146,7 +146,7 @@ impl DiagnosticsReport {
 
             for (i, (exp_ty, act_ty)) in expected_types.iter().zip(actual_types.iter()).enumerate() {
                 if !act_ty.is_assignable_to(exp_ty) {
-                    self.report_error(format!("Type mismatch at tuple index {}: expected '{}', found '{}'", i, exp_ty, act_ty), span.clone());
+                    self.report_error(format!("Type mismatch at tuple field {}: expected '{}', found '{}'", i, exp_ty, act_ty), span.clone());
                     return;
                 }
             }
@@ -184,5 +184,17 @@ impl DiagnosticsReport {
 
     pub fn report_negative_array_index(&mut self, span: &TextSpan) {
         self.report_error(format!("Negative integers cannot be used to index on arrays"), span.clone());
+    }
+
+    pub fn report_immutable_assignment_error(&mut self, expression: String, object: Option<String>, span: &TextSpan) {
+        if let Some(object) = object {
+            self.report_error(format!("Cannot assign to `{}` because `{}` is not declared as mutable", expression, object), span.clone());
+        } else {
+            self.report_error(format!("Cannot assign to immutable variable `{}`", expression), span.clone());
+        }
+    }
+
+    pub fn report_multiple_assignment_error(&mut self, variable: String, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to immutable variable `{}` more than once", variable), span.clone());
     }
 }

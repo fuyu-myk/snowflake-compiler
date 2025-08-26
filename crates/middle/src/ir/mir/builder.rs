@@ -288,21 +288,82 @@ impl FunctionBuilder {
                     );
                 }
             }
-            HIRStmtKind::Assignment { var_idx, expr } => {
-                // Transforms expression into a value and assigns it to a new instruction
-                // It is then stored as a local variable under `Function` and a definition under `FunctionBuilder`
-                let value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
-                
-                // Only add instruction if the current basic block is not already terminated
-                // (this is such that break/continue expressions can terminate the block)
-                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
-                    let instruct_idx = bb_builder.add_instruction(
-                        basic_blocks,
-                        &mut self.function,
-                        Instruction::new(InstructionKind::Value(value), expr.ty.clone().into(), statement.span.clone())
-                    );
+            HIRStmtKind::Assignment { target, value } => {
+                match &target.kind {
+                    HIRExprKind::Var { var_idx } => {
+                        // Handle simple variable assignment: var = value
+                        let val = self.build_expr(basic_blocks, bb_builder, global_scope, value);
+                        
+                        if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                            let instruct_idx = bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(InstructionKind::Value(val), value.ty.clone().into(), statement.span.clone())
+                            );
 
-                    self.write_variable(*var_idx, bb_builder.current, instruct_idx);
+                            self.write_variable(*var_idx, bb_builder.current, instruct_idx);
+                        }
+                    }
+                    HIRExprKind::Index { object, index, bounds_check, length } => {
+                        // Handle indexed assignment: array[index] = value
+                        let array_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
+                        let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+                        let value_val = self.build_expr(basic_blocks, bb_builder, global_scope, value);
+                        let length_val = self.build_expr(basic_blocks, bb_builder, global_scope, length);
+
+                        if *bounds_check {
+                            self.arr_index_bounds_check(
+                                basic_blocks,
+                                bb_builder,
+                                global_scope,
+                                object,
+                                index,
+                                &index_val,
+                                length_val,
+                            );
+                        }
+                        
+                        if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                            bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(
+                                    InstructionKind::ArrayStore { 
+                                        array: array_val, 
+                                        index: index_val, 
+                                        value: value_val 
+                                    }, 
+                                    Type::Void, // Store operations don't return a value
+                                    statement.span.clone()
+                                )
+                            );
+                        }
+                    }
+                    HIRExprKind::TupleField { tuple, field: index } => {
+                        let tuple_val = self.build_expr(basic_blocks, bb_builder, global_scope, tuple);
+                        let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+                        let value_val = self.build_expr(basic_blocks, bb_builder, global_scope, value);
+
+                        if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                            bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(
+                                    InstructionKind::TupleStore { 
+                                        tuple: tuple_val, 
+                                        field: index_val, 
+                                        value: value_val 
+                                    }, 
+                                    Type::Void, // Store operations don't return a value
+                                    statement.span.clone()
+                                )
+                            );
+                        }
+                    }
+                    _ => {
+                        self.build_expr(basic_blocks, bb_builder, global_scope, target);
+                        self.build_expr(basic_blocks, bb_builder, global_scope, value);
+                    }
                 }
             }
             HIRStmtKind::If { condition, then_block, else_block } => {
@@ -363,12 +424,12 @@ impl FunctionBuilder {
                 self.seal_block(basic_blocks, if_end_bb, global_scope);
                 tracing::debug!("If terminator built");
             }
-            HIRStmtKind::Declaration { var_idx, init } => {
+            HIRStmtKind::Declaration { var_idx, init_expr, is_mutable: _ } => {
                 // Transforms initialiser into a value and assigns it to a new instruction,
                 // where the instruction represents the variable
                 // Eg: `let a = 1 + 2` becomes `%0 = 1 + 2`
                 // `%0` is now used in place of var `a`
-                let value = init.as_ref().map(|init| {
+                let value = init_expr.as_ref().map(|init| {
                     self.build_expr(basic_blocks, bb_builder, global_scope, init)
                 });
                 let ty = global_scope.variables.get(*var_idx).ty.clone().into();
@@ -440,7 +501,7 @@ impl FunctionBuilder {
             HIRExprKind::String(value) => Value::Constant(Constant::String(value.clone())),
             HIRExprKind::Bool(value) => Value::Constant(Constant::Bool(*value)),
             HIRExprKind::Unit => Value::Constant(Constant::Void),
-            HIRExprKind::Var(var_idx) => {
+            HIRExprKind::Var { var_idx } => {
                 let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
 
                 Value::InstructionRef(instruct_ref)
@@ -519,39 +580,15 @@ impl FunctionBuilder {
                 let length_val = self.build_expr(basic_blocks, bb_builder, global_scope, length);
 
                 if *bounds_check {
-                    let combined_span = TextSpan::combine_refs(&[&object.span, &index.span]);
-
-                    let bounds_check_ref = bb_builder.add_instruction(
+                    self.arr_index_bounds_check(
                         basic_blocks,
-                        &mut self.function,
-                        Instruction::new(
-                            InstructionKind::Binary { 
-                                operator: BinOp::Lt,
-                                left: index_val.clone(),
-                                right: length_val.clone(),
-                            },
-                            Type::Bool,
-                            combined_span,
-                        ),
+                        bb_builder,
+                        global_scope,
+                        object,
+                        index,
+                        &index_val,
+                        length_val,
                     );
-
-                    // Create the basic block for successful array access
-                    let predecessor = bb_builder.current;
-                    let array_access_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
-
-                    bb_builder.set_bb(predecessor);
-                    bb_builder.terminate(
-                        basic_blocks,
-                        TerminatorKind::Assert {
-                            condition: Value::InstructionRef(bounds_check_ref),
-                            check: true,
-                            message: Box::new(AssertMessage::ArrayIndexOutOfBounds { len: length_val, index: index_val.clone() }),
-                            default: array_access_bb,
-                        }
-                    );
-
-                    bb_builder.set_bb(array_access_bb);
-                    self.seal_block(basic_blocks, array_access_bb, global_scope);
                 }
 
                 let instruct_ref = bb_builder.add_instruction(
@@ -590,7 +627,7 @@ impl FunctionBuilder {
 
                 Value::InstructionRef(instruct_ref)
             }
-            HIRExprKind::TupleIndex { tuple, index } => {
+            HIRExprKind::TupleField { tuple, field: index } => {
                 let tuple_val = self.build_expr(basic_blocks, bb_builder, global_scope, tuple);
                 let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
 
@@ -598,7 +635,7 @@ impl FunctionBuilder {
                     basic_blocks,
                     &mut self.function,
                     Instruction::new(
-                        InstructionKind::TupleIndex { tuple: tuple_val, index: index_val },
+                        InstructionKind::TupleField { tuple: tuple_val, field: index_val },
                         Type::from(expr.ty.clone()),
                         TextSpan::combine_two(&tuple.span, &index.span),
                     ),
@@ -675,6 +712,42 @@ impl FunctionBuilder {
                 }
             }
         }
+    }
+
+    fn arr_index_bounds_check(&mut self, basic_blocks: &mut BasicBlocks, bb_builder: &mut BasicBlockBuilder, global_scope: &GlobalScope, object: &Box<HIRExpression>, index: &Box<HIRExpression>, index_val: &Value, length_val: Value) {
+        let combined_span = TextSpan::combine_refs(&[&object.span, &index.span]);
+    
+        let bounds_check_ref = bb_builder.add_instruction(
+            basic_blocks,
+            &mut self.function,
+            Instruction::new(
+                InstructionKind::Binary { 
+                    operator: BinOp::Lt,
+                    left: index_val.clone(),
+                    right: length_val.clone(),
+                },
+                Type::Bool,
+                combined_span,
+            ),
+        );
+    
+        // Create the basic block for successful array access
+        let predecessor = bb_builder.current;
+        let array_access_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
+    
+        bb_builder.set_bb(predecessor);
+        bb_builder.terminate(
+            basic_blocks,
+            TerminatorKind::Assert {
+                condition: Value::InstructionRef(bounds_check_ref),
+                check: true,
+                message: Box::new(AssertMessage::ArrayIndexOutOfBounds { len: length_val, index: index_val.clone() }),
+                default: array_access_bb,
+            }
+        );
+    
+        bb_builder.set_bb(array_access_bb);
+        self.seal_block(basic_blocks, array_access_bb, global_scope);
     }
 
     pub fn seal_block(&mut self, basic_blocks: &mut BasicBlocks, bb_idx: BasicBlockIdx, global_scope: &GlobalScope) {

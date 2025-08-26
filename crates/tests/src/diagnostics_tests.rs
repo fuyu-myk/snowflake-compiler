@@ -3,6 +3,7 @@ mod tests {
     use std::rc::Rc;
 
     use snowflake_front::compilation_unit::CompilationUnit;
+    use snowflake_middle::analysis::SemanticAnalyzer;
     use snowflake_middle::ir::{hir::HIRBuilder, mir::MIRBuilder};
 
     use snowflake_common::diagnostics::{Diagnostic, DiagnosticKind};
@@ -33,14 +34,22 @@ mod tests {
             match compilation_unit {
                 Ok(mut unit) => {
                     let hir = hir_builder.build(&unit.ast, &mut unit.global_scope);
-                    let mir_builder = MIRBuilder::new(Rc::clone(&unit.diagnostics_report));
-                    let _mir = mir_builder.build(&hir, &unit.global_scope);
-                    let diagnostics = unit.diagnostics_report.borrow()
-                        .diagnostics
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    diagnostics
+
+                    let mut semantic_analyzer = SemanticAnalyzer::new(unit.diagnostics_report.clone());
+                    let semantic_analysis = semantic_analyzer.analyze(&raw_text, &hir, &mut unit.global_scope);
+                        match semantic_analysis {
+                            Ok(_) => {
+                                let mir_builder = MIRBuilder::new(Rc::clone(&unit.diagnostics_report));
+                                let _mir = mir_builder.build(&hir, &unit.global_scope);
+                                let diagnostics = unit.diagnostics_report.borrow()
+                                    .diagnostics
+                                    .iter()
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                diagnostics
+                            },
+                            Err(e) => return e.borrow().diagnostics.clone(),
+                        }
                 },
                 Err(e) => return e.borrow().diagnostics.clone(),
             }
@@ -53,17 +62,18 @@ mod tests {
         fn parse_input(input: &str, messages: Vec<&str>) -> Vec<Diagnostic> {
             let raw_text = Self::get_raw_text(input);
             let mut start_index_stack = vec![];
-            let mut current_position = 0;
+            let mut current_raw_position = 0;
             let mut diagnostics = vec![];
 
-            for c in input.chars() {
+            let mut input_chars = input.chars().peekable();
+            while let Some(c) = input_chars.next() {
                 match c {
                     '«' => {
-                        start_index_stack.push(current_position);
+                        start_index_stack.push(current_raw_position);
                     }
                     '»' => {
                         let start_index = start_index_stack.pop().unwrap();
-                        let end_index = current_position;
+                        let end_index = current_raw_position;
                         let literal = &raw_text[start_index..end_index];
                         let span = TextSpan::new(start_index, end_index, literal.to_string());
                         let message = messages[diagnostics.len()].to_string();
@@ -71,7 +81,7 @@ mod tests {
                         diagnostics.push(diagnostic);
                     }
                     _ => {
-                        current_position += 1;
+                        current_raw_position += c.len_utf8();
                     }
                 };
             }
@@ -740,6 +750,48 @@ mod tests {
 
         let expected = vec![
             "Unknown field: no field 0 on type [int; 3]"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_assignment_to_immutable_variable() {
+        let input = "\
+        let a = 5;
+        «a» = 10;
+        ";
+
+        let expected = vec![
+            "Cannot assign to immutable variable `a`"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_assignment_to_immutable_array() {
+        let input = "\
+        let a: [int; 3] = [1, 2, 3];
+        «a[0]» = 10;
+        ";
+
+        let expected = vec![
+            "Cannot assign to `a[0]` because `a` is not declared as mutable"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_assignment_to_immutable_tuple() {
+        let input = "\
+        let a: (int, int) = (1, 2);
+        «a.0» = 10;
+        ";
+
+        let expected = vec![
+            "Cannot assign to `a.0` because `a` is not declared as mutable"
         ];
 
         assert_diagnostics(input, expected);

@@ -103,6 +103,11 @@ impl Ast {
         let id = self.statements.push(statement);
 
         self.statements[id].id = id;
+        
+        if let StatementKind::Let(let_stmt) = &mut self.statements[id].kind {
+            let_stmt.pattern.id = id;
+        }
+        
         &self.statements[id]
     }
 
@@ -126,10 +131,114 @@ impl Ast {
         let span_refs: Vec<&TextSpan> = spans.iter().collect();
         let span = TextSpan::combine_refs(&span_refs);
 
+        let pattern = Pattern {
+            id: StatementId::new(0), // Will be set after statement creation
+            kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
+            span: identifier.span.clone(),
+            token: identifier.clone(),
+        };
+
         self.statement_from_kind(
-            StatementKind::Let(LetStatement { identifier, initialiser, type_annotation, variable_index: VariableIndex::new(0) }),
+            StatementKind::Let(LetStatement { 
+                identifier: identifier.clone(), 
+                pattern,
+                initialiser, 
+                type_annotation, 
+                variable_index: VariableIndex::new(0) 
+            }),
             span,
         )
+    }
+
+    // Pattern
+    pub fn identifier_pattern(
+        &mut self, 
+        binding_mode: BindingMode, 
+        identifier: Token
+    ) -> Pattern {
+        let span = identifier.span.clone();
+        let pattern = Pattern {
+            id: StatementId::new(0), // Will be set when pattern is used in statement
+            kind: PatternKind::Identifier(binding_mode, identifier.clone()),
+            span,
+            token: identifier,
+        };
+        pattern
+    }
+
+    pub fn tuple_pattern(
+        &mut self,
+        patterns: Vec<Box<Pattern>>,
+        span: TextSpan,
+        token: Token
+    ) -> Pattern {
+        Pattern {
+            id: StatementId::new(0), // Will be set when pattern is used in statement
+            kind: PatternKind::Tuple(patterns),
+            span,
+            token,
+        }
+    }
+
+    pub fn error_pattern(
+        &mut self,
+        span: TextSpan,
+        token: Token
+    ) -> Pattern {
+        Pattern {
+            id: StatementId::new(0), // Will be set when pattern is used in statement
+            kind: PatternKind::Err,
+            span,
+            token,
+        }
+    }
+
+    // Update let_statement to accept a Pattern and set its ID
+    pub fn let_statement_with_pattern(
+        &mut self, 
+        ast: &Ast, 
+        mut pattern: Pattern, 
+        initialiser: ExpressionId, 
+        type_annotation: Option<StaticTypeAnnotation>
+    ) -> &Statement {
+        let mut spans = Vec::new();
+        
+        spans.push(pattern.span.clone());
+        spans.push(self.query_expression(initialiser).span(ast));
+        
+        if let Some(ref annotation) = type_annotation {
+            spans.extend(annotation.collect_spans());
+        }
+        
+        let span_refs: Vec<&TextSpan> = spans.iter().collect();
+        let span = TextSpan::combine_refs(&span_refs);
+
+        let identifier = match &pattern.kind {
+            PatternKind::Identifier(_, token) => token.clone(),
+            _ => pattern.token.clone()
+        };
+
+        let statement = Statement::new(
+            StatementKind::Let(LetStatement { 
+                identifier, 
+                pattern: pattern.clone(),
+                initialiser, 
+                type_annotation, 
+                variable_index: VariableIndex::new(0) 
+            }),
+            StatementId::new(0),
+            span
+        );
+        
+        let statement_id = self.statements.push(statement);
+        self.statements[statement_id].id = statement_id;
+        pattern.id = statement_id;
+        
+        if let StatementKind::Let(let_stmt) = &mut self.statements[statement_id].kind {
+            let_stmt.pattern.id = statement_id;
+        }
+        
+        &self.statements[statement_id]
     }
 
     pub fn if_expression(
@@ -279,13 +388,14 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Variable(VarExpression { identifier, variable_index: VariableIndex::new(0) }), span)
     }
 
-    pub fn assignment_expression(&mut self, identifier: Token, equals: Token, expression: ExpressionId) -> &Expression {
+    pub fn assignment_expression(&mut self, left_hand_side: ExpressionId, equals: Token, expression: ExpressionId) -> &Expression {
+        let lhs_span = self.query_expression(left_hand_side).span(self);
         let expr_span = self.query_expression(expression).span(self);
-        let span_refs = vec![&identifier.span, &equals.span, &expr_span];
+        let span_refs = vec![&lhs_span, &equals.span, &expr_span];
         let span = TextSpan::combine_refs(&span_refs);
         
         self.expression_from_kind(
-            ExpressionKind::Assignment(AssignExpression { identifier, equals, expression, variable_index: VariableIndex::new(0) }),
+            ExpressionKind::Assignment(AssignExpression { lhs: left_hand_side, equals, expression, variable_index: VariableIndex::new(0) }),
             span
         )
     }
@@ -717,6 +827,7 @@ pub struct WhileStatement {
 #[derive(Debug, Clone)]
 pub struct LetStatement {
     pub identifier: Token,
+    pub pattern: Pattern,
     pub initialiser: ExpressionId,
     pub type_annotation: Option<StaticTypeAnnotation>,
     pub variable_index: VariableIndex,
@@ -763,6 +874,32 @@ impl Statement {
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Pattern {
+    pub id: StatementId,
+    pub kind: PatternKind,
+    pub span: TextSpan,
+    pub token: Token,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternKind {
+    Wildcard, // TODO: future impl
+    Identifier(BindingMode, Token),
+    Tuple(Vec<Box<Pattern>>),
+    Expression(Box<Expression>),
+    Err,
+}
+
+#[derive(Debug, Clone)]
+pub struct BindingMode(pub Mutability);
+
+#[derive(Debug, Clone)]
+pub enum Mutability {
+    Mutable,
+    Immutable,
 }
 
 #[derive(Debug, Clone)]
@@ -914,7 +1051,7 @@ pub struct BoolExpression {
 
 #[derive(Debug, Clone)]
 pub struct AssignExpression {
-    pub identifier: Token, 
+    pub lhs: ExpressionId,
     pub equals: Token,
     pub expression: ExpressionId,
     pub variable_index: VariableIndex,
@@ -1179,11 +1316,11 @@ impl Expression {
             },
             ExpressionKind::Variable(expr) => expr.identifier.span.clone(),
             ExpressionKind::Assignment(expr) => {
-                let identifier = expr.identifier.span.clone();
+                let lhs = ast.query_expression(expr.lhs).span(ast);
                 let equals = expr.equals.span.clone();
                 let expression = ast.query_expression(expr.expression).span(ast);
 
-                TextSpan::combine(vec![identifier, equals, expression])
+                TextSpan::combine(vec![lhs, equals, expression])
             },
             ExpressionKind::Boolean(expr) => expr.token.span.clone(),
             ExpressionKind::Call(expr) => {

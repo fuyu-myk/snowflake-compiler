@@ -189,10 +189,15 @@ pub enum InstructionKind {
         target: LocationIdx,
         elements: Vec<Operand>,
     },
-    TupleIndex {
+    TupleField {
         target: LocationIdx,
         tuple: Operand,
-        index: Operand,
+        field: Operand,
+    },
+    TupleStore {
+        tuple: Operand,
+        field: Operand,
+        value: Operand,
     },
 
     // Movement operations

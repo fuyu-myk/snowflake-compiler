@@ -57,6 +57,7 @@ pub enum TokenKind {
     Continue,
     Function,
     Return,
+    Mutable,
 
     // separators
     LeftParen,
@@ -157,6 +158,7 @@ impl Display for TokenKind {
             TokenKind::Continue => write!(f, "Continue"),
             TokenKind::Function => write!(f, "Function"),
             TokenKind::Return => write!(f, "Return"),
+            TokenKind::Mutable => write!(f, "Mutable"),
 
             // separators
             TokenKind::LeftParen => write!(f, "("),

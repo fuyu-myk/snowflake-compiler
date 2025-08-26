@@ -309,8 +309,11 @@ impl X86_64Codegen {
                         InstructionKind::Tuple { .. } => {
                             unimplemented!("Tuple instruction not yet implemented for x86_64 backend");
                         }
-                        InstructionKind::TupleIndex { .. } => {
+                        InstructionKind::TupleField { .. } => {
                             unimplemented!("TupleIndex instruction not yet implemented for x86_64 backend");
+                        }
+                        InstructionKind::TupleStore { .. } => {
+                            unimplemented!("TupleStore instruction not yet implemented for x86_64 backend");
                         }
                         InstructionKind::Nop => {
                             // nothing
@@ -2428,7 +2431,8 @@ impl X86_64Codegen {
             InstructionKind::Store { .. } |
             InstructionKind::ArrayStore { .. } |
             InstructionKind::Tuple { .. } |
-            InstructionKind::TupleIndex { .. } |
+            InstructionKind::TupleField { .. } |
+            InstructionKind::TupleStore { .. } |
             InstructionKind::Nop => None,
         }
     }

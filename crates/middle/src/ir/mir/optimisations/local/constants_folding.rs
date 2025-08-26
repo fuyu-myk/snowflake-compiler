@@ -161,6 +161,23 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
+                InstructionKind::ArrayStore { array, index, value } => {
+                    if let Some(const_val) = constants.get_constant_value(array) {
+                        if array.replace_if_unequal(const_val) {
+                            changes += 1;
+                        }
+                    }
+                    if let Some(const_val) = constants.get_constant_value(index) {
+                        if index.replace_if_unequal(const_val) {
+                            changes += 1;
+                        }
+                    }
+                    if let Some(const_val) = constants.get_constant_value(value) {
+                        if value.replace_if_unequal(const_val) {
+                            changes += 1;
+                        }
+                    }
+                }
                 InstructionKind::Tuple { elements } => {
                     for element in elements.iter_mut() {
                         if let Some(const_value) = constants.get_constant_value(element) {
@@ -170,14 +187,26 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::TupleIndex { tuple, index } => {
+                InstructionKind::TupleField { tuple, field } => {
                     if let Some(value) = constants.get_constant_value(tuple) {
                         if tuple.replace_if_unequal(value) {
                             changes += 1;
                         }
                     }
-                    if let Some(value) = constants.get_constant_value(index) {
-                        if index.replace_if_unequal(value) {
+                    if let Some(value) = constants.get_constant_value(field) {
+                        if field.replace_if_unequal(value) {
+                            changes += 1;
+                        }
+                    }
+                }
+                InstructionKind::TupleStore { tuple, value, .. } => {
+                    if let Some(value) = constants.get_constant_value(tuple) {
+                        if tuple.replace_if_unequal(value) {
+                            changes += 1;
+                        }
+                    }
+                    if let Some(val) = constants.get_constant_value(value) {
+                        if value.replace_if_unequal(val) {
                             changes += 1;
                         }
                     }

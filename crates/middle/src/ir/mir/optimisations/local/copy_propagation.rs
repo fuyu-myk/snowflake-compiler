@@ -68,6 +68,19 @@ impl MIRPassLocal for CopyPropagation {
                         changes += 1;
                     }
                 }
+                InstructionKind::ArrayStore { array, index, value } => {
+                    if array.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+
+                    if index.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+
+                    if value.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
                 InstructionKind::Tuple { elements } => {
                     for element in elements.iter_mut() {
                         if let Some(instruct_ref) = element.as_instruct_ref() {
@@ -75,8 +88,17 @@ impl MIRPassLocal for CopyPropagation {
                         }
                     }
                 }
-                InstructionKind::TupleIndex { tuple, .. } => {
+                InstructionKind::TupleField { tuple, .. } => {
                     if tuple.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+                }
+                InstructionKind::TupleStore { tuple, value, .. } => {
+                    if tuple.replace_with_copied_ref(&copies) {
+                        changes += 1;
+                    }
+
+                    if value.replace_with_copied_ref(&copies) {
                         changes += 1;
                     }
                 }

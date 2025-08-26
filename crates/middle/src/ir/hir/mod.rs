@@ -96,8 +96,8 @@ pub struct HIRStatement {
 pub enum HIRStmtKind {
     Expression { expr: HIRExpression },
     Assignment {
-        var_idx: VariableIndex,
-        expr: HIRExpression,
+        target: HIRExpression,  // Can be variable, index, etc.
+        value: HIRExpression,
     },
     If {
         condition: HIRExpression,
@@ -106,8 +106,8 @@ pub enum HIRStmtKind {
     },
     Declaration {
         var_idx: VariableIndex,
-        init: Option<HIRExpression>,
-        // mutable: bool,  // maybe supported later
+        init_expr: Option<HIRExpression>,
+        is_mutable: bool,  // Track mutability from pattern
     },
     Block {
         body: Vec<HIRStatement>,
@@ -136,7 +136,7 @@ pub enum HIRExprKind {
     String(String),
     Bool(bool),
     Unit,
-    Var(VariableIndex),
+    Var { var_idx: VariableIndex },
     Array {
         elements: Vec<HIRExpression>,
         element_type: Type,
@@ -152,9 +152,9 @@ pub enum HIRExprKind {
         elements: Vec<HIRExpression>,
         element_types: Vec<Box<Type>>,
     },
-    TupleIndex {
+    TupleField {
         tuple: Box<HIRExpression>,
-        index: Box<HIRExpression>,
+        field: Box<HIRExpression>,
     },
     Binary {
         operator: BinaryOpKind,

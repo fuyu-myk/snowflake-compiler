@@ -279,6 +279,16 @@ impl<'mir> LIRBuilder<'mir> {
                                 index: index_operand,
                             }
                         }
+                        mir::InstructionKind::ArrayStore { array, index, value } => {
+                            let array_operand = self.build_operand(array);
+                            let index_operand = self.build_operand(index);
+                            let value_operand = self.build_operand(value);
+                            InstructionKind::ArrayStore {
+                                array: array_operand,
+                                index: index_operand,
+                                value: value_operand,
+                            }
+                        }
                         mir::InstructionKind::IndexVal { array_len } => {
                             let array_operand = self.build_operand(array_len);
                             InstructionKind::ArrayLength {
@@ -295,13 +305,23 @@ impl<'mir> LIRBuilder<'mir> {
                                 elements: element_operands,
                             }
                         }
-                        mir::InstructionKind::TupleIndex { tuple, index } => {
+                        mir::InstructionKind::TupleField { tuple, field } => {
                             let tuple_operand = self.build_operand(tuple);
-                            let index_operand = self.build_operand(index);
-                            InstructionKind::TupleIndex {
+                            let field_operand = self.build_operand(field);
+                            InstructionKind::TupleField {
                                 target: self.get_ref_location(instruct_idx),
                                 tuple: tuple_operand,
-                                index: index_operand,
+                                field: field_operand,
+                            }
+                        }
+                        mir::InstructionKind::TupleStore { tuple, field, value } => {
+                            let tuple_operand = self.build_operand(tuple);
+                            let field_operand = self.build_operand(field);
+                            let value_operand = self.build_operand(value);
+                            InstructionKind::TupleStore {
+                                tuple: tuple_operand,
+                                field: field_operand,
+                                value: value_operand,
                             }
                         }
                         mir::InstructionKind::Phi(phi_node) => {

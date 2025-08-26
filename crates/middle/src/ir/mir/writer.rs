@@ -175,6 +175,13 @@ impl<W> MIRWriter<W> where W: Write {
                 Self::write_value(writer, index)?;
                 write!(writer, "]")?;
             }
+            InstructionKind::ArrayStore { array, index, value } => {
+                Self::write_value(writer, array)?;
+                write!(writer, "[")?;
+                Self::write_value(writer, index)?;
+                write!(writer, "] = ")?;
+                Self::write_value(writer, value)?;
+            }
             InstructionKind::Tuple { elements } => {
                 write!(writer, "(")?;
                 for (i, elem) in elements.iter().enumerate() {
@@ -185,10 +192,17 @@ impl<W> MIRWriter<W> where W: Write {
                 }
                 write!(writer, ")")?;
             }
-            InstructionKind::TupleIndex { tuple, index } => {
+            InstructionKind::TupleField { tuple, field } => {
                 Self::write_value(writer, tuple)?;
                 write!(writer, ".")?;
-                Self::write_value(writer, index)?;
+                Self::write_value(writer, field)?;
+            }
+            InstructionKind::TupleStore { tuple, field, value } => {
+                Self::write_value(writer, tuple)?;
+                write!(writer, ".")?;
+                Self::write_value(writer, field)?;
+                write!(writer, " = ")?;
+                Self::write_value(writer, value)?;
             }
             InstructionKind::Phi(phi) => {
                 write!(writer, "phi {{")?;

@@ -1,4 +1,4 @@
-use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind};
+use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind, Pattern, BindingMode, Mutability};
 use snowflake_common::bug_report;
 use snowflake_common::token::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, resolve_type_kind, GlobalScope};
@@ -308,13 +308,14 @@ impl <'a> Parser<'a> {
 
     fn parse_let_statement(&mut self) -> &Statement {
         self.consume_and_check(TokenKind::Let); // check 'let'
-        let identifier = self.consume_and_check(TokenKind::Identifier).clone(); // check variable
+        let pattern = self.parse_pattern();
+        
         let optional_type_annotation = self.parse_optional_type_annotation(); // check static type; e.g. a: int = ...
         self.consume_and_check(TokenKind::Equals); // check '='
 
         let expr = self.parse_expression();
 
-        self.ast.let_statement(&self.ast.clone(), identifier, expr, optional_type_annotation)
+        self.ast.let_statement_with_pattern(&self.ast.clone(), pattern, expr, optional_type_annotation)
     }
 
     fn parse_optional_type_annotation(&mut self) -> Option<StaticTypeAnnotation> {
@@ -442,16 +443,16 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_assignment_expression(&mut self) -> ExpressionId {
-        if self.current().kind == TokenKind::Identifier {
-            if self.peek(1).kind == TokenKind::Equals {
-                let identifier = self.consume_and_check(TokenKind::Identifier).clone();
-                let equals = self.consume_and_check(TokenKind::Equals).clone();
-                let expr = self.parse_expression();
-
-                return self.ast.assignment_expression(identifier, equals, expr).id;
-            }
+        let left_expr = self.parse_binary_expression();
+        
+        if self.current().kind == TokenKind::Equals {
+            let equals = self.consume_and_check(TokenKind::Equals).clone();
+            let right_expr = self.parse_assignment_expression(); // Right-recursive for right-associativity
+            
+            return self.ast.assignment_expression(left_expr, equals, right_expr).id;
         }
-        return self.parse_binary_expression();
+        
+        left_expr
     }
 
     fn parse_binary_expression(&mut self) -> ExpressionId {
@@ -773,6 +774,70 @@ impl <'a> Parser<'a> {
     fn consume(&self) -> &Token {
         self.current.increment();
         self.peek(-1)
+    }
+
+    // Pattern parsing methods
+    
+    /// Parse a pattern with optional mutability
+    /// Handles: `mut identifier`, `identifier`, `(pattern, pattern)`, etc.
+    fn parse_pattern(&mut self) -> Pattern {
+        let start_span = self.current().span.clone();
+        
+        match self.current().kind {
+            TokenKind::Mutable => {
+                self.parse_binding_pattern_with_mut()
+            }
+            TokenKind::Identifier => {
+                self.parse_identifier_pattern()
+            }
+            TokenKind::LeftParen => {
+                self.parse_tuple_pattern()
+            }
+            _ => {
+                self.diagnostics_report.borrow_mut().report_unexpected_token(&TokenKind::Identifier, &self.current());
+                let token = self.current().clone();
+                self.ast.error_pattern(start_span, token)
+            }
+        }
+    }
+
+    /// Parse a binding pattern that starts with `mut`
+    /// Handles: `mut identifier`
+    fn parse_binding_pattern_with_mut(&mut self) -> Pattern {
+        self.consume_and_check(TokenKind::Mutable); // consume 'mut' token
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        
+        let binding_mode = BindingMode(Mutability::Mutable);
+        self.ast.identifier_pattern(binding_mode, identifier)
+    }
+
+    /// Parse an identifier pattern (immutable binding)
+    /// Handles: `identifier`
+    fn parse_identifier_pattern(&mut self) -> Pattern {
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        let binding_mode = BindingMode(Mutability::Immutable);
+        
+        self.ast.identifier_pattern(binding_mode, identifier)
+    }
+
+    /// Parse a tuple pattern
+    /// Handles: `(pattern1, pattern2, ...)`
+    fn parse_tuple_pattern(&mut self) -> Pattern {
+        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+        let mut patterns = Vec::new();
+        
+        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+            patterns.push(Box::new(self.parse_pattern()));
+            
+            if self.current().kind != TokenKind::RightParen {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        }
+        
+        let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+        let span = snowflake_common::text::span::TextSpan::combine_refs(&[&left_paren.span, &right_paren.span]);
+        
+        self.ast.tuple_pattern(patterns, span, left_paren)
     }
 
     fn consume_and_check(&self, kind: TokenKind) -> &Token {

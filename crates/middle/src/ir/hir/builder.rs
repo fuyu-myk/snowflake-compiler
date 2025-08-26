@@ -104,7 +104,20 @@ impl HIRBuilder {
             }
             StatementKind::Let(let_statement) => {
                 let expr = self.build_expression(let_statement.initialiser, ast, global_scope, ctx, true);
-                HIRStmtKind::Declaration { var_idx: let_statement.variable_index, init: Some(expr) }
+                
+                // Extract mutability from the pattern
+                let is_mutable = match &let_statement.pattern.kind {
+                    snowflake_front::ast::PatternKind::Identifier(binding_mode, _) => {
+                        matches!(binding_mode.0, snowflake_front::ast::Mutability::Mutable)
+                    }
+                    _ => false // Other patterns default to immutable for now
+                };
+                
+                HIRStmtKind::Declaration { 
+                    var_idx: let_statement.variable_index, 
+                    init_expr: Some(expr),
+                    is_mutable 
+                }
             }
             StatementKind::While(while_statement) => {
                 let condition = self.build_expression(while_statement.condition, ast, global_scope, ctx, false);
@@ -172,19 +185,22 @@ impl HIRBuilder {
             ExpressionKind::Parenthesised(paren_expr) => {
                 self.build_expression(paren_expr.expression, ast, global_scope, ctx, temp_needed).kind
             },
-            ExpressionKind::Variable(var_expr) => HIRExprKind::Var(var_expr.variable_index),
+            ExpressionKind::Variable(var_expr) => HIRExprKind::Var { var_idx: var_expr.variable_index },
             ExpressionKind::Assignment(assign_expr) => {
-                let expr = self.build_expression(assign_expr.expression, ast, global_scope, ctx, true);
-                let span = expr.span.clone();
+                let value_expr = self.build_expression(assign_expr.expression, ast, global_scope, ctx, true);
+                let target_expr = self.build_expression(assign_expr.lhs, ast, global_scope, ctx, true);
+                
+                let span = value_expr.span.clone();
+                let value_kind = value_expr.kind.clone();
                 let statement = self.create_statement(HIRStmtKind::Assignment {
-                    var_idx: assign_expr.variable_index,
-                    expr,
+                    target: target_expr,
+                    value: value_expr,
                 }, span);
 
                 ctx.statements.push(statement);
 
                 if temp_needed {
-                    HIRExprKind::Var(assign_expr.variable_index)
+                    value_kind
                 } else {
                     HIRExprKind::Unit
                 }
@@ -220,16 +236,27 @@ impl HIRBuilder {
                     let temp_var_idx = self.declare_next_temp_var(global_scope, expr.ty.clone());
                     let temp_span = expr.span.clone();
                     
+                    let temp_target_then = self.create_expression(
+                        HIRExprKind::Var { var_idx: temp_var_idx },
+                        then_expr.ty.clone(),
+                        temp_span.clone()
+                    );
+                    let temp_target_else = self.create_expression(
+                        HIRExprKind::Var { var_idx: temp_var_idx },
+                        else_expr.ty.clone(),
+                        temp_span.clone()
+                    );
+                    
                     *then_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
-                        var_idx: temp_var_idx, 
-                        expr: then_expr
+                        target: temp_target_then, 
+                        value: then_expr
                     }, temp_span.clone());
                     *else_ctx.statements.last_mut().unwrap() = self.create_statement(HIRStmtKind::Assignment { 
-                        var_idx: temp_var_idx, 
-                        expr: else_expr 
+                        target: temp_target_else, 
+                        value: else_expr 
                     }, temp_span);
 
-                    HIRExprKind::Var(temp_var_idx)
+                    HIRExprKind::Var { var_idx: temp_var_idx }
                 };
 
                 ctx.statements.push(self.create_statement(HIRStmtKind::If {
@@ -261,15 +288,22 @@ impl HIRBuilder {
                         let temp_span = expr.span.clone();
                         ctx.statements.push(self.create_statement(HIRStmtKind::Declaration { 
                             var_idx: temp_var_idx, 
-                            init: None 
+                            init_expr: None,
+                            is_mutable: false
                         }, temp_span.clone()));
 
+                        let temp_target = self.create_expression(
+                            HIRExprKind::Var { var_idx: temp_var_idx },
+                            expr.ty.clone(),
+                            temp_span.clone()
+                        );
+
                         *last_stmt = self.create_statement(HIRStmtKind::Assignment { 
-                            var_idx: temp_var_idx, 
-                            expr: expr.clone() 
+                            target: temp_target, 
+                            value: expr.clone() 
                         }, temp_span);
 
-                        HIRExprKind::Var(temp_var_idx)
+                        HIRExprKind::Var { var_idx: temp_var_idx }
                     } else {
                         HIRExprKind::Unit
                     }
@@ -394,9 +428,9 @@ impl HIRBuilder {
 
                 // Create a new tuple index operation
                 tuple = self.create_expression(
-                    HIRExprKind::TupleIndex {
+                    HIRExprKind::TupleField {
                         tuple: Box::new(tuple),
-                        index: Box::new(index),
+                        field: Box::new(index),
                     },
                     element_type,
                     expr.span.clone()

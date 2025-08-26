@@ -6,6 +6,7 @@ use snowflake_middle::ir::{
     mir::{optimisations::Optimiser, MIRBuilder, MIRWriter},
     lir::builder::LIRBuilder
 };
+use snowflake_middle::analysis::SemanticAnalyzer;
 
 use anyhow::{anyhow, Result};
 
@@ -48,6 +49,19 @@ fn main() -> Result<()> {
     let hir_builder = HIRBuilder::new();
     let hir = hir_builder.build(&compilation_unit.ast, &mut compilation_unit.global_scope);
 
+    // Semantic Analysis (Mutability checking)
+    let mut semantic_analyzer = SemanticAnalyzer::new(compilation_unit.diagnostics_report.clone());
+    semantic_analyzer.analyze(&input, &hir, &mut compilation_unit.global_scope)
+        .map_err(|err| {
+            let error_count = err.borrow().diagnostics.len();
+            if error_count == 1 {
+                anyhow!("Could not analyze `{}` due to {} previous error", args.file_path, error_count)
+            } else {
+                anyhow!("Could not analyze `{}` due to {} previous errors", args.file_path, error_count)
+            }
+        })?;
+
+    // HIR printing
     if config.show_all_ir || config.show_hir {
         println!("=== HIR ===");
         let mut hir_output = Vec::new();

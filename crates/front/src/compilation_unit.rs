@@ -475,7 +475,8 @@ impl ASTVisitor for Resolver {
         match self.scopes.lookup_variable(variable_name) {
             None => {
                 let mut diagnostics = self.diagnostics.borrow_mut();
-                diagnostics.report_undeclared_variable(&variable_expression.identifier);
+                diagnostics.report_undeclared_variable(&variable_expression.identifier.span.literal, &variable_expression.identifier.span);
+                ast.set_type(expr.id, Type::Error);
             }
             Some(variable_index) => {
                 let variable = self.scopes.global_scope.variables.get(variable_index);
@@ -549,8 +550,9 @@ impl ASTVisitor for Resolver {
                 self.visit_expression(ast, binary_expr_id);
                 
                 // Create the assignment expression (a = (a + b))
+                let left_hand_side_expr_id = ast.variable_expression(var_identifier.clone()).id;
                 let assignment_expr = AssignExpression {
-                    identifier: var_identifier.clone(),
+                    lhs: left_hand_side_expr_id,
                     equals: self.create_synthetic_equals_token(&var_identifier),
                     expression: binary_expr_id,
                     variable_index: var_idx,
@@ -738,24 +740,14 @@ impl ASTVisitor for Resolver {
 
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, expr: &Expression) {
         self.visit_expression(ast, assignment_expression.expression);
-        let identifier = assignment_expression.identifier.span.literal.clone();
+        self.visit_expression(ast, assignment_expression.lhs);
         
-        let ty = match self.scopes.lookup_variable(&identifier) {
-            None => {
-                let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                diagnostics_binding.report_undeclared_variable(&assignment_expression.identifier);
-                Type::Void
-            }
-            Some(variable) => {
-                ast.set_variable(expr.id, variable);
-                let value_expression = ast.query_expression(assignment_expression.expression);
-                let variable = self.scopes.global_scope.variables.get(variable);
-                self.expect_type(variable.ty.clone(), &value_expression.ty, &value_expression.span(&ast));
-                variable.ty.clone()
-            }
-        };
-
-        ast.set_type(expr.id, ty);
+        let lhs_expr = ast.query_expression(assignment_expression.lhs);
+        let rhs_expr = ast.query_expression(assignment_expression.expression);
+        
+        self.expect_type(lhs_expr.ty.clone(), &rhs_expr.ty, &rhs_expr.span(ast));
+        
+        ast.set_type(expr.id, rhs_expr.ty.clone());
     }
 
     fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
@@ -1105,18 +1097,19 @@ impl CompilationUnit {
     }
 
     fn check_diagnostics(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) -> Result<(), ()> {
-    let diagnostics_binding = diagnostics_report.borrow();
-    if diagnostics_binding.diagnostics.len() > 0 {
-        let diagnostics_printer = DiagnosticsPrinter::new(
-            &text,
-            &diagnostics_binding.diagnostics
-        );
+        let diagnostics_binding = diagnostics_report.borrow();
+        if diagnostics_binding.diagnostics.len() > 0 {
+            let diagnostics_printer = DiagnosticsPrinter::new(
+                &text,
+                &diagnostics_binding.diagnostics
+            );
 
-        diagnostics_printer.print();
-        println!("");
-        
-        return Err(());
+            diagnostics_printer.print();
+            println!("");
+            
+            return Err(());
         }
-    Ok(())
+
+        Ok(())
     }
 }

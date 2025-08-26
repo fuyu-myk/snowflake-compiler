@@ -64,6 +64,11 @@ impl MIRPass for PhiElimination {
                         Self::replace_value_refs(array, &phi_replacements);
                         Self::replace_value_refs(index, &phi_replacements);
                     }
+                    InstructionKind::ArrayStore { array, index, value } => {
+                        Self::replace_value_refs(array, &phi_replacements);
+                        Self::replace_value_refs(index, &phi_replacements);
+                        Self::replace_value_refs(value, &phi_replacements);
+                    }
                     InstructionKind::IndexVal { array_len } => {
                         Self::replace_value_refs(array_len, &phi_replacements);
                     }
@@ -72,9 +77,14 @@ impl MIRPass for PhiElimination {
                             Self::replace_value_refs(element, &phi_replacements);
                         }
                     }
-                    InstructionKind::TupleIndex { tuple, index } => {
+                    InstructionKind::TupleField { tuple, field } => {
                         Self::replace_value_refs(tuple, &phi_replacements);
-                        Self::replace_value_refs(index, &phi_replacements);
+                        Self::replace_value_refs(field, &phi_replacements);
+                    }
+                    InstructionKind::TupleStore { tuple, field, value } => {
+                        Self::replace_value_refs(tuple, &phi_replacements);
+                        Self::replace_value_refs(field, &phi_replacements);
+                        Self::replace_value_refs(value, &phi_replacements);
                     }
                     InstructionKind::Phi(phi) => {
                         // Update phi operands to point to replacements

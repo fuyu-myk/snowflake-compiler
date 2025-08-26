@@ -152,6 +152,16 @@ impl ASTVisitor for ASTPrinter {
         self.add_keyword("let"); // let keyword in magenta
         self.add_whitespace();
 
+        match &let_statement.pattern.kind {
+            PatternKind::Identifier(binding_mode, _) => {
+                if let Mutability::Mutable = binding_mode.0 {
+                    self.add_keyword("mut");
+                    self.add_whitespace();
+                }
+            }
+            _ => {}
+        }
+
         self.add_text(let_statement.identifier.span.literal.as_str()); // variable name in white
         if let Some(type_annotation) = &let_statement.type_annotation {
             self.add_type_annot(type_annotation);
@@ -207,7 +217,7 @@ impl ASTVisitor for ASTPrinter {
     }
 
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
-        self.add_variable(assignment_expression.identifier.span.literal.as_str());
+        self.visit_expression(ast, assignment_expression.lhs);
         self.add_whitespace();
 
         self.add_text("=");

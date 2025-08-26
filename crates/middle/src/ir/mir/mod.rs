@@ -181,9 +181,11 @@ impl Instruction {
             InstructionKind::ArrayAlloc { .. } => false,
             InstructionKind::ArrayInit { .. } => false,
             InstructionKind::ArrayIndex { .. } => false,
+            InstructionKind::ArrayStore { .. } => false,
             InstructionKind::IndexVal { .. } => true,
             InstructionKind::Tuple { .. } => true,
-            InstructionKind::TupleIndex { .. } => false,
+            InstructionKind::TupleField { .. } => false,
+            InstructionKind::TupleStore { .. } => false,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
             InstructionKind::Call { .. } => false,
@@ -206,15 +208,25 @@ pub enum InstructionKind {
         array: Value,
         index: Value,
     },
+    ArrayStore {
+        array: Value,
+        index: Value,
+        value: Value,
+    },
     IndexVal {
         array_len: Value,
     },
     Tuple {
         elements: Vec<Value>,
     },
-    TupleIndex {
+    TupleField {
         tuple: Value,
-        index: Value,
+        field: Value,
+    },
+    TupleStore {
+        tuple: Value,
+        field: Value,
+        value: Value,
     },
     Binary {
         operator: BinOp,
