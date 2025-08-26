@@ -108,13 +108,13 @@ Thus far, the current compiler architecture is highlighted below:
 
 ## Types supported
 ### Primitives
-* Integers
-* Floats
-* Boolean
-* Strings
+- [x] Integers
+- [x] Floats
+- [x] Boolean
+- [x] Strings
 
 ### Data Structures supported
-* Arrays [completed 05.08.2025]
+- [x] Arrays [completed 05.08.2025]
     * Defined and indexed as follows:
 ```
 // One dimensional array
@@ -131,7 +131,7 @@ let b: int = matrix[0][2] + matrix[2][0]; // 10
 * Indexes are of type `usize`
 * TODO: Slice indexes
 
-* Tuples [completed 25.08.2025]
+- [x] Tuples [completed 25.08.2025]
     * Defined and indexed as follows:
 ```
 let tuple: (int, float, string) = (1, 1.01, "hello");
@@ -304,3 +304,7 @@ a += a * 2 + 3
 * Will abort the program and generate a diagnostic in the following scenarios:
     * Illegal index access for arrays in runtime
 * Currently WIP, will improve handling and include more scenarios in future
+
+- [x] **Mutability** [completed 27.08.2025]
+* Similar to Rust's mutability
+* Defined through the `mut` keyword
