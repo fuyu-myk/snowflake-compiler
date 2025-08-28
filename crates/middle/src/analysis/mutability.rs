@@ -90,7 +90,6 @@ impl MutabilityChecker {
                 Ok(())
             }
             HIRStmtKind::Const { var_idx, init_expr } => {
-                // Track const variables separately
                 self.const_variables.insert(*var_idx);
 
                 if let Some(expr) = init_expr {

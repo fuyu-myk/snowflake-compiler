@@ -74,7 +74,7 @@ mod tests {
                         let literal = &raw_text[start_index..end_index];
                         let span = TextSpan::new(start_index, end_index, literal.to_string());
                         let message = messages[diagnostics.len()].to_string();
-                        let diagnostic = Diagnostic::new(message, span, DiagnosticKind::Error);
+                        let diagnostic = Diagnostic::new("brief".to_string(), message, span, DiagnosticKind::Error);
                         diagnostics.push(diagnostic);
                     }
                     _ => {
@@ -89,7 +89,7 @@ mod tests {
             assert_eq!(self.actual.len(), self.expected.len(), "Expected {} diagnostics, found {}", self.expected.len(), self.actual.len());
 
             for (actual, expected) in self.actual.iter().zip(self.expected.iter()) {
-                assert_eq!(actual.message, expected.message, "Expected message '{}', found '{}'", expected.message, actual.message);
+                assert_eq!(actual.message_full, expected.message_full, "Expected message '{}', found '{}'", expected.message_full, actual.message_full);
                 assert_eq!(actual.span.start, expected.span.start, "Expected start index {}, found {}", expected.span.start, actual.span.start);
                 assert_eq!(actual.span.end, expected.span.end, "Expected end index {}, found {}", expected.span.end, actual.span.end);
                 assert_eq!(actual.span.literal, expected.span.literal, "Expected literal {:?}, found {:?}", expected.span.literal, actual.span.literal);
@@ -106,7 +106,7 @@ mod tests {
     fn test_undeclared_variable() {
         let input = "let a = «b»";
         let expected = vec![
-            "Undeclared variable 'b'"
+            "Undeclared variable `b`"
         ];
 
         assert_diagnostics(input, expected);
@@ -152,7 +152,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared variable 'c'"
+            "Undeclared variable `c`"
         ];
 
         assert_diagnostics(input, expected);
@@ -185,7 +185,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared variable 'a'"
+            "Undeclared variable `a`"
         ];
 
         assert_diagnostics(input, expected);
@@ -199,7 +199,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Function 'a' already declared"
+            "Function `a` already declared"
         ];
 
         assert_diagnostics(input, expected);
@@ -212,7 +212,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared function 'a'"
+            "Undeclared function `a`"
         ];
 
         assert_diagnostics(input, expected);
@@ -226,7 +226,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Function 'foo' expects 2 arguments, but only 1 was found"
+            "Function `foo` expects 2 arguments, but only 1 was found"
         ];
 
         assert_diagnostics(input, expected);
@@ -241,7 +241,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'bool', found 'int'"
+            "Expected type `bool`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -257,7 +257,7 @@ mod tests {
         ";
         
         let expected = vec![
-            "Expected type 'bool', found 'int'"
+            "Expected type `bool`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -273,7 +273,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'bool', found 'int'"
+            "Expected type `bool`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -287,7 +287,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -301,7 +301,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -319,7 +319,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'bool', found 'int'"
+            "Expected type `bool`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -334,7 +334,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -349,7 +349,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -362,7 +362,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -375,7 +375,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot use 'return' outside of a function"
+            "Cannot use `return` outside of a function"
         ];
 
         assert_diagnostics(input, expected);
@@ -390,7 +390,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'void'"
+            "Expected type `int`, found `void`"
         ];
 
         assert_diagnostics(input, expected);
@@ -403,7 +403,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared type 'b'"
+            "Undeclared type `b`"
         ];
 
         assert_diagnostics(input, expected);
@@ -416,7 +416,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared type 'b'"
+            "Undeclared type `b`"
         ];
 
         assert_diagnostics(input, expected);
@@ -429,7 +429,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared type 'b'"
+            "Undeclared type `b`"
         ];
 
         assert_diagnostics(input, expected);
@@ -443,7 +443,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -458,7 +458,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'void', found 'int'"
+            "Expected type `void`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -473,7 +473,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'void'"
+            "Expected type `int`, found `void`"
         ];
 
         assert_diagnostics(input, expected);
@@ -486,7 +486,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Undeclared variable 'a'"
+            "Undeclared variable `a`"
         ];
 
         assert_diagnostics(input, expected);
@@ -506,7 +506,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'bool', found 'int'"
+            "Expected type `bool`, found `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -541,7 +541,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Division by zero in '/' operation"
+            "Division by zero in `/` operation"
         ];
 
         assert_diagnostics(input, expected);
@@ -555,7 +555,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Division by zero in '%' operation"
+            "Division by zero in `%` operation"
         ];
 
         assert_diagnostics(input, expected);
@@ -569,7 +569,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Division by zero in '/' operation"
+            "Division by zero in `/` operation"
         ];
 
         assert_diagnostics(input, expected);
@@ -583,7 +583,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Division by zero in '%' operation"
+            "Division by zero in `%` operation"
         ];
 
         assert_diagnostics(input, expected);
@@ -596,7 +596,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot use 'break' outside of a loop"
+            "Cannot use `break` outside of a loop"
         ];
 
         assert_diagnostics(input, expected);
@@ -609,7 +609,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot use 'continue' outside of a loop"
+            "Cannot use `continue` outside of a loop"
         ];
 
         assert_diagnostics(input, expected);
@@ -622,7 +622,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected type 'int', found 'bool'"
+            "Expected type `int`, found `bool`"
         ];
 
         assert_diagnostics(input, expected);
@@ -648,7 +648,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Expected 'int', found 'string'"
+            "Expected `int`, found `string`"
         ];
 
         assert_diagnostics(input, expected);
@@ -690,7 +690,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot be indexed by 'bool' (slice indices are of type 'usize')"
+            "Cannot be indexed by `bool` (slice indices are of type `usize`)"
         ];
 
         assert_diagnostics(input, expected);
@@ -704,7 +704,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot index type 'int'"
+            "Cannot index type `int`"
         ];
 
         assert_diagnostics(input, expected);
@@ -732,7 +732,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "'int' is a primitive type and therefore doesn't have any fields"
+            "`int` is a primitive type and therefore doesn't have any fields"
         ];
 
         assert_diagnostics(input, expected);
@@ -801,7 +801,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "constant 'a' should have an upper case name"
+            "constant `a` should have an upper case name"
         ];
 
         assert_diagnostics(input, expected);

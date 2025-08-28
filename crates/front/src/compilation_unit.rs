@@ -1125,7 +1125,6 @@ impl CompilationUnit {
         if diagnostics_binding.errors.len() > 0 {
             let diagnostics_printer = DiagnosticsPrinter::new(text, &diagnostics_binding.errors);
             diagnostics_printer.print_error();
-            println!("");
             return Err(());
         }
 
