@@ -58,6 +58,7 @@ pub enum TokenKind {
     Function,
     Return,
     Mutable,
+    Const,
 
     // separators
     LeftParen,
@@ -159,6 +160,7 @@ impl Display for TokenKind {
             TokenKind::Function => write!(f, "Function"),
             TokenKind::Return => write!(f, "Return"),
             TokenKind::Mutable => write!(f, "Mutable"),
+            TokenKind::Const => write!(f, "Const"),
 
             // separators
             TokenKind::LeftParen => write!(f, "("),

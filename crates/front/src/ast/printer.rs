@@ -369,4 +369,47 @@ impl ASTVisitor for ASTPrinter {
         self.add_text(".");
         self.visit_expression(ast, tuple_index_expression.index.idx_no);
     }
+
+    fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, _statement: &Statement) {
+        self.add_keyword("const"); // const keyword in magenta
+        self.add_whitespace();
+
+        self.add_text(&const_statement.identifier.span.literal); // variable name in white
+        self.add_type_annot(&const_statement.type_annotation);
+        self.add_whitespace();
+
+        self.add_text("="); // '=' in white
+        self.add_whitespace();
+
+        self.visit_expression(ast, const_statement.expr);
+    }
+
+    fn visit_item_default(&mut self, ast: &mut Ast, item: ItemId) {
+        let item = ast.query_item(item).clone();
+
+        match &item.kind {
+            ItemKind::Statement(statement) => {
+                self.visit_statement(ast, *statement);
+            }
+            ItemKind::Function(fx_decl) => {
+                self.visit_fx_decl(ast, fx_decl, item.id);
+            }
+            ItemKind::Const(constant_item) => {
+                self.add_keyword("const");
+                self.add_whitespace();
+
+                self.add_text(&constant_item.identifier.span.literal);
+                self.add_type_annot(&constant_item.type_annotation);
+                self.add_whitespace();
+
+                self.add_text("=");
+                self.add_whitespace();
+
+                if let Some(expr) = &constant_item.expr {
+                    self.visit_expression(ast, **expr);
+                }
+                self.result.push_str(&format!("{}\n", Fg(Reset)));
+            }
+        }
+    }
 }

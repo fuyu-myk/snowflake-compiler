@@ -109,6 +109,10 @@ pub enum HIRStmtKind {
         init_expr: Option<HIRExpression>,
         is_mutable: bool,  // Track mutability from pattern
     },
+    Const {
+        var_idx: VariableIndex,
+        init_expr: Option<HIRExpression>,
+    },
     Block {
         body: Vec<HIRStatement>,
         scope_id: ScopeId,

@@ -3,9 +3,9 @@
  */
 
 use super::Diagnostic;
-use crate::text::SourceText;
+use crate::{diagnostics::DiagnosticKind, text::SourceText};
 use std::cmp;
-use termion::color::{Fg, Red, Reset};
+use termion::color::{Fg, Blue, Red, Yellow, Reset};
 
 
 pub struct DiagnosticsPrinter<'a> {
@@ -27,11 +27,13 @@ impl <'a> DiagnosticsPrinter<'a> {
     /// 
     /// It utilises the following format:
     /// 
+    /// ```text
     /// let <red>x<reset> = 5;
     ///          ^
     ///          |
     ///          +-- Error message here (<line>:<column>)
-    pub fn diagnostic_to_str(&self, diagnostic: &Diagnostic) -> String {
+    /// ```
+    pub fn error_to_str(&self, diagnostic: &Diagnostic) -> String {
         // variables def
         let line_index = self.text.line_index(diagnostic.span.start);
         let line = self.text.fetch_line(line_index);
@@ -49,6 +51,26 @@ impl <'a> DiagnosticsPrinter<'a> {
         let error_message = Self::format_error_msg(diagnostic, indent, column, line_index);
 
         format!("{}{}{}{}{}\n{}\n{}\n{}", prefix, Fg(Red), span, Fg(Reset), suffix, arrow_pointers, arrow_line, error_message)
+    }
+
+    pub fn warning_to_str(&self, diagnostic: &Diagnostic) -> String {
+        // variables def
+        let line_index = self.text.line_index(diagnostic.span.start);
+        let line = self.text.fetch_line(line_index);
+        let line_start = self.text.line_start(line_index);
+
+        let column = diagnostic.span.start - line_start;
+
+        let (prefix, span, suffix) = self.get_text_vars(diagnostic, &line, column);
+
+        // actual msg
+        let indent = cmp::min(PREFIX_LENGTH, column);
+
+        let wave = Self::format_wave(diagnostic, indent);
+
+        let warning_message = Self::format_warning_msg(diagnostic);
+
+        format!("{}\n{}{}{}\n{}{}{}", warning_message, prefix, span, suffix, Fg(Yellow), wave, Fg(Reset))
     }
 
     fn get_text_vars(&'a self, diagnostic: &Diagnostic, line: &'a str, column: usize) -> (&'a str, &'a str, &'a str) {
@@ -75,13 +97,37 @@ impl <'a> DiagnosticsPrinter<'a> {
         (arrow_pointers, arrow_line)
     }
 
+    fn format_wave(diagnostic: &Diagnostic, indent: usize) -> String {
+        format!("{:indent$}{}", "", std::iter::repeat( // formats preceding whitespace
+            '~'
+        ).take(
+            diagnostic.span.length() // repeats ~ over span len
+        ).collect::<String>(), indent = indent)
+    }
+
     fn format_error_msg(diagnostic: &Diagnostic, indent: usize, column: usize, line_index: usize) -> String {
         format!("{:indent$}+-- {} ({}:{})", "", diagnostic.message, column + 1, line_index + 1, indent = indent)
     }
 
-    pub fn print(&self) {
+    fn format_warning_msg(diagnostic: &Diagnostic) -> String {
+        format!("{}warning{}: {}", Fg(Yellow), Fg(Reset),diagnostic.message)
+    }
+
+    pub fn print_error(&self) {
         for diagnostic in self.diagnostics {
-            println!("{}", self.diagnostic_to_str(diagnostic));
+            match diagnostic.kind {
+                DiagnosticKind::Error => println!("{}", self.error_to_str(diagnostic)),
+                _ => {}
+            }
+        }
+    }
+
+    pub fn print_warning(&self) {
+        for diagnostic in self.diagnostics {
+            match diagnostic.kind {
+                DiagnosticKind::Warning => println!("{}", self.warning_to_str(diagnostic)),
+                _ => {}
+            }
         }
     }
 }

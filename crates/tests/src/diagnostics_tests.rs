@@ -29,29 +29,26 @@ mod tests {
             let raw_text = Self::get_raw_text(input);
             let compilation_unit = CompilationUnit::compile(&raw_text);
 
-            let hir_builder = HIRBuilder::new();
-
             match compilation_unit {
                 Ok(mut unit) => {
+                    let hir_builder = HIRBuilder::new(Rc::clone(&unit.diagnostics_report));
                     let hir = hir_builder.build(&unit.ast, &mut unit.global_scope);
 
-                    let mut semantic_analyzer = SemanticAnalyzer::new(unit.diagnostics_report.clone());
+                    let mut semantic_analyzer = SemanticAnalyzer::new(Rc::clone(&unit.diagnostics_report));
                     let semantic_analysis = semantic_analyzer.analyze(&raw_text, &hir, &mut unit.global_scope);
                         match semantic_analysis {
                             Ok(_) => {
                                 let mir_builder = MIRBuilder::new(Rc::clone(&unit.diagnostics_report));
                                 let _mir = mir_builder.build(&hir, &unit.global_scope);
-                                let diagnostics = unit.diagnostics_report.borrow()
-                                    .diagnostics
-                                    .iter()
-                                    .cloned()
-                                    .collect::<Vec<_>>();
+                                let diagnostics_report = unit.diagnostics_report.borrow();
+                                let mut diagnostics = diagnostics_report.errors.clone();
+                                diagnostics.extend(diagnostics_report.warnings.clone());
                                 diagnostics
                             },
-                            Err(e) => return e.borrow().diagnostics.clone(),
+                            Err(e) => return e.borrow().errors.clone(),
                         }
                 },
-                Err(e) => return e.borrow().diagnostics.clone(),
+                Err(e) => return e.borrow().errors.clone(),
             }
         }
 
@@ -792,6 +789,19 @@ mod tests {
 
         let expected = vec![
             "Cannot assign to `a.0` because `a` is not declared as mutable"
+        ];
+
+        assert_diagnostics(input, expected);
+    }
+
+    #[test]
+    fn test_const_not_uppercase() {
+        let input = "\
+        const «a»: int = 5;
+        ";
+
+        let expected = vec![
+            "constant 'a' should have an upper case name"
         ];
 
         assert_diagnostics(input, expected);

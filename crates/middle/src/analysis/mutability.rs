@@ -15,6 +15,8 @@ pub struct MutabilityChecker {
     mutable_variables: HashSet<VariableIndex>,
     /// Track variable assignments to detect multiple assignments to immutable variables
     assigned_variables: HashSet<VariableIndex>,
+    /// Track which variables are declared as const
+    const_variables: HashSet<VariableIndex>,
 }
 
 impl MutabilityChecker {
@@ -23,6 +25,7 @@ impl MutabilityChecker {
             diagnostics,
             mutable_variables: HashSet::new(),
             assigned_variables: HashSet::new(),
+            const_variables: HashSet::new(),
         }
     }
 
@@ -53,6 +56,7 @@ impl MutabilityChecker {
         // Reset state for each function
         self.mutable_variables.clear();
         self.assigned_variables.clear();
+        self.const_variables.clear();
 
         let mut has_errors = false;
 
@@ -85,9 +89,29 @@ impl MutabilityChecker {
 
                 Ok(())
             }
+            HIRStmtKind::Const { var_idx, init_expr } => {
+                // Track const variables separately
+                self.const_variables.insert(*var_idx);
+
+                if let Some(expr) = init_expr {
+                    self.check_expression(expr, global_scope, hir)?;
+                }
+
+                self.assigned_variables.insert(*var_idx);
+
+                Ok(())
+            }
             HIRStmtKind::Assignment { target, value } => {
                 match &target.kind {
                     HIRExprKind::Var { var_idx } => {
+                        // Const check
+                        if self.const_variables.contains(var_idx) {
+                            let variable = &global_scope.variables[*var_idx].name;
+                            self.diagnostics.borrow_mut().report_assignment_error(variable.to_string(), &target.span);
+                            return Err(());
+                        }
+                        
+                        // Mut check
                         if !self.mutable_variables.contains(var_idx) {
                             let variable = &global_scope.variables[*var_idx].name;
                             self.diagnostics.borrow_mut().report_immutable_assignment_error(variable.to_string(), None, &target.span);

@@ -441,6 +441,20 @@ impl FunctionBuilder {
 
                 self.write_variable(*var_idx, bb_builder.current, instruct_idx);
             }
+            HIRStmtKind::Const { var_idx, init_expr } => {
+                // Similar to `HIRStmtKind::Declaration`
+                let value = init_expr.as_ref().map(|init| {
+                    self.build_expr(basic_blocks, bb_builder, global_scope, init)
+                });
+                let ty = global_scope.variables.get(*var_idx).ty.clone().into();
+                let instruct_idx = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(InstructionKind::Value(value.unwrap_or(Value::Constant(Constant::Void))), ty, statement.span.clone()),
+                );
+
+                self.write_variable(*var_idx, bb_builder.current, instruct_idx);
+            }
             HIRStmtKind::Block { body, scope_id: _ } => {
                 // Builds every statement inside the block
                 for statement in body.iter() {

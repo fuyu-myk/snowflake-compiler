@@ -39,13 +39,13 @@ impl SemanticAnalyzer {
 
     fn check_diagnostics(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) -> Result<(), ()> {
         let diagnostics_binding = diagnostics_report.borrow();
-        if diagnostics_binding.diagnostics.len() > 0 {
+        if diagnostics_binding.errors.len() > 0 {
             let diagnostics_printer = DiagnosticsPrinter::new(
                 &text,
-                &diagnostics_binding.diagnostics
+                &diagnostics_binding.errors
             );
 
-            diagnostics_printer.print();
+            diagnostics_printer.print_error();
             println!("");
             
             return Err(());

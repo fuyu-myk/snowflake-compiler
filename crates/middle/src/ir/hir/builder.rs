@@ -1,6 +1,6 @@
 use std::{cell::Cell, collections::HashMap};
 
-use snowflake_common::{bug_report, Idx};
+use snowflake_common::{bug_report, diagnostics::DiagnosticsReportCell, Idx};
 use snowflake_front::{
     ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind},
     compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}
@@ -28,10 +28,11 @@ pub struct HIRBuilder {
     hir: HIR,
     temp_var_count: Cell<usize>,
     context: HIRContext,
+    diagnostics: DiagnosticsReportCell,
 }
 
 impl HIRBuilder {
-    pub fn new() -> Self {
+    pub fn new(diagnostics: DiagnosticsReportCell) -> Self {
         Self {
             hir: HIR { 
                 functions: HashMap::new(),
@@ -39,6 +40,7 @@ impl HIRBuilder {
             },
             temp_var_count: Cell::new(0),
             context: HIRContext::new(),
+            diagnostics,
         }
     }
 
@@ -87,6 +89,42 @@ impl HIRBuilder {
                         self.build_statement(*stmt_id, ast, global_scope, &mut ctx, false);
                     }
                     self.hir.functions.insert(fx_decl.index, ctx.statements);
+                }
+                ItemKind::Const(const_decl) => {
+                    let global_init_idx = FunctionIndex::new(0);
+                    let const_type = if let Some(const_expr) = const_decl.expr.as_ref() {
+                        ast.query_expression(**const_expr).ty.clone()
+                    } else {
+                        Type::Int
+                    };
+
+                    if const_decl.identifier.span.literal.chars().any(|c| c.is_lowercase()) {
+                        self.diagnostics.borrow_mut().warn_non_upper_case_globals(&const_decl.identifier.span.literal, &const_decl.identifier.span);
+                    }
+
+                    let const_name = format!("const_{}", const_decl.identifier.span.literal);
+                    let var_idx = global_scope.declare_variable(&const_name, const_type, true, false);
+
+                    let mut temp_ctx = Ctx::new();
+                    let init_expr = if let Some(ref expr) = const_decl.expr {
+                        Some(self.build_expression(**expr, ast, global_scope, &mut temp_ctx, true))
+                    } else {
+                        None
+                    };
+
+                    let const_stmt = HIRStatement {
+                        kind: HIRStmtKind::Const {
+                            var_idx,
+                            init_expr,
+                        },
+                        id: self.next_node_id(),
+                        span: const_decl.identifier.span.clone(),
+                    };
+
+                    let ctx = self.hir.functions.entry(global_init_idx)
+                        .or_insert_with(Vec::new);
+                    ctx.extend(temp_ctx.statements);
+                    ctx.push(const_stmt);
                 }
             }
         }
@@ -137,6 +175,14 @@ impl HIRBuilder {
                 }, while_span);
 
                 HIRStmtKind::Loop { body: vec![if_stmt] }
+            }
+            StatementKind::Const(const_statement) => {
+                let expr = self.build_expression(const_statement.expr, ast, global_scope, ctx, true);
+                
+                HIRStmtKind::Const { 
+                    var_idx: const_statement.variable_index, 
+                    init_expr: Some(expr),
+                }
             }
             StatementKind::Return(return_statement) => {
                 let expr = return_statement.return_value.as_ref().copied()

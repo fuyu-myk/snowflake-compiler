@@ -36,24 +36,26 @@ pub type DiagnosticsReportCell = Rc<RefCell<DiagnosticsReport>>;
 // for consistent error reporting
 #[derive(Debug)]
 pub struct DiagnosticsReport {
-    pub diagnostics: Vec<Diagnostic>,
+    pub errors: Vec<Diagnostic>,
+    pub warnings: Vec<Diagnostic>,
 }
 
 impl DiagnosticsReport {
     pub fn new() -> Self {
-        DiagnosticsReport { diagnostics: vec![] }
+        DiagnosticsReport { errors: vec![], warnings: vec![] }
     }
 
     pub fn report_error(&mut self, message: String, span: TextSpan) {
         let error = Diagnostic::new(message, span, DiagnosticKind::Error);
-        self.diagnostics.push(error);
+        self.errors.push(error);
     }
 
     pub fn report_warning(&mut self, message: String, span: TextSpan) {
         let warning = Diagnostic::new(message, span, DiagnosticKind::Warning);
-        self.diagnostics.push(warning);
+        self.warnings.push(warning);
     }
 
+    // Errors
     pub fn report_unexpected_token(&mut self, expected: &TokenKind, token: &Token) {
         self.report_error(format!("Expected <{}>, found <{}>", expected, token.kind), token.span.clone());
     }
@@ -196,5 +198,18 @@ impl DiagnosticsReport {
 
     pub fn report_multiple_assignment_error(&mut self, variable: String, span: &TextSpan) {
         self.report_error(format!("Cannot assign to immutable variable `{}` more than once", variable), span.clone());
+    }
+
+    pub fn report_const_missing_type(&mut self, identifier: &Token) {
+        self.report_error(format!("Missing type annotation for `const` item `{}`", identifier.span.literal), identifier.span.clone());
+    }
+
+    pub fn report_assignment_error(&mut self, variable: String, span: &TextSpan) {
+        self.report_error(format!("Cannot assign to constant variable `{}`", variable), span.clone());
+    }
+
+    // Warnings
+    pub fn warn_non_upper_case_globals(&mut self, variable: &str, span: &TextSpan) {
+        self.report_warning(format!("constant '{}' should have an upper case name", variable), span.clone());
     }
 }

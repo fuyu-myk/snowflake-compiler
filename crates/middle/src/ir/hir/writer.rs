@@ -72,6 +72,17 @@ impl <W> HIRWriter<W> where W: Write {
 
                 writeln!(writer)?;
             }
+            HIRStmtKind::Const { var_idx, init_expr } => {
+                let var = &global_scope.variables[*var_idx];
+                write!(writer, "const {}: {}", var.name, var.ty)?;
+
+                if let Some(init) = init_expr {
+                    write!(writer, " = ")?;
+                    Self::write_expression(writer, init, global_scope, indent)?;
+                }
+
+                writeln!(writer)?;
+            }
             HIRStmtKind::Assignment { target, value } => {
                 // Handle different types of assignment targets
                 match &target.kind {

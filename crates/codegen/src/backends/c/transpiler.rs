@@ -31,6 +31,7 @@ impl <'a> CTranspiler<'a> {
                 .map(|item| match &item.kind {
                     ItemKind::Statement(_) => unreachable!(),
                     ItemKind::Function(function) => self.transpile_fx_decl(ast, function),
+                    ItemKind::Const(_) => unreachable!(),
                 }).collect::<Vec<_>>()
         );
 
@@ -63,6 +64,23 @@ impl <'a> CTranspiler<'a> {
                     statements.extend(init_statements);
                 }
 
+                CStatement::VarDecl(CVarDecl {
+                    name: var_name,
+                    ty: CType::try_from(&var.ty).expect("Unsupported type"),
+                    init: Some(init)
+                })
+            }
+            StatementKind::Const(const_statement) => {
+                let var = self.global_scope.variables.get(const_statement.variable_index);
+                let var_name = self.get_variable_name(const_statement.variable_index);
+                let (init_statements, init) = self.transpile_expr(ast, const_statement.expr);
+                
+                if let Some(init_statements) = init_statements {
+                    statements.extend(init_statements);
+                }
+
+                // In C, const declarations can be handled like regular variable declarations
+                // but marked with const qualifier
                 CStatement::VarDecl(CVarDecl {
                     name: var_name,
                     ty: CType::try_from(&var.ty).expect("Unsupported type"),
@@ -274,6 +292,7 @@ impl <'a> CTranspiler<'a> {
         match &item.kind {
             ItemKind::Statement(_) => panic!("Statement is not supported in global scope"),
             ItemKind::Function(function) => self.transpile_function(ast, function),
+            ItemKind::Const(_) => unreachable!(),
         }
     }
 

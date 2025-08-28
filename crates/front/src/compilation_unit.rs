@@ -1,6 +1,6 @@
 use snowflake_common::{idx, IndexVec};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, TupleExpression, TupleIndexExpression, TypeKind, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, TupleExpression, TupleIndexExpression, TypeKind, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -465,6 +465,29 @@ impl ASTVisitor for Resolver {
             }
             None => initialiser_expression.ty.clone(),
         };
+
+        let variable = self.scopes.declare_variable(&identifier, ty);
+        ast.set_variable_for_statement(&statement.id, variable);
+    }
+
+    fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, statement: &Statement) {
+        let identifier = const_statement.identifier.span.literal.clone();
+
+        if identifier.chars().any(|c| c.is_lowercase()) {
+            self.diagnostics.borrow_mut().warn_non_upper_case_globals(&identifier, &const_statement.identifier.span);
+        }
+        
+        let ty = resolve_type_from_annotation(&self.diagnostics, &const_statement.type_annotation);
+        if matches!(ty, Type::Array(_, _)) {
+            self.expected_array_type = Some(ty.clone());
+        }
+        
+        self.visit_expression(ast, const_statement.expr);
+        let initialiser_expression = &ast.query_expression(const_statement.expr);
+
+        self.expected_array_type = None;
+
+        let ty = self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
 
         let variable = self.scopes.declare_variable(&identifier, ty);
         ast.set_variable_for_statement(&statement.id, variable);
@@ -1050,7 +1073,7 @@ impl CompilationUnit {
         parser.parse();
 
         // error handling (todo: improve)
-        Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
+        Self::check_error_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
 
         // symbol check
         let scopes = ScopeStack::from_global_scope(global_scope);
@@ -1059,7 +1082,7 @@ impl CompilationUnit {
 
         ast.visualise();
 
-        Self::check_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
+        Self::check_error_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
         Ok(CompilationUnit { 
             global_scope: resolver.scopes.global_scope,
             ast, 
@@ -1068,7 +1091,7 @@ impl CompilationUnit {
     }
 
     pub fn maybe_run_compiler(&mut self) {
-        if self.diagnostics_report.borrow().diagnostics.len() > 0 {
+        if self.diagnostics_report.borrow().errors.len() > 0 {
             return;
         }
 
@@ -1096,20 +1119,26 @@ impl CompilationUnit {
         println!("Result: {:?}\n", eval.last_value);
     }
 
-    fn check_diagnostics(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) -> Result<(), ()> {
+    fn check_error_diagnostics(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) -> Result<(), ()> {
         let diagnostics_binding = diagnostics_report.borrow();
-        if diagnostics_binding.diagnostics.len() > 0 {
-            let diagnostics_printer = DiagnosticsPrinter::new(
-                &text,
-                &diagnostics_binding.diagnostics
-            );
-
-            diagnostics_printer.print();
+        
+        if diagnostics_binding.errors.len() > 0 {
+            let diagnostics_printer = DiagnosticsPrinter::new(text, &diagnostics_binding.errors);
+            diagnostics_printer.print_error();
             println!("");
-            
             return Err(());
         }
 
         Ok(())
+    }
+
+    pub fn output_warnings(text: &text::SourceText, diagnostics_report: &DiagnosticsReportCell) {
+        let diagnostics_binding = diagnostics_report.borrow();
+
+        if diagnostics_binding.warnings.len() > 0 {
+            let diagnostics_printer = DiagnosticsPrinter::new(text, &diagnostics_binding.warnings);
+            diagnostics_printer.print_warning();
+            println!("");
+        }
     }
 }

@@ -78,6 +78,9 @@ impl Ast {
             StatementKind::Let(var_declaration) => {
                 var_declaration.variable_index = variable_index;
             }
+            StatementKind::Const(const_declaration) => {
+                const_declaration.variable_index = variable_index;
+            }
             _ => unreachable!("Unable to set variable of non-variable statement")
         }
     }
@@ -239,6 +242,34 @@ impl Ast {
         }
         
         &self.statements[statement_id]
+    }
+
+    pub fn const_statement(
+        &mut self, 
+        ast: &Ast, 
+        identifier: Token, 
+        initialiser: ExpressionId, 
+        type_annotation: StaticTypeAnnotation
+    ) -> &Statement {
+        let mut spans = Vec::new();
+        
+        spans.push(identifier.span.clone());
+        spans.push(self.query_expression(initialiser).span(ast));
+
+        spans.extend(type_annotation.collect_spans());
+
+        let span_refs: Vec<&TextSpan> = spans.iter().collect();
+        let span = TextSpan::combine_refs(&span_refs);
+
+        self.statement_from_kind(
+            StatementKind::Const(ConstStatement { 
+                identifier, 
+                expr: initialiser, 
+                type_annotation, 
+                variable_index: VariableIndex::new(0) 
+            }),
+            span,
+        )
     }
 
     pub fn if_expression(
@@ -529,6 +560,29 @@ impl Ast {
         &self.items[id]
     }
 
+    pub fn constant_item(
+        &mut self,
+        identifier: Token,
+        type_annotation: StaticTypeAnnotation,
+        expr: Option<Box<ExpressionId>>,
+    ) -> &Item {
+        let mut all_spans = vec![identifier.span.clone()];
+
+        all_spans.extend(type_annotation.collect_spans());
+
+        if let Some(ref expr) = expr {
+            all_spans.push(self.query_expression(**expr).span(self));
+        }
+
+        let constant_item = ConstantItem {
+            identifier,
+            type_annotation,
+            expr,
+        };
+
+        self.item_from_kind(ItemKind::Const(Box::new(constant_item)), TextSpan::combine(all_spans))
+    }
+
     pub fn func_item(
         &mut self,
         fx_keyword: Token,
@@ -592,6 +646,43 @@ impl Item {
 pub enum ItemKind {
     Statement(StatementId),
     Function(FxDeclaration),
+    Const(Box<ConstantItem>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ConstantItem {
+    pub identifier: Token,
+    pub type_annotation: StaticTypeAnnotation,
+    pub expr: Option<Box<ExpressionId>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FxDeclarationParams {
+    pub identifier: Token,
+    pub type_annotation: StaticTypeAnnotation,
+}
+
+#[derive(Debug, Clone)]
+pub struct FxReturnType {
+    pub arrow: Token,
+    pub type_tokens: Vec<Token>,
+    pub ty: TypeKind,
+}
+
+impl FxReturnType {
+    pub fn new(arrow: Token, type_tokens: Vec<Token>, ty: TypeKind) -> Self {
+        Self { arrow, type_tokens, ty }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FxDeclaration {
+    pub fx_keyword: Token,
+    pub identifier: Token,
+    pub parameters: Vec<FxDeclarationParams>,
+    pub body: Body,
+    pub return_type: Option<FxReturnType>,
+    pub index: FunctionIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -600,6 +691,7 @@ pub enum StatementKind {
     Let(LetStatement),
     While(WhileStatement),
     Return(ReturnStatement),
+    Const(ConstStatement),
 }
 
 #[derive(Debug, Clone)]
@@ -789,35 +881,6 @@ impl StaticTypeAnnotation {
 }
 
 #[derive(Debug, Clone)]
-pub struct FxDeclarationParams {
-    pub identifier: Token,
-    pub type_annotation: StaticTypeAnnotation,
-}
-
-#[derive(Debug, Clone)]
-pub struct FxReturnType {
-    pub arrow: Token,
-    pub type_tokens: Vec<Token>,
-    pub ty: TypeKind,
-}
-
-impl FxReturnType {
-    pub fn new(arrow: Token, type_tokens: Vec<Token>, ty: TypeKind) -> Self {
-        Self { arrow, type_tokens, ty }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FxDeclaration {
-    pub fx_keyword: Token,
-    pub identifier: Token,
-    pub parameters: Vec<FxDeclarationParams>,
-    pub body: Body,
-    pub return_type: Option<FxReturnType>,
-    pub index: FunctionIndex,
-}
-
-#[derive(Debug, Clone)]
 pub struct WhileStatement {
     pub while_keyword: Token,
     pub condition: ExpressionId,
@@ -830,6 +893,14 @@ pub struct LetStatement {
     pub pattern: Pattern,
     pub initialiser: ExpressionId,
     pub type_annotation: Option<StaticTypeAnnotation>,
+    pub variable_index: VariableIndex,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConstStatement {
+    pub identifier: Token,
+    pub expr: ExpressionId,
+    pub type_annotation: StaticTypeAnnotation,
     pub variable_index: VariableIndex,
 }
 
@@ -854,6 +925,13 @@ impl Statement {
                     spans.push(type_annotation.colon.span.clone());
                     spans.extend(type_annotation.collect_spans());
                 }
+
+                TextSpan::combine(spans)
+            }
+            StatementKind::Const(const_statement) => {
+                let mut spans = vec![const_statement.identifier.span.clone()];
+                spans.push(const_statement.type_annotation.colon.span.clone());
+                spans.extend(const_statement.type_annotation.collect_spans());
 
                 TextSpan::combine(spans)
             }

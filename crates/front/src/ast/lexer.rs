@@ -84,6 +84,7 @@ impl <'a> Lexer<'a> {
                     "fx" => TokenKind::Function,
                     "return" => TokenKind::Return,
                     "mut" => TokenKind::Mutable,
+                    "const" => TokenKind::Const,
                     _ => TokenKind::Identifier,
                 }
             } else {

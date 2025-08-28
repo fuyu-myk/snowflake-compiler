@@ -53,6 +53,14 @@ impl<'ctx> LLVMBackend<'ctx> {
             self.compile_function(func_idx, function, lir)?;
         }
 
+        // Check if there's a main function, if not create one that calls __global_init
+        let has_main = lir.functions.indexed_iter()
+            .any(|(_, function)| function.name == "main");
+        
+        if !has_main {
+            self.generate_main_function()?;
+        }
+
         Ok(())
     }
 
@@ -858,5 +866,24 @@ impl<'ctx> LLVMBackend<'ctx> {
 
     pub fn print_to_string(&self) -> String {
         self.module.print_to_string().to_string()
+    }
+
+    /// Generate a main function that calls `__global_init` and returns 0
+    fn generate_main_function(&mut self) -> Result<()> {
+        let i32_type = self.context.i32_type();
+        let main_type = i32_type.fn_type(&[], false);
+        let main_fn = self.module.add_function("main", main_type, None);
+        
+        let entry_bb = self.context.append_basic_block(main_fn, "entry");
+        self.builder.position_at_end(entry_bb);
+        
+        if let Some(global_init_fn) = self.module.get_function("__global_init") {
+            self.builder.build_call(global_init_fn, &[], "call_global_init")?;
+        }
+        
+        let zero = i32_type.const_int(0, false);
+        self.builder.build_return(Some(&zero))?;
+        
+        Ok(())
     }
 }

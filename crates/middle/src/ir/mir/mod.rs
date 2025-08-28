@@ -29,11 +29,13 @@ pub mod optimisations;
 
 idx!(FunctionIdx);
 idx!(InstructionIdx);
+idx!(GlobalIdx);
 pub type Functions = IndexVec<FunctionIdx, Function>;
 
 pub struct MIR {
     pub functions: Functions,
     pub basic_blocks: BasicBlocks,
+    pub globals: IndexVec<GlobalIdx, Global>,
 }
 
 impl MIR {
@@ -41,12 +43,22 @@ impl MIR {
         Self {
             functions: Functions::new(),
             basic_blocks: BasicBlocks::new(),
+            globals: IndexVec::new(),
         }
     }
     
     pub fn new_basic_block(&mut self) -> BasicBlockIdx {
         self.basic_blocks.0.push_with_index(|idx| Some(BasicBlock::new(idx)))
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Global {
+    pub name: String,
+    pub ty: Type,
+    pub initializer: Option<Value>,
+    pub is_constant: bool,
+    pub variable_index: VariableIndex,
 }
 
 #[derive(Debug)]

@@ -1,5 +1,6 @@
 use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind, Pattern, BindingMode, Mutability};
 use snowflake_common::bug_report;
+use snowflake_common::text::span::TextSpan;
 use snowflake_common::token::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, resolve_type_kind, GlobalScope};
 use snowflake_common::diagnostics::DiagnosticsReportCell;
@@ -79,6 +80,7 @@ impl <'a> Parser<'a> {
         
         let statement = match self.current().kind {
             TokenKind::Let => self.parse_let_statement().id,
+            TokenKind::Const => self.parse_const_statement().id,
             TokenKind::While => self.parse_while_statement().id,
             TokenKind::Return => self.parse_return_statement().id,
             _ => self.parse_expression_statement().id,
@@ -91,6 +93,7 @@ impl <'a> Parser<'a> {
     fn parse_item(&mut self) -> &Item {
         return match &self.current().kind {
             TokenKind::Function => self.parse_fx_item(),
+            TokenKind::Const => self.parse_const_item(),
             _ => {
                 let id = self.parse_statement();
                 let span = self.ast.query_statement(id).span(self.ast);
@@ -174,6 +177,37 @@ impl <'a> Parser<'a> {
         };
 
         self.ast.func_item(fx_keyword, identifier, parameters, body, return_type, fx_idx)
+    }
+
+    fn parse_const_item(&mut self) -> &Item {
+        self.consume_and_check(TokenKind::Const);
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        let type_annotation = self.parse_optional_type_annotation();
+        
+        if type_annotation.is_none() {
+            self.diagnostics_report.borrow_mut().report_const_missing_type(&identifier);
+        }
+        
+        self.consume_and_check(TokenKind::Equals);
+        let expr = self.parse_expression();
+        self.consume_and_check(TokenKind::SemiColon);
+
+        self.ast.constant_item(
+            identifier, 
+            type_annotation.unwrap_or(
+                StaticTypeAnnotation::new_simple(
+                    Token {
+                        kind: TokenKind::Colon,
+                        span: TextSpan::default(),
+                    },
+                    Token {
+                        kind: TokenKind::Identifier,
+                        span: TextSpan::default(),
+                    }
+                )
+            ),
+            Some(Box::new(expr))
+        )
     }
 
     fn type_kind_to_token<'b>(&self, element_type: &'b TypeKind) -> &'b Token {
@@ -316,6 +350,30 @@ impl <'a> Parser<'a> {
         let expr = self.parse_expression();
 
         self.ast.let_statement_with_pattern(&self.ast.clone(), pattern, expr, optional_type_annotation)
+    }
+
+    fn parse_const_statement(&mut self) -> &Statement {
+        self.consume_and_check(TokenKind::Const);
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+        
+        let optional_type_annotation = self.parse_optional_type_annotation();
+        if optional_type_annotation.is_none() {
+            self.diagnostics_report.borrow_mut().report_const_missing_type(&identifier);
+        }
+        self.consume_and_check(TokenKind::Equals);
+
+        let expr = self.parse_expression();
+
+        self.ast.const_statement(&self.ast.clone(), identifier, expr, optional_type_annotation.unwrap_or(StaticTypeAnnotation::new_simple(
+            Token {
+                kind: TokenKind::Colon,
+                span: TextSpan::default(),
+            },
+            Token {
+                kind: TokenKind::Identifier,
+                span: TextSpan::default(),
+            }
+        )))
     }
 
     fn parse_optional_type_annotation(&mut self) -> Option<StaticTypeAnnotation> {

@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, TupleExpression, TupleIndexExpression, UnaryExpression, VarExpression, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, TupleExpression, TupleIndexExpression, UnaryExpression, VarExpression, WhileStatement};
 use snowflake_common::text::span::TextSpan;
 
 
@@ -21,6 +21,9 @@ pub trait ASTVisitor {
             }
             StatementKind::Let(expr) => {
                 self.visit_let_statement(ast, &expr, &statement);
+            }
+            StatementKind::Const(const_stmt) => {
+                self.visit_const_statement(ast, &const_stmt, &statement);
             }
             StatementKind::While(statement) => {
                 self.visit_while_statement(ast, &statement);
@@ -45,10 +48,19 @@ pub trait ASTVisitor {
             ItemKind::Function(fx_decl) => {
                 self.visit_fx_decl(ast, fx_decl, item.id);
             }
+            ItemKind::Const(constant_item) => {
+                self.visit_constant_item(ast, constant_item, item.id);
+            }
         }
     }
 
     fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId);
+
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemId) {
+        if let Some(ref expr) = constant_item.expr {
+            self.visit_expression(ast, **expr);
+        }
+    }
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         if let Some(expr) = &return_statement.return_value {
@@ -62,6 +74,10 @@ pub trait ASTVisitor {
     }
 
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement);
+
+    fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, _statement: &Statement) {
+        self.visit_expression(ast, const_statement.expr);
+    }
 
     fn visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
         self.do_visit_expression(ast, expression);

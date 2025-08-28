@@ -170,10 +170,12 @@ a += a * 2 + 3
 * TODO: Perhaps find a better way of handling spans
 
 ## Functionalities
-- [x] **Error reporting** [WIP]
+- [x] **Diagnostic reporting** [WIP]
 * Updated as more functionality is added
-* Highlights errors in red
-* Error messages are printed in a specific format
+* Errors (in red)
+    * Diagnostics have a special format
+* Warnings (in yellow)
+    * Underlined with waves "~"
 
 - [x] **`let` statements** [completed 06.06.2025]
 * Variable lexing, parsing & error checking
@@ -308,3 +310,9 @@ a += a * 2 + 3
 - [x] **Mutability** [completed 27.08.2025]
 * Similar to Rust's mutability
 * Defined through the `mut` keyword
+
+- [x] **Compile-time constants** [completed 27.08.2025]
+* Defined through the `const` keyword
+* Works the same as other languages, i.e. cannot be assigned to
+* Should always be defined in `UPPER_CASE` (though you could define it in `lower_case` as well)
+* Must have an explicit type annotation
