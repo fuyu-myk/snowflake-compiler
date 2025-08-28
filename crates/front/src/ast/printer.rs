@@ -268,21 +268,30 @@ impl ASTVisitor for ASTPrinter {
         self.add_whitespace();
         self.add_text(&fx_decl.identifier.span.literal);
 
-        let are_parameters_empty = fx_decl.parameters.is_empty();
+        let are_parameters_empty = fx_decl.generics.is_empty();
         if !are_parameters_empty {
             self.add_text("(");
         } else {
             self.add_whitespace();
         }
 
-        for (i, parameter) in fx_decl.parameters.iter().enumerate() {
+        for (i, parameter) in fx_decl.generics.iter().enumerate() {
             if i != 0 {
                 self.add_text(",");
                 self.add_whitespace();
             }
 
             self.add_text(&parameter.identifier.span.literal);
-            self.add_type_annot(&parameter.type_annotation);
+            match &parameter.kind {
+                crate::ast::GenericParamKind::Const { ty, .. } => {
+                    self.add_text(": ");
+                    self.add_type_kind(ty);
+                }
+                crate::ast::GenericParamKind::Type { ty, .. } => {
+                    self.add_text(": ");
+                    self.add_type_kind(ty);
+                }
+            }
         }
 
         if !are_parameters_empty {

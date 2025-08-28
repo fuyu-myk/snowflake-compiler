@@ -563,10 +563,11 @@ impl Ast {
     pub fn constant_item(
         &mut self,
         identifier: Token,
+        generics: Generics,
         type_annotation: StaticTypeAnnotation,
         expr: Option<Box<ExpressionId>>,
     ) -> &Item {
-        let mut all_spans = vec![identifier.span.clone()];
+        let mut all_spans = vec![identifier.span.clone(), generics.span.clone()];
 
         all_spans.extend(type_annotation.collect_spans());
 
@@ -576,6 +577,7 @@ impl Ast {
 
         let constant_item = ConstantItem {
             identifier,
+            generics,
             type_annotation,
             expr,
         };
@@ -587,21 +589,15 @@ impl Ast {
         &mut self,
         fx_keyword: Token,
         identifier: Token,
-        parameters: Vec<FxDeclarationParams>,
+        generics: Generics,
         body: Body,
         return_type: Option<FxReturnType>,
         index: FunctionIndex
     ) -> &Item {
-        let mut param_span: Vec<TextSpan> = Vec::new();
-        for param in &parameters {
-            param_span.push(param.identifier.span.clone());
-            param_span.extend(param.type_annotation.collect_spans());
-        }
-        
         let mut all_spans = vec![
             fx_keyword.span.clone(),
             identifier.span.clone(),
-            TextSpan::combine(param_span),
+            generics.span.clone(),
             body.span(self),
         ];
         
@@ -613,7 +609,7 @@ impl Ast {
         
         let span = TextSpan::combine(all_spans);
 
-        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, parameters, body, return_type, index }), span)
+        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, generics, body, return_type, index }), span)
     }
 
     pub fn visit(&mut self, visitor: &mut dyn ASTVisitor) {
@@ -652,14 +648,9 @@ pub enum ItemKind {
 #[derive(Debug, Clone)]
 pub struct ConstantItem {
     pub identifier: Token,
+    pub generics: Generics,
     pub type_annotation: StaticTypeAnnotation,
     pub expr: Option<Box<ExpressionId>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FxDeclarationParams {
-    pub identifier: Token,
-    pub type_annotation: StaticTypeAnnotation,
 }
 
 #[derive(Debug, Clone)]
@@ -679,10 +670,66 @@ impl FxReturnType {
 pub struct FxDeclaration {
     pub fx_keyword: Token,
     pub identifier: Token,
-    pub parameters: Vec<FxDeclarationParams>,
+    pub generics: Generics,
     pub body: Body,
     pub return_type: Option<FxReturnType>,
     pub index: FunctionIndex,
+}
+
+#[derive(Debug, Clone)]
+pub struct Generics {
+    pub params: Vec<GenericParam>,
+    pub span: TextSpan,
+}
+
+impl Generics {
+    pub fn new(params: Vec<GenericParam>, span: TextSpan) -> Self {
+        Self { params, span }
+    }
+
+    pub fn empty(span: TextSpan) -> Self {
+        Self { params: Vec::new(), span }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.params.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &GenericParam> {
+        self.params.iter()
+    }
+
+    /// Get parameter indices from generics (useful for function parameters)
+    pub fn get_param_indices(&self) -> Vec<VariableIndex> {
+        self.params.iter().map(|param| param.idx).collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GenericParam {
+    pub idx: VariableIndex,
+    pub identifier: Token,
+    pub kind: GenericParamKind,
+    pub colon_token: Option<Token>,
+}
+
+impl GenericParam {
+    pub fn new(idx: VariableIndex, identifier: Token, kind: GenericParamKind, colon_token: Option<Token>) -> Self {
+        Self { idx, identifier, kind, colon_token }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum GenericParamKind {
+    Const {
+        ty: Box<TypeKind>,
+        span: TextSpan,
+        expr: Box<Expression>,
+    },
+    Type {
+        ty: Box<TypeKind>,
+        span: TextSpan,
+    }
 }
 
 #[derive(Debug, Clone)]

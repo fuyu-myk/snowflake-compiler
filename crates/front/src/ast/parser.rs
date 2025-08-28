@@ -1,5 +1,4 @@
-use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxDeclarationParams, FxReturnType, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind, Pattern, BindingMode, Mutability};
-use snowflake_common::bug_report;
+use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, Body, ElseBranch, Expression, ExpressionId, ExpressionKind, FxReturnType, GenericParam, GenericParamKind, Generics, Item, ItemKind, Statement, StatementId, StaticTypeAnnotation, TypeKind, UnaryOp, UnaryOpKind, Pattern, BindingMode, Mutability};
 use snowflake_common::text::span::TextSpan;
 use snowflake_common::token::{Token, TokenKind};
 use crate::compilation_unit::{resolve_type_from_string, resolve_type_kind, GlobalScope};
@@ -119,33 +118,7 @@ impl <'a> Parser<'a> {
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
         
         // parse params (optional)
-        let parameters = self.parse_optional_param_list();
-
-        // params as idx
-        let params_idx = parameters.iter().map(|parameter| {
-            let ty = match &parameter.type_annotation.type_kind {
-                TypeKind::Simple { type_name } => resolve_type_from_string(&self.diagnostics_report, type_name),
-                TypeKind::Array { element_type, .. } => {
-                    let type_token = self.type_kind_to_token(element_type);
-                    resolve_type_from_string(&self.diagnostics_report, type_token)
-                }
-                TypeKind::Slice { .. } => {
-                    unimplemented!("Slice types are not yet implemented")
-                }
-                TypeKind::Tuple { open_paren, element_types, close_paren } => {
-                    resolve_type_kind(
-                        &self.diagnostics_report,
-                        &TypeKind::Tuple {
-                            open_paren: open_paren.clone(),
-                            element_types: element_types.clone(),
-                            close_paren: close_paren.clone(),
-                        }
-                    )
-                }
-            };
-            
-            self.global_scope.declare_variable(&parameter.identifier.span.literal, ty, false, false)
-        }).collect();
+        let generics = self.parse_optional_param_list();
 
         // parse body
         let return_type = self.parse_optional_return_type();
@@ -164,7 +137,7 @@ impl <'a> Parser<'a> {
         let fx_idx_result = self.global_scope.create_function(
             identifier.span.literal.clone(),
             body.clone(),
-            params_idx,
+            generics.get_param_indices(),
             resolved_return_type,
         );
 
@@ -176,7 +149,7 @@ impl <'a> Parser<'a> {
             }
         };
 
-        self.ast.func_item(fx_keyword, identifier, parameters, body, return_type, fx_idx)
+        self.ast.func_item(fx_keyword, identifier, generics, body, return_type, fx_idx)
     }
 
     fn parse_const_item(&mut self) -> &Item {
@@ -193,7 +166,8 @@ impl <'a> Parser<'a> {
         self.consume_and_check(TokenKind::SemiColon);
 
         self.ast.constant_item(
-            identifier, 
+            identifier.clone(), 
+            Generics::empty(identifier.span.clone()),
             type_annotation.unwrap_or(
                 StaticTypeAnnotation::new_simple(
                     Token {
@@ -208,18 +182,6 @@ impl <'a> Parser<'a> {
             ),
             Some(Box::new(expr))
         )
-    }
-
-    fn type_kind_to_token<'b>(&self, element_type: &'b TypeKind) -> &'b Token {
-        match element_type {
-            TypeKind::Simple { type_name } => type_name,
-            TypeKind::Array { element_type, .. } => self.type_kind_to_token(element_type),
-            TypeKind::Slice { .. } => {
-                // TODO: once implemented
-                todo!()
-            }
-            TypeKind::Tuple { .. } => bug_report!("No tuple type token")
-        }
     }
 
     fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
@@ -296,26 +258,56 @@ impl <'a> Parser<'a> {
         return None;
     }
 
-    fn parse_optional_param_list(&mut self) -> Vec<FxDeclarationParams> {
+    fn parse_optional_param_list(&mut self) -> Generics {
         if self.current().kind != TokenKind::LeftParen {
-            return Vec::new();
+            return Generics::empty(TextSpan::default());
         }
 
-        self.consume_and_check(TokenKind::LeftParen);
-        let mut parameters = Vec::new();
+        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+        let mut generic_params = Vec::new();
+        let mut all_spans = vec![left_paren.span.clone()];
+        
         while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
-            parameters.push(FxDeclarationParams {
-                identifier: self.consume_and_check(TokenKind::Identifier).clone(),
-                type_annotation: self.parse_type_annotation(),
-            });
+            let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+            let type_annotation = self.parse_type_annotation();
+            
+            all_spans.push(identifier.span.clone());
+            all_spans.extend(type_annotation.collect_spans());
+            
+            let ty = match &type_annotation.type_kind {
+                TypeKind::Simple { type_name } => resolve_type_from_string(&self.diagnostics_report, type_name),
+                _ => resolve_type_kind(&self.diagnostics_report, &type_annotation.type_kind)
+            };
+            
+            let var_idx = self.global_scope.declare_variable(&identifier.span.literal, ty, false, false);
+            
+            let generic_param = GenericParam::new(
+                var_idx,
+                identifier.clone(),
+                GenericParamKind::Type {
+                    ty: Box::new(type_annotation.type_kind.clone()),
+                    span: TextSpan::combine(type_annotation.collect_spans()),
+                },
+                Some(type_annotation.colon.clone()),
+            );
+            
+            generic_params.push(generic_param);
 
             if self.current().kind == TokenKind::Comma {
                 self.consume_and_check(TokenKind::Comma);
             }
         }
 
-        self.consume_and_check(TokenKind::RightParen);
-        parameters
+        let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+        all_spans.push(right_paren.span.clone());
+        
+        let combined_span = if all_spans.is_empty() {
+            TextSpan::default()
+        } else {
+            TextSpan::combine(all_spans)
+        };
+        
+        Generics::new(generic_params, combined_span)
     }
 
     fn parse_return_statement(&mut self) -> &Statement {
