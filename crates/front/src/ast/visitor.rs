@@ -3,16 +3,16 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, Expression, ExpressionId, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementId, StatementKind, StringExpression, TupleExpression, TupleIndexExpression, UnaryExpression, VarExpression, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, ExprIndex, Expression, ExpressionKind, FloatExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StmtIndex, StringExpression, StructExpression, TupleExpression, FieldExpression, UnaryExpression, VarExpression, VariantData, WhileStatement};
 use snowflake_common::text::span::TextSpan;
 
 
 pub trait ASTVisitor {
-    fn visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
+    fn visit_statement(&mut self, ast: &mut Ast, statement: StmtIndex) {
         self.do_visit_statement(ast, statement);
     }
 
-    fn do_visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
+    fn do_visit_statement(&mut self, ast: &mut Ast, statement: StmtIndex) {
         let statement = ast.query_statement(statement).clone();
 
         match &statement.kind {
@@ -31,36 +31,37 @@ pub trait ASTVisitor {
             StatementKind::Return(statement) => {
                 self.visit_return_statement(ast, &statement);
             }
+            StatementKind::Item(item_id) => {
+                self.visit_item(ast, *item_id);
+            }
         }
     }
 
-    fn visit_item(&mut self, ast: &mut Ast, item: ItemId) {
+    fn visit_item(&mut self, ast: &mut Ast, item: ItemIndex) {
         self.visit_item_default(ast, item);
     }
 
-    fn visit_item_default(&mut self, ast: &mut Ast, item: ItemId) {
+    fn visit_item_default(&mut self, ast: &mut Ast, item: ItemIndex) {
         let item = ast.query_item(item).clone();
 
         match &item.kind {
-            ItemKind::Statement(statement) => {
-                self.visit_statement(ast, *statement);
-            }
             ItemKind::Function(fx_decl) => {
                 self.visit_fx_decl(ast, fx_decl, item.id);
             }
             ItemKind::Const(constant_item) => {
                 self.visit_constant_item(ast, constant_item, item.id);
             }
+            ItemKind::Struct(_, generics, variant_data) => {
+                self.visit_struct_item(ast, generics, variant_data, item.id);
+            }
         }
     }
 
-    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemId);
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, item_id: ItemIndex);
 
-    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemId) {
-        if let Some(ref expr) = constant_item.expr {
-            self.visit_expression(ast, **expr);
-        }
-    }
+    fn visit_struct_item(&mut self, ast: &mut Ast, generics: &Generics, variant_data: &VariantData, item_id: ItemIndex);
+
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex);
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         if let Some(expr) = &return_statement.return_value {
@@ -79,11 +80,11 @@ pub trait ASTVisitor {
         self.visit_expression(ast, const_statement.expr);
     }
 
-    fn visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
+    fn visit_expression(&mut self, ast: &mut Ast, expression: ExprIndex) {
         self.do_visit_expression(ast, expression);
     }
 
-    fn do_visit_expression(&mut self, ast: &mut Ast, expression: ExpressionId) {
+    fn do_visit_expression(&mut self, ast: &mut Ast, expression: ExprIndex) {
         let expression = ast.query_expression(expression).clone();
 
         match &expression.kind {
@@ -144,8 +145,11 @@ pub trait ASTVisitor {
             ExpressionKind::Tuple(tuple_expression) => {
                 self.visit_tuple_expression(ast, &tuple_expression, &expression);
             }
-            ExpressionKind::TupleIndexExpression(tuple_index_expression) => {
-                self.visit_tuple_index_expression(ast, &tuple_index_expression, &expression);
+            ExpressionKind::FieldExpression(field_expression) => {
+                self.visit_field_expression(ast, &field_expression, &expression);
+            }
+            ExpressionKind::Struct(struct_expression) => {
+                self.visit_struct_expression(ast, &struct_expression, &expression);
             }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, &span);
@@ -153,7 +157,9 @@ pub trait ASTVisitor {
         }
     }
 
-    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression);
+    fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, expr: &Expression);
+
+    fn visit_field_expression(&mut self, ast: &mut Ast, field_expression: &FieldExpression, expr: &Expression);
 
     fn visit_tuple_expression(&mut self, ast: &mut Ast, tuple_expression: &TupleExpression, _expr: &Expression) {
         for element in &tuple_expression.elements {
@@ -161,7 +167,7 @@ pub trait ASTVisitor {
         }
     }
 
-    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, _expr: &Expression);
+    fn visit_index_expression(&mut self, ast: &mut Ast, index_expression: &IndexExpression, expr: &Expression);
 
     fn visit_array_expression(&mut self, ast: &mut Ast, array_expression: &ArrayExpression, _expr: &Expression) {
         for element in &array_expression.elements {
@@ -169,9 +175,9 @@ pub trait ASTVisitor {
         }
     }
 
-    fn visit_continue_expression(&mut self, ast: &mut Ast, continue_expression: &ContinueExpression, _expr: &Expression);
+    fn visit_continue_expression(&mut self, ast: &mut Ast, continue_expression: &ContinueExpression, expr: &Expression);
 
-    fn visit_break_expression(&mut self, ast: &mut Ast, break_expression: &BreakExpression, _expr: &Expression);
+    fn visit_break_expression(&mut self, ast: &mut Ast, break_expression: &BreakExpression, expr: &Expression);
 
     fn visit_block_expression(&mut self, ast: &mut Ast, block_expression: &BlockExpression, _expr: &Expression) {
         for statement in &block_expression.statements {

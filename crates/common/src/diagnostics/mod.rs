@@ -7,7 +7,7 @@ pub mod printer;
 
 use crate::text::span::{TextSpan};
 use crate::token::{Token, TokenKind};
-use crate::typings::Type;
+use crate::typings::{ObjectKind, Type};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -65,6 +65,17 @@ impl DiagnosticsReport {
         );
     }
 
+    /// Same as `DiagnosticsReport::report_unexpected_token` but with two expected tokens
+    pub fn report_unexpected_token_two(
+        &mut self, first_expected: &TokenKind, second_expected: &TokenKind, token: &Token
+    ) {
+        self.report_error(
+            format!("unexpected token"),
+            format!("Expected token <{}> or <{}>, found <{}>", first_expected, second_expected, token.kind),
+            token.span.clone(),
+        );
+    }
+
     pub fn report_expected_expression(&mut self, token: &Token) {
         self.report_error(
             format!("expected expression"),
@@ -114,7 +125,7 @@ impl DiagnosticsReport {
         if matches!(expected, Type::Array(_, _)) {
             self.report_array_error(expected, actual, span);
             return;
-        } else if matches!(expected, Type::Tuple(_)) {
+        } else if matches!(expected, Type::Object(obj) if matches!(obj.kind, ObjectKind::Tuple)) {
             self.report_tuple_error(expected, actual, span);
             return;
         } else {
@@ -201,36 +212,39 @@ impl DiagnosticsReport {
     }
 
     pub fn report_tuple_error(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
-        if let (Type::Tuple(expected_types), Type::Tuple(actual_types)) = (expected, actual) {
-            if expected_types.len() != actual_types.len() {
-                self.report_error(
-                    format!("mismatched types"),
-                    format!(
-                        "Expected tuple with {} elements, found one with {} elements",
-                        expected_types.len(), actual_types.len()
-                    ),
-                    span.clone()
-                );
-                return;
-            }
-
-            for (i, (exp_ty, act_ty)) in expected_types.iter().zip(actual_types.iter()).enumerate() {
-                if !act_ty.is_assignable_to(exp_ty) {
+        if let (Type::Object(expected_obj), Type::Object(actual_obj)) = (expected, actual) {
+            if matches!(expected_obj.kind, ObjectKind::Tuple) && 
+               matches!(actual_obj.kind, ObjectKind::Tuple) {
+                if expected_obj.fields.len() != actual_obj.fields.len() {
                     self.report_error(
                         format!("mismatched types"),
-                        format!("Type mismatch at tuple field {}: expected `{}`, found `{}`", i, exp_ty, act_ty),
+                        format!(
+                            "Expected tuple with {} elements, found one with {} elements",
+                            expected_obj.fields.len(), actual_obj.fields.len()
+                        ),
                         span.clone()
                     );
                     return;
                 }
-            }
 
-            self.report_error(
-                format!("mismatched types"),
-                format!("Expected tuple of type `{}`, found one of type `{}`", expected, actual),
-                span.clone()
-            );
+                for (i, (exp_field, act_field)) in expected_obj.fields.iter().zip(actual_obj.fields.iter()).enumerate() {
+                    if !act_field.ty.is_assignable_to(&exp_field.ty) {
+                        self.report_error(
+                            format!("mismatched types"),
+                            format!("Type mismatch at tuple field {}: expected `{}`, found `{}`", i, exp_field.ty, act_field.ty),
+                            span.clone()
+                        );
+                        return;
+                    }
+                }
+            }
         }
+
+        self.report_error(
+            format!("mismatched types"),
+            format!("Expected tuple of type `{}`, found one of type `{}`", expected, actual),
+            span.clone()
+        );
     }
 
     pub fn report_array_index_out_of_bounds(&mut self, index: &TextSpan, arr_size: String, array: &TextSpan) {
@@ -331,11 +345,67 @@ impl DiagnosticsReport {
         );
     }
 
+    pub fn report_expected_item(&mut self, token: &Token) {
+        self.report_error(
+            format!("expected item"),
+            format!("Expected item, found {}", token.kind),
+            token.span.clone()
+        );
+    }
+
+    pub fn report_duplicate_local_struct(&mut self, name: String, span: &TextSpan) {
+        self.report_error(
+            format!("multiple struct declarations"),
+            format!("Struct `{}` already declared in this scope", name),
+            span.clone()
+        );
+    }
+
+    pub fn report_duplicate_global_struct(&mut self, name: String, span: &TextSpan) {
+        self.report_error(
+            format!("multiple struct declarations"),
+            format!("Struct `{}` already declared globally", name),
+            span.clone()
+        );
+    }
+
+    pub fn report_unknown_field_in_object(&mut self, field: String, object: String, span: &TextSpan) {
+        self.report_error(
+            format!("unknown field in object"),
+            format!("Object `{}` does not have a field `{}`", object, field),
+            span.clone()
+        );
+    }
+
+    pub fn report_undefined_struct(&mut self, name: String, span: &TextSpan) {
+        self.report_error(
+            format!("undefined struct"),
+            format!("Struct `{}` is not defined", name),
+            span.clone()
+        );
+    }
+
+    pub fn report_invalid_field_kind(&mut self, invalid_field: String, span: &TextSpan) {
+        self.report_error(
+            format!("invalid field kind"),
+            format!("Expected field name, found `{}`", invalid_field),
+            span.clone()
+        );
+    }
+
     // Warnings
-    pub fn warn_non_upper_case_globals(&mut self, variable: &str, span: &TextSpan) {
+    pub fn warn_non_upper_case(&mut self, variable: &str, span: &TextSpan) {
         self.report_warning(
             format!("constant `{}` should have an upper case name", variable),
             format!("constant `{}` should have an upper case name", variable),
+            span.clone()
+        );
+    }
+
+    pub fn warn_non_upper_camel_case(&mut self, variable: &str, span: &TextSpan) {
+        self.report_warning(
+            format!("constant `{}` should have an upper camel case name", variable),
+            format!("constant `{}` should have an upper camel case name", variable),
             span.clone()
         );
     }

@@ -3,9 +3,7 @@ use std::fmt::Write;
 use anyhow::Result;
 use snowflake_common::{Idx, IndexVec};
 
-use crate::{
-    ir::mir::{basic_block::{BasicBlock, BasicBlockIdx}, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, Terminator, TerminatorKind, Type, Value, MIR}
-};
+use crate::ir::mir::{basic_block::{BasicBlock, BasicBlockIdx}, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, ObjectKind, Terminator, TerminatorKind, Type, Value, MIR};
 
 
 pub struct MIRWriter<W> {
@@ -182,23 +180,38 @@ impl<W> MIRWriter<W> where W: Write {
                 write!(writer, "] = ")?;
                 Self::write_value(writer, value)?;
             }
-            InstructionKind::Tuple { elements } => {
-                write!(writer, "(")?;
-                for (i, elem) in elements.iter().enumerate() {
-                    Self::write_value(writer, elem)?;
-                    if i == 0 || i != elements.len() - 1 {
-                        write!(writer, ", ")?;
+            InstructionKind::Object { kind, fields } => {
+                match kind {
+                    ObjectKind::Struct => {
+                        write!(writer, "{{")?;
+                        for (i, field) in fields.iter().enumerate() {
+                            Self::write_value(writer, field)?;
+                            if i == 0 || i != fields.len() - 1 {
+                                write!(writer, ", ")?;
+                            }
+                        }
+                        write!(writer, "}}")?;
                     }
+                    ObjectKind::Tuple => {
+                        write!(writer, "(")?;
+                        for (i, field) in fields.iter().enumerate() {
+                            Self::write_value(writer, field)?;
+                            if i == 0 || i != fields.len() - 1 {
+                                write!(writer, ", ")?;
+                            }
+                        }
+                        write!(writer, ")")?;
+                    }
+                    ObjectKind::Unresolved => {}
                 }
-                write!(writer, ")")?;
             }
-            InstructionKind::TupleField { tuple, field } => {
+            InstructionKind::Field { object: tuple, field } => {
                 Self::write_value(writer, tuple)?;
                 write!(writer, ".")?;
                 Self::write_value(writer, field)?;
             }
-            InstructionKind::TupleStore { tuple, field, value } => {
-                Self::write_value(writer, tuple)?;
+            InstructionKind::ObjectStore { object, field, value } => {
+                Self::write_value(writer, object)?;
                 write!(writer, ".")?;
                 Self::write_value(writer, field)?;
                 write!(writer, " = ")?;

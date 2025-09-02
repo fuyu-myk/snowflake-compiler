@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use anyhow::Result;
 use snowflake_common::diagnostics::DiagnosticsReportCell;
-use snowflake_front::compilation_unit::{GlobalScope, VariableIndex, FunctionIndex};
+use snowflake_front::{ast::ItemIndex, compilation_unit::{GlobalScope, VariableIndex}};
 use crate::ir::hir::{HIR, HIRStatement, HIRStmtKind, HIRExpression, HIRExprKind};
 
 pub struct MutabilityChecker {
@@ -48,7 +48,7 @@ impl MutabilityChecker {
 
     fn check_function(
         &mut self, 
-        _function_index: FunctionIndex, 
+        _function_index: ItemIndex, 
         statements: &[HIRStatement], 
         global_scope: &GlobalScope,
         hir: &HIR
@@ -140,7 +140,7 @@ impl MutabilityChecker {
                             }
                         }
                     }
-                    HIRExprKind::TupleField { tuple, field } => {
+                    HIRExprKind::Field { object: tuple, field } => {
                         // Check if root object is mutable
                         if let Some(root_var_idx) = self.extract_root_variable(tuple) {
                             if !self.mutable_variables.contains(&root_var_idx) {
@@ -148,6 +148,33 @@ impl MutabilityChecker {
                                 let field_name = field.span.literal.clone();
                                 self.diagnostics.borrow_mut().report_immutable_assignment_error(
                                     format!("{}.{}", variable, field_name),
+                                    Some(variable.to_string()),
+                                    &target.span
+                                );
+                                return Err(());
+                            }
+                        }
+                    }
+                    HIRExprKind::Binary { operator, left, right } => {
+                        // Check if left operand is mutable
+                        if let Some(left_var_idx) = self.extract_root_variable(left) {
+                            if !self.mutable_variables.contains(&left_var_idx) {
+                                let variable = &global_scope.variables[left_var_idx].name;
+                                self.diagnostics.borrow_mut().report_immutable_assignment_error(
+                                    format!("{} {}", variable, operator),
+                                    Some(variable.to_string()),
+                                    &target.span
+                                );
+                                return Err(());
+                            }
+                        }
+
+                        // Check if right operand is mutable
+                        if let Some(right_var_idx) = self.extract_root_variable(right) {
+                            if !self.mutable_variables.contains(&right_var_idx) {
+                                let variable = &global_scope.variables[right_var_idx].name;
+                                self.diagnostics.borrow_mut().report_immutable_assignment_error(
+                                    format!("{} {}", variable, operator),
                                     Some(variable.to_string()),
                                     &target.span
                                 );
@@ -169,7 +196,39 @@ impl MutabilityChecker {
             HIRStmtKind::Expression{ expr } => {
                 self.check_expression(expr, global_scope, hir)
             }
-            _ => Ok(()) // Other statement types don't affect mutability
+            HIRStmtKind::If { condition, then_block, else_block } => {
+                self.check_expression(condition, global_scope, hir)?;
+                
+                for statement in then_block {
+                    self.check_statement(statement, global_scope, hir)?;
+                }
+                
+                for statement in else_block {
+                    self.check_statement(statement, global_scope, hir)?;
+                }
+                
+                Ok(())
+            }
+            HIRStmtKind::Loop { body } => {
+                for statement in body {
+                    self.check_statement(statement, global_scope, hir)?;
+                }
+
+                Ok(())
+            }
+            HIRStmtKind::Block { body, scope_id: _ } => {
+                for statement in body {
+                    self.check_statement(statement, global_scope, hir)?;
+                }
+
+                Ok(())
+            }
+            HIRStmtKind::Return { expr } => {
+                self.check_expression(expr, global_scope, hir)
+            }
+            HIRStmtKind::Item { item_id: _ } => {
+                Ok(())
+            }
         }
     }
 
@@ -201,7 +260,7 @@ impl MutabilityChecker {
                 self.check_expression(object, global_scope, hir)?;
                 self.check_expression(index, global_scope, hir)
             }
-            HIRExprKind::TupleField { tuple, field } => {
+            HIRExprKind::Field { object: tuple, field } => {
                 self.check_expression(tuple, global_scope, hir)?;
                 self.check_expression(field, global_scope, hir)
             }
@@ -235,7 +294,7 @@ impl MutabilityChecker {
         match &expr.kind {
             HIRExprKind::Var { var_idx } => Some(*var_idx),
             HIRExprKind::Index { object, .. } => self.extract_root_variable(object),
-            HIRExprKind::TupleField { tuple, .. } => self.extract_root_variable(tuple),
+            HIRExprKind::Field { object: tuple, .. } => self.extract_root_variable(tuple),
             _ => None,
         }
     }

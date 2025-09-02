@@ -1,6 +1,7 @@
-use snowflake_common::{idx, IndexVec};
+use snowflake_common::{bug_report, idx, Idx, IndexVec};
+use snowflake_common::typings::{Type, ObjectKind};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ContinueExpression, Expression, ExpressionKind, FloatExpression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, TupleExpression, TupleIndexExpression, TypeKind, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, WhileStatement};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, Generics, IfExpression, IndexExpression, Item, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, StructExpression, TupleExpression, TypeKind, UnaryExpression, UnaryOpKind, UsizeExpression, VarExpression, VariantData, WhileStatement};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -9,15 +10,14 @@ use crate::ast::lexer::Lexer;
 use snowflake_common::token::{Token, TokenKind};
 use crate::ast::parser::Parser;
 use snowflake_common::text::span::TextSpan;
-pub use snowflake_common::typings::Type;
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use snowflake_common::diagnostics;
 use snowflake_common::diagnostics::printer::DiagnosticsPrinter;
 
 
-idx!(FunctionIndex);
 idx!(VariableIndex);
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,8 @@ pub struct Variable {
 
 pub struct GlobalScope {
     pub variables: IndexVec<VariableIndex, Variable>,
-    pub functions: IndexVec<FunctionIndex, Function>,
+    pub functions: IndexVec<ItemIndex, Function>,
+    pub structs: IndexVec<ItemIndex, Item>,
     pub global_variables: Vec<VariableIndex>,
 }
 
@@ -46,6 +47,7 @@ impl GlobalScope {
         GlobalScope {
             variables: IndexVec::new(),
             functions: IndexVec::new(),
+            structs: IndexVec::new(),
             global_variables: Vec::new(),
         } 
     }
@@ -68,7 +70,11 @@ impl GlobalScope {
             .map(|(variable_index, _) | variable_index)
     }
 
-    pub fn create_function(&mut self, identifier: String, function_body: Body, parameters: Vec<VariableIndex>, return_type: Type) -> Result<FunctionIndex, FunctionIndex> {
+    pub fn lookup_global_variable_by_name(&self, identifier: &str) -> Option<VariableIndex> {
+        self.lookup_global_variable(identifier)
+    }
+
+    pub fn create_function(&mut self, identifier: String, function_body: Body, parameters: Vec<VariableIndex>, return_type: Type) -> Result<ItemIndex, ItemIndex> {
         if let Some(existing_fx_idx) = self.lookup_fx(&identifier) {
             return Err(existing_fx_idx);
         }
@@ -85,23 +91,145 @@ impl GlobalScope {
         Some(self.variables.get(*var_idx).ty.clone())
     }
 
-    pub fn lookup_fx(&self, identifier: &str) -> Option<FunctionIndex> {
+    pub fn lookup_fx(&self, identifier: &str) -> Option<ItemIndex> {
         self.functions.indexed_iter().find(|(_, function)| function.name == identifier).map(|(idx, _)| idx)
+    }
+
+    pub fn declare_struct(&mut self, item: Item) -> Result<ItemIndex, ItemIndex> {
+        let struct_name = match &item.kind {
+            crate::ast::ItemKind::Struct(name, _, _) => &name.span.literal,
+            _ => panic!("Expected struct item in declare_struct"),
+        };
+
+        if let Some(existing_struct_idx) = self.lookup_struct(struct_name) {
+            return Err(existing_struct_idx);
+        }
+
+        Ok(self.structs.push(item))
+    }
+
+    pub fn lookup_struct(&self, identifier: &str) -> Option<ItemIndex> {
+        self.structs.indexed_iter()
+            .find(|(_, item)| {
+                match &item.kind {
+                    crate::ast::ItemKind::Struct(name, _, _) => name.span.literal == identifier,
+                    _ => false,
+                }
+            })
+            .map(|(idx, _)| idx)
+    }
+
+    pub fn get_struct(&self, struct_idx: ItemIndex) -> &Item {
+        self.structs.get(struct_idx)
+    }
+    
+    /// Convert a resolved struct type back to StructIndex
+    pub fn struct_index_from_resolved(&self, resolved_index: u32) -> ItemIndex {
+        ItemIndex::new(resolved_index as usize)
+    }
+
+    /// Resolve all unresolved struct types to struct indices
+    pub fn resolve_struct_types(&mut self) -> Result<(), Vec<Token>> {
+        let mut unresolved_types = Vec::new();
+        let mut struct_lookup = std::collections::HashMap::new();
+
+        for (struct_idx, item) in self.structs.indexed_iter() {
+            if item.is_local {
+                continue;
+            }
+            
+            match &item.kind {
+                crate::ast::ItemKind::Struct(name, _, _) => {
+                    struct_lookup.insert(name.span.literal.clone(), struct_idx);
+                }
+                _ => continue,
+            }
+        }
+        
+        let function_indices: Vec<_> = self.functions.indices().collect();
+        let variable_indices: Vec<_> = self.variables.indices().collect();
+
+        for func_idx in function_indices {
+            let param_indices = self.functions[func_idx].parameters.clone();
+            for param_idx in param_indices {
+                if let Err(unresolved) = Self::resolve_type_recursive_static(
+                    &mut self.variables[param_idx].ty, &struct_lookup
+                ) {
+                    unresolved_types.extend(unresolved);
+                }
+            }
+            
+            if let Err(unresolved) = Self::resolve_type_recursive_static(
+                &mut self.functions[func_idx].return_type, &struct_lookup
+            ) {
+                unresolved_types.extend(unresolved);
+            }
+        }
+        
+        for var_idx in variable_indices {
+            if let Err(unresolved) = Self::resolve_type_recursive_static(
+                &mut self.variables[var_idx].ty, &struct_lookup
+            ) {
+                unresolved_types.extend(unresolved);
+            }
+        }
+        
+        if unresolved_types.is_empty() {
+            Ok(())
+        } else {
+            Err(unresolved_types)
+        }
+    }
+    
+    /// Static helper for type resolution
+    fn resolve_type_recursive_static(ty: &mut Type, struct_names: &HashMap<String, ItemIndex>) -> Result<(), Vec<Token>> {
+        match ty {
+            Type::ObjectUnresolved(name) => {
+                if let Some(_) = struct_names.get(name.span.literal.as_str()) {
+                    *ty = Type::struct_resolved(name.span.literal.clone(), vec![]);
+                    Ok(())
+                } else {
+                    Err(vec![name.clone()])
+                }
+            }
+            Type::Array(element_type, _) => {
+                Self::resolve_type_recursive_static(element_type, struct_names)
+            }
+            Type::Object(object_type) => {
+                let mut all_unresolved = Vec::new();
+                for field in &mut object_type.fields {
+                    if let Err(unresolved) = Self::resolve_type_recursive_static(&mut field.ty, struct_names) {
+                        all_unresolved.extend(unresolved);
+                    }
+                }
+                if all_unresolved.is_empty() {
+                    Ok(())
+                } else {
+                    Err(all_unresolved)
+                }
+            }
+            _ => Ok(()),
+        }
     }
 }
 
 struct LocalScope {
     locals: Vec<VariableIndex>,
-    function: Option<FunctionIndex>,
+    function: Option<ItemIndex>,
+    structs: Vec<ItemIndex>,
 }
 
 impl LocalScope {
-    fn new(function: Option<FunctionIndex>) -> Self {
-        LocalScope { locals: Vec::new(), function }
+    fn new(function: Option<ItemIndex>) -> Self {
+        LocalScope { locals: Vec::new(), function, structs: Vec::new() }
     }
 
     fn add_local_var(&mut self, local: VariableIndex) {
         self.locals.push(local);
+    }
+
+    fn add_local_struct(&mut self, struct_idx: ItemIndex) {
+        self.structs.push(struct_idx);
     }
 }
 
@@ -119,11 +247,11 @@ impl ScopeStack {
         self._enter_scope(None);
     }
 
-    fn _enter_scope(&mut self, fx_idx: Option<FunctionIndex>) {
+    fn _enter_scope(&mut self, fx_idx: Option<ItemIndex>) {
         self.local_scopes.push(LocalScope::new(fx_idx));
     }
 
-    fn enter_fx_scope(&mut self, fx_idx: FunctionIndex) {
+    fn enter_fx_scope(&mut self, fx_idx: ItemIndex) {
         self._enter_scope(Some(fx_idx));
     }
     
@@ -188,7 +316,7 @@ impl ScopeStack {
         .map(|fx| self.global_scope.functions.get(fx));
     }
 
-    fn surrounding_function_idx(&self) -> Option<FunctionIndex> {
+    fn surrounding_function_idx(&self) -> Option<ItemIndex> {
         self.local_scopes.iter().rev()
             .filter_map(|scope| scope.function)
             .next()
@@ -201,6 +329,76 @@ impl ScopeStack {
     fn current_local_scope_mut(&mut self) -> &mut LocalScope {
         self.local_scopes.last_mut().unwrap()
     }
+
+    fn declare_local_struct(&mut self, item: Item) -> Result<ItemIndex, ItemIndex> {
+        // For local structs, allow shadowing of global structs
+        // Check if there's already a local struct with the same name in the current scope
+        if let Some(current_scope) = self.local_scopes.last() {
+            let struct_name = match &item.kind {
+                ItemKind::Struct(name, _, _) => &name.span.literal,
+                _ => return Err(ItemIndex::new(0)), // Should never happen
+            };
+            
+            let unscoped_name = if let Some(last_part) = struct_name.split("::").last() {
+                last_part
+            } else {
+                struct_name
+            };
+            
+            // Check for conflicts only within current local scope
+            for &existing_struct_idx in &current_scope.structs {
+                let existing_struct = self.global_scope.get_struct(existing_struct_idx);
+                if let ItemKind::Struct(existing_name, _, _) = &existing_struct.kind {
+                    let existing_unscoped = if let Some(last_part) = existing_name.span.literal.split("::").last() {
+                        last_part
+                    } else {
+                        &existing_name.span.literal
+                    };
+                    
+                    if existing_unscoped == unscoped_name {
+                        return Err(existing_struct_idx);
+                    }
+                }
+            }
+        }
+        
+        let struct_idx = self.global_scope.structs.push(item);
+        
+        // Add to current local scope for scoping
+        if let Some(current_scope) = self.local_scopes.last_mut() {
+            current_scope.add_local_struct(struct_idx);
+        }
+        
+        Ok(struct_idx)
+    }
+
+    fn lookup_local_struct(&self, identifier: &str) -> Option<ItemIndex> {
+        for scope in self.local_scopes.iter().rev() {
+            for &struct_idx in &scope.structs {
+                let struct_item = self.global_scope.get_struct(struct_idx);
+                if let ItemKind::Struct(name, _, _) = &struct_item.kind {
+                    let struct_name = if let Some(last_part) = name.span.literal.split("::").last() {
+                        last_part
+                    } else {
+                        &name.span.literal
+                    };
+                    
+                    if struct_name == identifier {
+                        return Some(struct_idx);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn lookup_struct_with_local(&self, identifier: &str) -> Option<ItemIndex> {
+        if let Some(local_struct) = self.lookup_local_struct(identifier) {
+            return Some(local_struct);
+        }
+        
+        self.global_scope.lookup_struct(identifier)
+    }
 }
 
 struct Resolver {
@@ -208,9 +406,14 @@ struct Resolver {
     diagnostics: DiagnosticsReportCell,
     loop_depth: usize,
     expected_array_type: Option<Type>, // Track expected array type for better error reporting
+    visited_local_items: std::collections::HashSet<ItemIndex>,
 }
 
 fn expect_type(diagnostics: &DiagnosticsReportCell, expected: Type, actual: &Type, span: &TextSpan) -> Type {
+    if matches!(expected, Type::ObjectUnresolved(_)) || matches!(actual, Type::ObjectUnresolved(_)) {
+        return expected;
+    }
+    
     // Implicit conversion from Int to Usize
     let is_compatible = actual.is_assignable_to(&expected) || 
                        (matches!(expected, Type::Usize) && matches!(actual, Type::Int));
@@ -229,6 +432,7 @@ impl Resolver {
             diagnostics,
             loop_depth: 0,
             expected_array_type: None,
+            visited_local_items: std::collections::HashSet::new(),
         }
     }
 
@@ -259,33 +463,44 @@ impl Resolver {
 
     pub fn resolve(&mut self, ast: &mut Ast) {
         for id in ast.items.cloned_indices() {
+            let item = ast.query_item(id);
+            if item.is_local {
+                continue;
+            }
             self.visit_item(ast, id);
         }
     }
 
     pub fn resolve_binary_expression(&self, ast: &Ast, left: &Expression, right: &Expression, operator: &BinaryOpKind) -> Type {
-        let type_matrix: (Type, Type, Type) = match operator {
-            BinaryOpKind::Equals => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::NotEquals => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::LessThan => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::GreaterThan => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::LessThanOrEqual => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::GreaterThanOrEqual => (Type::Int, Type::Int, Type::Bool),
-            BinaryOpKind::Power => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::Modulo => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::Multiply => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::Divide => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::Plus => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::Minus => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::BitwiseAnd => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::BitwiseXor => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::BitwiseOr => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::ShiftLeft => (Type::Int, Type::Int, Type::Int),
-            BinaryOpKind::ShiftRight => (Type::Int, Type::Int, Type::Int),
+        let left_ty = &left.ty;
+        let right_ty = &right.ty;
+        
+        let result_type = match operator {
+            BinaryOpKind::Equals | BinaryOpKind::NotEquals | 
+            BinaryOpKind::LessThan | BinaryOpKind::GreaterThan | 
+            BinaryOpKind::LessThanOrEqual | BinaryOpKind::GreaterThanOrEqual => {
+                self.expect_type(left_ty.clone(), right_ty, &right.span(&ast));
+                Type::Bool
+            },
+            BinaryOpKind::Plus | BinaryOpKind::Minus | BinaryOpKind::Multiply | BinaryOpKind::Divide => {
+                if left_ty.is_assignable_to(right_ty) {
+                    left_ty.clone()
+                } else if right_ty.is_assignable_to(left_ty) {
+                    self.expect_type(left_ty.clone(), right_ty, &right.span(&ast));
+                    left_ty.clone()
+                } else {
+                    self.expect_type(left_ty.clone(), right_ty, &right.span(&ast));
+                    left_ty.clone()
+                }
+            },
+            BinaryOpKind::Power | BinaryOpKind::Modulo | 
+            BinaryOpKind::BitwiseAnd | BinaryOpKind::BitwiseXor | BinaryOpKind::BitwiseOr |
+            BinaryOpKind::ShiftLeft | BinaryOpKind::ShiftRight => {
+                self.expect_type(Type::Int, left_ty, &left.span(&ast));
+                self.expect_type(Type::Int, right_ty, &right.span(&ast));
+                Type::Int
+            },
         };
-
-        self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
-        self.expect_type(type_matrix.1, &right.ty, &right.span(&ast));
 
         // Check for division by zero at compile time
         match operator {
@@ -302,7 +517,7 @@ impl Resolver {
             _ => {}
         }
 
-        type_matrix.2
+        result_type
     }
 
     pub fn resolve_compound_binary_expression(&self, ast: &Ast, left: &Expression, right: &Expression, operator: &AssignmentOpKind) -> Type {
@@ -313,16 +528,11 @@ impl Resolver {
             ExpressionKind::Variable(_) => {
                 // Valid l-value, proceed with normal type checking
                 let type_matrix: (Type, Type) = match operator {
-                    AssignmentOpKind::PlusAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::MinusAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::MultiplyAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::DivideAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::ModuloAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::BitwiseAndAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::BitwiseOrAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::BitwiseXorAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::ShiftLeftAs => (Type::Int, Type::Int),
-                    AssignmentOpKind::ShiftRightAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::PlusAs | AssignmentOpKind::MinusAs | 
+                    AssignmentOpKind::MultiplyAs | AssignmentOpKind::DivideAs => (Type::Int, Type::Int),
+                    AssignmentOpKind::ModuloAs | AssignmentOpKind::BitwiseAndAs | 
+                    AssignmentOpKind::BitwiseOrAs | AssignmentOpKind::BitwiseXorAs | 
+                    AssignmentOpKind::ShiftLeftAs | AssignmentOpKind::ShiftRightAs => (Type::Int, Type::Int),
                 };
 
                 self.expect_type(type_matrix.0, &left.ty, &left.span(&ast));
@@ -358,83 +568,104 @@ impl Resolver {
 
         type_matrix.1
     }
-}
 
-pub fn resolve_type_from_annotation(diagnostics: &DiagnosticsReportCell, type_annotation: &StaticTypeAnnotation) -> Type {
-    match &type_annotation.type_kind {
-        TypeKind::Array { element_type, length, .. } => {
-            let resolved_element_type = resolve_type_kind(diagnostics, element_type);
-            let length_str = &length.span.literal;
-            match length_str.parse::<usize>() {
-                Ok(len) => Type::Array(Box::new(resolved_element_type), len),
-                Err(_) => {
-                    // TODO: Proper reporting of wrong array len
-                    diagnostics.borrow_mut().report_undeclared_type(length);
-                    Type::Error
+    /// Resolve type from annotation with scope awareness
+    pub fn resolve_type_from_annotation(&self, type_annotation: &StaticTypeAnnotation) -> Type {
+        match &type_annotation.type_kind {
+            TypeKind::Array { element_type, length, .. } => {
+                let resolved_element_type = self.resolve_type_kind(element_type);
+                let length_str = &length.span.literal;
+                match length_str.parse::<usize>() {
+                    Ok(len) => Type::Array(Box::new(resolved_element_type), len),
+                    Err(_) => {
+                        // TODO: Proper reporting of wrong array len
+                        self.diagnostics.borrow_mut().report_undeclared_type(length);
+                        Type::Error
+                    }
                 }
+            },
+            TypeKind::Slice { element_type, .. } => {
+                let _resolved_element_type = self.resolve_type_kind(element_type);
+                // TODO: Implement slices
+                Type::Error
+            },
+            TypeKind::Simple { type_name } => {
+                self.resolve_type_from_string(type_name)
             }
-        },
-        TypeKind::Slice { element_type, .. } => {
-            let _resolved_element_type = resolve_type_kind(diagnostics, element_type);
-            // TODO: Implement slices
-            Type::Error
-        },
-        TypeKind::Simple { type_name } => {
-            resolve_type_from_string(diagnostics, type_name)
-        }
-        TypeKind::Tuple { element_types, .. } => {
-            let mut resolved_types = Vec::new();
-            for elem_type in element_types {
-                let resolved_type = resolve_type_kind(diagnostics, elem_type);
-                resolved_types.push(Box::new(resolved_type));
+            TypeKind::Tuple { element_types, .. } => {
+                let mut resolved_types = Vec::new();
+                for elem_type in element_types {
+                    let resolved_type = self.resolve_type_kind(elem_type);
+                    resolved_types.push(resolved_type);
+                }
+                Type::tuple(resolved_types)
             }
-            Type::Tuple(resolved_types)
         }
     }
-}
 
-pub fn resolve_type_kind(diagnostics: &DiagnosticsReportCell, type_kind: &TypeKind) -> Type {
-    match type_kind {
-        TypeKind::Array { element_type, length, .. } => {
-            let resolved_element_type = resolve_type_kind(diagnostics, element_type);
-            let length_str = &length.span.literal;
-            match length_str.parse::<usize>() {
-                Ok(len) => Type::Array(Box::new(resolved_element_type), len),
-                Err(_) => {
-                    // TODO: Proper reporting of wrong array len
-                    diagnostics.borrow_mut().report_undeclared_type(length);
-                    Type::Error
+    /// Resolve type kind with scope awareness
+    pub fn resolve_type_kind(&self, type_kind: &TypeKind) -> Type {
+        match type_kind {
+            TypeKind::Array { element_type, length, .. } => {
+                let resolved_element_type = self.resolve_type_kind(element_type);
+                let length_str = &length.span.literal;
+                match length_str.parse::<usize>() {
+                    Ok(len) => Type::Array(Box::new(resolved_element_type), len),
+                    Err(_) => {
+                        // TODO: Proper reporting of wrong array len
+                        self.diagnostics.borrow_mut().report_undeclared_type(length);
+                        Type::Error
+                    }
                 }
+            },
+            TypeKind::Slice { element_type, .. } => {
+                let _resolved_element_type = self.resolve_type_kind(element_type);
+                // TODO: Implement slices
+                Type::Error
+            },
+            TypeKind::Simple { type_name } => {
+                self.resolve_type_from_string(type_name)
             }
-        },
-        TypeKind::Slice { element_type, .. } => {
-            let _resolved_element_type = resolve_type_kind(diagnostics, element_type);
-            // TODO: Implement slices
-            Type::Error
-        },
-        TypeKind::Simple { type_name } => {
-            resolve_type_from_string(diagnostics, type_name)
-        }
-        TypeKind::Tuple { element_types, .. } => {
-            let mut resolved_types = Vec::new();
-            for elem_type in element_types {
-                let resolved_type = resolve_type_kind(diagnostics, elem_type);
-                resolved_types.push(Box::new(resolved_type));
+            TypeKind::Tuple { element_types, .. } => {
+                let mut resolved_types = Vec::new();
+                for elem_type in element_types {
+                    let resolved_type = self.resolve_type_kind(elem_type);
+                    resolved_types.push(resolved_type);
+                }
+                Type::tuple(resolved_types)
             }
-            Type::Tuple(resolved_types)
         }
     }
-}
 
-pub fn resolve_type_from_string(diagnostics: &DiagnosticsReportCell, type_name: &Token) -> Type {
-        let ty = Type::from_str(&type_name.span.literal);
-        return match ty {
-        None => {
-            diagnostics.borrow_mut().report_undeclared_type(&type_name);
-            Type::Error
+    /// Resolve type from string with scope awareness for struct types
+    pub fn resolve_type_from_string(&self, type_name: &Token) -> Type {
+        let builtin_type = Type::from_token(type_name);
+        if !matches!(builtin_type, Type::ObjectUnresolved(_)) {
+            return builtin_type;
         }
-        Some(ty) => ty
-    };
+        
+        if let Some(struct_idx) = self.scopes.lookup_struct_with_local(&type_name.span.literal) {
+            let struct_item = self.scopes.global_scope.get_struct(struct_idx);
+            if let ItemKind::Struct(identifier, _, variant_data) = &struct_item.kind {
+                match variant_data {
+                    VariantData::Struct { fields } => {
+                        let mut field_types = Vec::new();
+                        for field in fields {
+                            if let Some(field_name) = &field.identifier {
+                                let field_type = self.resolve_type_kind(&field.ty);
+                                field_types.push((field_name.span.literal.clone(), field_type));
+                            }
+                        }
+
+                        return Type::struct_resolved(identifier.span.literal.clone(), field_types);
+                    }
+                }
+            }
+        }
+        
+        self.diagnostics.borrow_mut().report_undeclared_type(type_name);
+        Type::ObjectUnresolved(type_name.clone())
+    }
 }
 
 impl ASTVisitor for Resolver {
@@ -444,7 +675,7 @@ impl ASTVisitor for Resolver {
         // Set expected array type if we have an array type annotation
         let expected_type = match &let_statement.type_annotation {
             Some(type_annotation) => {
-                let ty = resolve_type_from_annotation(&self.diagnostics, type_annotation);
+                let ty = self.resolve_type_from_annotation(type_annotation);
                 if matches!(ty, Type::Array(_, _)) {
                     self.expected_array_type = Some(ty.clone());
                 }
@@ -474,10 +705,10 @@ impl ASTVisitor for Resolver {
         let identifier = const_statement.identifier.span.literal.clone();
 
         if identifier.chars().any(|c| c.is_lowercase()) {
-            self.diagnostics.borrow_mut().warn_non_upper_case_globals(&identifier, &const_statement.identifier.span);
+            self.diagnostics.borrow_mut().warn_non_upper_case(&identifier, &const_statement.identifier.span);
         }
         
-        let ty = resolve_type_from_annotation(&self.diagnostics, &const_statement.type_annotation);
+        let ty = self.resolve_type_from_annotation(&const_statement.type_annotation);
         if matches!(ty, Type::Array(_, _)) {
             self.expected_array_type = Some(ty.clone());
         }
@@ -674,16 +905,41 @@ impl ASTVisitor for Resolver {
         ast.set_type(expr.id, ty);
     }
     
-    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemId) {
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemIndex) {
         // fetching fx idx
         let fx_idx = fx_decl.index;
 
         self.scopes.enter_fx_scope(fx_idx);
 
         let function = self.scopes.global_scope.functions.get(fx_idx);
+        
         for parameter in function.parameters.clone() {
-            self.scopes.current_local_scope_mut().locals.push(parameter); // TODO: parameter types
+            let unresolved_token = {
+                let param_var = self.scopes.global_scope.variables.get(parameter);
+                if let Type::ObjectUnresolved(ref token) = param_var.ty {
+                    Some(token.clone())
+                } else {
+                    None
+                }
+            };
+            
+            if let Some(token) = unresolved_token {
+                let resolved_type = self.resolve_type_from_string(&token);
+                let param_var = self.scopes.global_scope.variables.get_mut(parameter);
+                param_var.ty = resolved_type;
+            }
+            
+            self.scopes.current_local_scope_mut().locals.push(parameter);
         }
+
+        let return_type = if fx_decl.return_type.is_some() {
+            self.resolve_type_kind(&fx_decl.return_type.as_ref().unwrap().ty)
+        } else {
+            Type::Void
+        };
+        
+        let function = self.scopes.global_scope.functions.get_mut(fx_idx);
+        function.return_type = return_type;
 
         let function = self.scopes.global_scope.functions.get(fx_idx);
         for stmt_id in (*function.body).clone() {
@@ -809,7 +1065,7 @@ impl ASTVisitor for Resolver {
             let first_element = ast.query_expression(*first_element_id);
             first_element.ty.clone()
         } else {
-            resolve_type_from_string(&self.diagnostics, &array_expression.type_decl)
+            self.resolve_type_from_string(&array_expression.type_decl)
         };
         
         let actual_array_type = Type::Array(Box::new(inferred_element_type.clone()), array_expression.elements.len());
@@ -906,59 +1162,297 @@ impl ASTVisitor for Resolver {
             self.visit_expression(ast, *element);
         }
 
-        let element_types: Vec<Box<Type>> = tuple_expression.elements.iter()
+        let element_types: Vec<Type> = tuple_expression.elements.iter()
             .map(|element_id| {
                 let element = ast.query_expression(*element_id);
-                Box::new(element.ty.clone())
+                element.ty.clone()
             })
             .collect();
 
-        let tuple_type = Type::Tuple(element_types);
+        let tuple_type = Type::tuple(element_types);
         ast.set_type(expr.id, tuple_type);
     }
 
-    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, expr: &Expression) {
-        self.visit_expression(ast, tuple_index_expression.tuple);
+    fn visit_field_expression(&mut self, ast: &mut Ast, field_expression: &FieldExpression, expr: &Expression) {
+        self.visit_expression(ast, field_expression.object);
+        
+        let target_obj = ast.query_expression(field_expression.object);
+        let mut current_type = target_obj.ty.clone();
+        let target_type_str = format!("{}", current_type);
+        let target_span = target_obj.span(ast);
+        let should_visit_field = match &current_type {
+            Type::Object(object_type) if matches!(object_type.kind, ObjectKind::Struct(_)) => false,
+            _ => true,
+        };
+        
+        if should_visit_field {
+            self.visit_expression(ast, field_expression.field.idx_no);
+        }
 
-        let tuple = ast.query_expression(tuple_index_expression.tuple);
-        let mut current_type = tuple.ty.clone();
-        let tuple_type_str = format!("{}", current_type);
-        let tuple_span = tuple.span(ast);
-
-        self.visit_expression(ast, tuple_index_expression.index.idx_no);
-
-        let index = ast.query_expression(tuple_index_expression.index.idx_no);
-        let index_ty = index.ty.clone();
-        let index_span = index.span(ast);
-        let index_literal = index_span.literal.clone();
-
-        self.expect_index_type(Type::Usize, &index_ty, &index_span, false);
+        let field_expr = ast.query_expression(field_expression.field.idx_no);
+        let field_span = field_expr.span(ast);
+        let field_expr_kind = field_expr.kind.clone();
 
         match &current_type {
-            Type::Tuple(element_types) => {
-                let tuple_size = element_types.len();
+            Type::Object(object_type) if matches!(object_type.kind, ObjectKind::Tuple) => {
+                // Tuple field access
+                let index_ty = field_expr.ty.clone();
+                let index_literal = field_span.literal.clone();
+
+                self.expect_index_type(Type::Usize, &index_ty, &field_span, false);
+
+                let tuple_size = object_type.fields.len();
 
                 // Compile-time bounds checking for constant indices
                 if let Ok(idx) = index_literal.parse::<usize>() {
                     if idx >= tuple_size {
                         self.diagnostics.borrow_mut().report_tuple_unknown_field(
-                            &index_span,
-                            tuple_type_str,
+                            &field_span,
+                            target_type_str,
                         );
                         current_type = Type::Error;
                     } else {
-                        current_type = *element_types[idx].clone();
+                        current_type = object_type.fields[idx].ty.as_ref().clone();
                     }
                 };
+            }
+            Type::Object(object_type) if matches!(object_type.kind, ObjectKind::Struct(_)) => {
+                let field_name = match &field_expr_kind {
+                    ExpressionKind::Variable(var_expr) => {
+                        var_expr.identifier.span.literal.clone()
+                    }
+                    _ => {
+                        self.diagnostics.borrow_mut().report_invalid_field_kind(
+                            format!("{:?}", field_expr_kind),
+                            &field_span
+                        );
+                        field_span.literal.clone()
+                    }
+                };
+                
+                // For struct types, use the concrete field types from the object instance
+                // instead of looking up the generic definition
+                if let Some(field_info) = object_type.fields.iter().find(|f| {
+                    if let Some(ref name) = f.name {
+                        *name == field_name
+                    } else {
+                        false
+                    }
+                }) {
+                    current_type = field_info.ty.as_ref().clone();
+                } else {
+                    // Field not found in the instantiated type, report error
+                    self.diagnostics.borrow_mut().report_unknown_field_in_object(
+                        field_name,
+                        target_type_str,
+                        &field_span,
+                    );
 
+                    current_type = Type::Error;
+                }
             }
             _ => {
-                self.diagnostics.borrow_mut().report_no_fields_to_access(&current_type, &tuple_span, &index_span);
+                self.diagnostics.borrow_mut().report_no_fields_to_access(&current_type, &target_span, &field_span);
                 current_type = Type::Error;
             }
         }
         
         ast.set_type(expr.id, current_type);
+    }
+
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex) {
+        let identifier = constant_item.identifier.span.literal.clone();
+
+        if identifier.chars().any(|c| c.is_lowercase()) {
+            self.diagnostics.borrow_mut().warn_non_upper_case(&identifier, &constant_item.identifier.span);
+        }
+
+        let mut ty = self.resolve_type_from_annotation(&constant_item.type_annotation);
+        if matches!(ty, Type::Array(_, _)) {
+            self.expected_array_type = Some(ty.clone());
+        }
+
+        if constant_item.expr.is_some() {
+            let const_item_expr = **constant_item.expr.as_ref().unwrap();
+            self.visit_expression(ast, const_item_expr);
+            let initialiser_expression = &ast.query_expression(const_item_expr);
+
+            self.expected_array_type = None;
+    
+            ty = self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
+        }
+
+        self.scopes.global_scope.declare_variable(&identifier, ty, true, false);
+    }
+
+    fn visit_struct_item(&mut self, ast: &mut Ast, _generics: &Generics, _variant_data: &VariantData, item_id: ItemIndex) {
+        let item = ast.query_item(item_id).clone();
+        match &item.kind {
+            ItemKind::Struct(name, _, _) => {
+                let struct_name = &name.span.literal;
+                if !struct_name.chars().next().unwrap().is_uppercase() || struct_name.contains('_') {
+                    self.diagnostics.borrow_mut().warn_non_upper_camel_case(struct_name, &name.span);
+                }
+            }
+            _ => {
+                // This should never happen
+                bug_report!("Internal compiler error: Expected struct item");
+            }
+        }
+        let is_local_struct = self.scopes.is_inside_local_scope();
+        
+        if !is_local_struct && self.visited_local_items.contains(&item_id) {
+            return;
+        }
+        
+        if is_local_struct {
+            self.visited_local_items.insert(item_id);
+            
+            let scoped_item = self.create_scoped_struct_item(item);
+            match self.scopes.declare_local_struct(scoped_item) {
+                Ok(_struct_idx) => {
+                    // Local struct successfully registered in local scope
+                },
+                Err(existing_idx) => {
+                    let duplicate = self.scopes.global_scope.get_struct(existing_idx);
+
+                    match &duplicate.kind {
+                        ItemKind::Struct(name, _, _) => {
+                            let duplicate_name = &name.span.literal;
+                            self.diagnostics.borrow_mut().report_duplicate_local_struct(duplicate_name.to_string(), &name.span);
+                        },
+                        _ => {
+                            // This should never happen
+                            bug_report!("Internal compiler error: Expected struct item");
+                        }
+                    }
+                }
+            }
+        } else {
+            match self.scopes.global_scope.declare_struct(item) {
+                Ok(_struct_idx) => {
+                    // Global struct successfully registered
+                },
+                Err(existing_idx) => {
+                    let duplicate = self.scopes.global_scope.get_struct(existing_idx);
+
+                    match &duplicate.kind {
+                        ItemKind::Struct(name, _, _) => {
+                            let duplicate_name = &name.span.literal;
+                            self.diagnostics.borrow_mut().report_duplicate_global_struct(duplicate_name.to_string(), &name.span);
+                        },
+                        _ => {
+                            // This should never happen
+                            bug_report!("Internal compiler error: Expected struct item");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, expr: &Expression) {
+        let struct_name = &struct_expression.identifier.span.literal;
+        let mut field_types: Vec<(String, Type)> = Vec::new();
+        
+        if let Some(ref_struct_idx) = self.scopes.lookup_struct_with_local(struct_name) {
+            let ref_struct = self.scopes.global_scope.get_struct(ref_struct_idx).clone();
+
+            match &ref_struct.kind {
+                ItemKind::Struct(identifier, generics, variant_data) => {
+                    match variant_data {
+                        VariantData::Struct { fields: struct_fields } => {
+                            for expr_field in &struct_expression.fields {
+                                self.visit_expression(ast, expr_field.expr.id);
+                            }
+
+                            // Generic param type inference
+                            let mut generic_substitutions = std::collections::HashMap::new();
+                            
+                            if !generics.is_empty() {
+                                for struct_field in struct_fields {
+                                    if let Some(field_name) = &struct_field.identifier {
+                                        if let Some(expr_field) = struct_expression.fields.iter()
+                                            .find(|f| f.identifier.span.literal == field_name.span.literal) {
+                                            
+                                            let field_expr_ty = &ast.query_expression(expr_field.expr.id).ty;
+                                            
+                                            if let TypeKind::Simple { type_name } = &*struct_field.ty {
+                                                if generics.params.iter().any(
+                                                    |param| param.identifier.span.literal == type_name.span.literal
+                                                ) {
+                                                    generic_substitutions.insert(
+                                                        type_name.span.literal.clone(), field_expr_ty.clone()
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Type substitution
+                            for struct_field in struct_fields {
+                                if let Some(field_name) = &struct_field.identifier {
+                                    if let Some(expr_field) = struct_expression.fields.iter()
+                                        .find(|f| f.identifier.span.literal == field_name.span.literal) {
+                                        
+                                        let field_expr_ty = &ast.query_expression(expr_field.expr.id).ty;
+                                        field_types.push((field_name.span.literal.clone(), field_expr_ty.clone()));
+
+                                        // Type check the field expression against the struct field type
+                                        let expected_field_type = if let TypeKind::Simple { type_name } = &*struct_field.ty {
+                                            if let Some(inferred_type) = generic_substitutions.get(&type_name.span.literal) {
+                                                inferred_type.clone()
+                                            } else {
+                                                self.resolve_type_kind(&struct_field.ty)
+                                            }
+                                        } else {
+                                            self.resolve_type_kind(&struct_field.ty)
+                                        };
+                                        
+                                        self.expect_type(expected_field_type, field_expr_ty, &expr_field.expr.span(ast));
+                                    } else {
+                                        self.diagnostics.borrow_mut().report_unknown_field_in_object(
+                                            field_name.span.literal.clone(),
+                                            struct_name.to_string(),
+                                            &struct_expression.identifier.span.clone()
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            // Check for extra fields in the expression that don't exist in the struct
+                            for expr_field in &struct_expression.fields {
+                                let field_exists = struct_fields.iter().any(|sf| {
+                                    if let Some(sf_name) = &sf.identifier {
+                                        sf_name.span.literal == expr_field.identifier.span.literal
+                                    } else {
+                                        false
+                                    }
+                                });
+                                
+                                if !field_exists {
+                                    self.diagnostics.borrow_mut().report_unknown_field_in_object(
+                                        expr_field.identifier.span.literal.clone(),
+                                        struct_name.to_string(),
+                                        &expr_field.identifier.span
+                                    );
+                                }
+                            }
+
+                            let struct_type = Type::struct_resolved(identifier.span.literal.to_string(), field_types);
+                            ast.query_expression_mut(expr.id).ty = struct_type;
+                        }
+                    }
+                }
+                _ => {
+                    bug_report!("Internal compiler error: Expected struct item");
+                }
+            }
+        } else {
+            self.diagnostics.borrow_mut().report_undefined_struct(struct_name.to_string(), &struct_expression.identifier.span);
+        }
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
@@ -1039,6 +1533,21 @@ impl Resolver {
             span: identifier_token.span.clone(),
         }
     }
+
+    /// Create a scoped struct item to avoid name conflicts in local scopes
+    fn create_scoped_struct_item(&self, mut item: Item) -> Item {
+        if let Some(function_idx) = self.scopes.surrounding_function_idx() {
+            if let crate::ast::ItemKind::Struct(ref mut name, generics, variant_data) = item.kind {
+                let function_name = &self.scopes.global_scope.functions.get(function_idx).name;
+                let scoped_name = format!("{}::{}", function_name, name.span.literal);
+                let mut scoped_token = name.clone();
+                scoped_token.span.literal = scoped_name;
+                
+                item.kind = crate::ast::ItemKind::Struct(scoped_token, generics, variant_data);
+            }
+        }
+        item
+    }
 }
 
 pub struct CompilationUnit {
@@ -1072,7 +1581,7 @@ impl CompilationUnit {
 
         parser.parse();
 
-        // error handling (todo: improve)
+        // error handling
         Self::check_error_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
 
         // symbol check
@@ -1083,7 +1592,11 @@ impl CompilationUnit {
         ast.visualise();
 
         Self::check_error_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
-        Ok(CompilationUnit { 
+        
+        // Resolve struct types from unresolved to resolved indices
+        let _ = resolver.scopes.global_scope.resolve_struct_types();
+
+        Ok(CompilationUnit {
             global_scope: resolver.scopes.global_scope,
             ast, 
             diagnostics_report,

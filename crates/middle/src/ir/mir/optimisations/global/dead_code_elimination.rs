@@ -60,15 +60,15 @@ impl MIRPass for DeadCodeElimination {
                             referenced_instructions.insert_instruct_ref(index);
                             referenced_instructions.insert_instruct_ref(value);
                         }
-                        InstructionKind::Tuple { elements } => {
-                            for element in elements.iter_mut() {
+                        InstructionKind::Object { fields, .. } => {
+                            for element in fields.iter_mut() {
                                 referenced_instructions.insert_instruct_ref(element);
                             }
                         }
-                        InstructionKind::TupleField { tuple, .. } => {
-                            referenced_instructions.insert_instruct_ref(tuple);
+                        InstructionKind::Field { object, .. } => {
+                            referenced_instructions.insert_instruct_ref(object);
                         }
-                        InstructionKind::TupleStore { tuple, value, .. } => {
+                        InstructionKind::ObjectStore { object: tuple, value, .. } => {
                             referenced_instructions.insert_instruct_ref(tuple);
                             referenced_instructions.insert_instruct_ref(value);
                         }

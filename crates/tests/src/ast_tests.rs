@@ -32,6 +32,9 @@ mod tests {
         Index,
         Tuple,
         TupleIndex,
+        Struct,
+        StructExpression,
+        Constant,
     }
 
     struct ASTVerifier {
@@ -148,7 +151,7 @@ mod tests {
             self.visit_body(ast, &while_statement.body);
         }
 
-        fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemId) {
+        fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemIndex) {
             self.actual.push(TestASTNode::Function);
             for statement in fx_decl.body.iter() {
                 self.visit_statement(ast, *statement);
@@ -197,10 +200,22 @@ mod tests {
             }
         }
 
-        fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression) {
+        fn visit_field_expression(&mut self, ast: &mut Ast, field_expression: &FieldExpression, _expr: &Expression) {
             self.actual.push(TestASTNode::TupleIndex);
-            self.visit_expression(ast, tuple_index_expression.tuple);
-            self.visit_expression(ast, tuple_index_expression.index.idx_no);
+            self.visit_expression(ast, field_expression.object);
+            self.visit_expression(ast, field_expression.field.idx_no);
+        }
+
+        fn visit_constant_item(&mut self, _ast: &mut Ast, _constant_item: &ConstantItem, _item_id: ItemIndex) {
+            self.actual.push(TestASTNode::Constant);
+        }
+
+        fn visit_struct_expression(&mut self, _ast: &mut Ast, _struct_expression: &StructExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::StructExpression);
+        }
+
+        fn visit_struct_item(&mut self, _ast: &mut Ast, _generics: &Generics, _variant_data: &VariantData, _item_id: ItemIndex) {
+            self.actual.push(TestASTNode::Struct);
         }
     }
 
@@ -211,8 +226,14 @@ mod tests {
 
     #[test]
     pub fn test_string_literal() {
-        let input = r#"let message = "hello world""#;
+        let input = r#"
+            fx main() {
+                let message = "hello world"
+            }
+        "#;
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::String("hello world".to_string()),
         ];
@@ -222,8 +243,14 @@ mod tests {
 
     #[test]
     pub fn test_string_literal_with_escapes() {
-        let input = r#"let message = "hello\nworld\t!""#;
+        let input = r#"
+            fx main() {
+                let message = "hello\nworld\t!"
+            }
+        "#;
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::String("hello\nworld\t!".to_string()),
         ];
@@ -233,8 +260,14 @@ mod tests {
 
     #[test]
     pub fn test_basic_binary_expression() {
-        let input = "let a = 1 + 2";
+        let input = "
+            fx main() {
+                let a = 1 + 2
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(1),
@@ -246,8 +279,14 @@ mod tests {
 
     #[test]
     pub fn test_parenthesised_binary_expression() {
-        let input = "let a = (6 + 9) * 42";
+        let input = "
+            fx main() {
+                let a = (6 + 9) * 42
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Parenthesised,
@@ -263,9 +302,14 @@ mod tests {
     #[test]
     pub fn test_parenthesised_binary_expression_with_variable() {
         let input = "
-        let b = 2
-        let a = (6 + 9) * b";
+            fx main() {
+                let b = 2
+                let a = (6 + 9) * b
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(2),
             TestASTNode::Let,
@@ -283,11 +327,15 @@ mod tests {
     #[test]
     pub fn test_nested_parenthesised_binary_expression() {
         let input = "
-        let b = 1
-        let c = 2
-        let a = (b + (c * 2)) / 3";
+            fx main() {
+                let b = 1
+                let c = 2
+                let a = (b + (c * 2)) / 3
+            }
+        ";
 
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::Let,
@@ -310,10 +358,14 @@ mod tests {
     #[test]
     pub fn test_parenthesised_binary_expression_with_variable_and_number() {
         let input = "
-        let b = 1
-        let a = (6 + 9) * b + 42";
+        fx main() {
+            let b = 1
+            let a = (6 + 9) * b + 42
+        }
+        ";
 
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::Let,
@@ -332,8 +384,14 @@ mod tests {
 
     #[test]
     pub fn test_bitwise_and() {
-        let input = "let a = 6 & 9";
+        let input = "
+            fx main() {
+                let a = 6 & 9
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
@@ -345,8 +403,14 @@ mod tests {
 
     #[test]
     pub fn test_bitwise_or() {
-        let input = "let a = 6 | 9";
+        let input = "
+            fx main() {
+                let a = 6 | 9
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
@@ -358,8 +422,14 @@ mod tests {
 
     #[test]
     pub fn test_bitwise_xor() {
-        let input = "let a = 6 ^ 9";
+        let input = "
+            fx main() {
+                let a = 6 ^ 9
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(6),
@@ -371,8 +441,14 @@ mod tests {
 
     #[test]
     pub fn test_bitwise_not() {
-        let input = "let a = ~1";
+        let input = "
+            fx main() {
+                let a = ~1
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Unary,
             TestASTNode::Number(1),
@@ -383,8 +459,14 @@ mod tests {
 
     #[test]
     pub fn test_negation() {
-        let input = "let a = -1";
+        let input = "
+            fx main() {
+                let a = -1
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Unary,
             TestASTNode::Number(1),
@@ -395,8 +477,14 @@ mod tests {
 
     #[test]
     pub fn test_power() {
-        let input = "let a = 2 ** 3";
+        let input = "
+            fx main() {
+                let a = 2 ** 3
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(2),
@@ -408,8 +496,14 @@ mod tests {
 
     #[test]
     pub fn test_loooong_unary_exps() {
-        let input = "let a = -1 + -2 * -3 ** ------4";
+        let input = "
+            fx main() {
+                let a = -1 + -2 * -3 ** ------4
+            }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Unary,
@@ -435,14 +529,17 @@ mod tests {
     #[test]
     pub fn test_if_statement() {
         let input = "\
-        let a = 1
-        
-        if a > 0 {
-            a = 86
+        fx main() {
+            let a = 1
+            
+            if a > 0 {
+                a = 86
+            }
         }
         ";
 
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::If,
@@ -459,16 +556,19 @@ mod tests {
     #[test]
     pub fn test_if_else_statement() {
         let input = "\
-        let a = 1
-        
-        if a > 0 {
-            a = 86
-        } else {
-            a = 23
+        fx main() {
+            let a = 1
+            
+            if a > 0 {
+                a = 86
+            } else {
+                a = 23
+            }
         }
         ";
 
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::If,
@@ -488,14 +588,17 @@ mod tests {
     #[test]
     pub fn test_while_statement() {
         let input = "\
-        let a = 1
+        fx main() {
+            let a = 1
 
-        while a < 10 {
-            a = a + 1
+            while a < 10 {
+                a = a + 1
+            }
         }
         ";
 
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Number(1),
             TestASTNode::While,
@@ -537,7 +640,9 @@ mod tests {
             return a + b
         }
 
-        add(2 * 3, 4 + 5)
+        fx main() {
+            add(2 * 3, 4 + 5)
+        }
         ";
 
         let expected = vec![
@@ -546,6 +651,7 @@ mod tests {
             TestASTNode::Binary,
             TestASTNode::Variable("a".to_string()),
             TestASTNode::Variable("b".to_string()),
+            TestASTNode::Function,
             TestASTNode::Call,
             TestASTNode::Binary,
             TestASTNode::Number(2),
@@ -560,28 +666,38 @@ mod tests {
 
     #[test]
     pub fn test_shift_operator_precedence() {
-        // Test that shift operators have correct precedence relative to other operators
-        
-        // Test basic shift operations
-        let input = "let a = 8 << 2";
+        let input = "
+        fx main() {
+            let a = 8 << 2
+        }
+        ";
+
         let expected = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
             TestASTNode::Binary,
             TestASTNode::Number(8),
             TestASTNode::Number(2),
         ];
+
         assert_tree(input, expected);
 
-        // Test shift with bitwise operations (shift should have higher precedence than bitwise)
-        let input2 = "let b = 4 << 1 & 2";
+        let input2 = "
+        fx main() {
+            let b = 4 << 1 & 2
+        }
+        ";
+
         let expected2 = vec![
+            TestASTNode::Function,
             TestASTNode::Let,
-            TestASTNode::Binary,  // & operation (lower precedence)
-            TestASTNode::Binary,  // << operation (higher precedence, grouped first)
+            TestASTNode::Binary,
+            TestASTNode::Binary,
             TestASTNode::Number(4),
             TestASTNode::Number(1),
             TestASTNode::Number(2),
         ];
+
         assert_tree(input2, expected2);
     }
 }

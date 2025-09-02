@@ -61,7 +61,6 @@ Thus far, the current compiler architecture is highlighted below:
             }
         }
         ```
-    * Proper span tracking for diagnostics
 
     - [x] *Mid-level IR (MIR)* [completed 28.04.2025]
     * Based on a control-flow graph (CFG)
@@ -78,7 +77,6 @@ Thus far, the current compiler architecture is highlighted below:
         }
         ```
         * Locals - function arguments, local variables etc.
-    * Proper span tracking for diagnostics
     
     - [x] *MIR Optimisations* [completed 30.07.2025]
     * Optimisations that aims to enhance the performance and efficiency of the executed code
@@ -105,6 +103,9 @@ Thus far, the current compiler architecture is highlighted below:
 * The inkwell wrapper is used to lower complexity
 * The generated IR is then written to a temp file, eg: `temp.ll`
 * An executable is then generated through `Clang`
+> [!NOTE]
+> Phi nodes could cause odd executable generation issues in certain circumstances (like in while loops).
+> They are resolved through extra logic in LLVM IR generation for `TerminatorKind::Goto`.
 
 ## Types supported
 ### Primitives
@@ -115,7 +116,7 @@ Thus far, the current compiler architecture is highlighted below:
 
 ### Data Structures supported
 - [x] Arrays [completed 05.08.2025]
-    * Defined and indexed as follows:
+* Defined and indexed as follows:
 ```
 // One dimensional array
 let arr: [int, 3] = [1, 2, 3];
@@ -127,12 +128,12 @@ let b: int = matrix[0][2] + matrix[2][0]; // 10
 ```
 * Type is defined as `[T, len]`
 > [!NOTE]
-> `T` can be of type `[T, len]` in multi-dimensional arrays
+> `T` can be of type `[T, len]` in multi-dimensional arrays.
 * Indexes are of type `usize`
 * TODO: Slice indexes
 
 - [x] Tuples [completed 25.08.2025]
-    * Defined and indexed as follows:
+* Defined and indexed as follows:
 ```
 let tuple: (int, float, string) = (1, 1.01, "hello");
 let a: int = tuple.0;
@@ -140,6 +141,42 @@ let b: float = tuple.1;
 let c: string = tuple.2;
 ```
 * Type is defined as `(T1, T2)`
+
+- [x] Structs [02.09.2025]
+* Defined and indexed as follows:
+```
+struct MyStruct {
+    first_field: <type>,
+    second_field: <type>,
+}
+```
+* Struct names should be defined in `UpperCamelCase`, otherwise a warning would be generated
+
+* Structs also feature generic paramter support
+    * Type is inferred from the expression like so:
+```
+// Declaration
+struct MyStruct<T, U> {
+    first_field: T,
+    second_field: U,
+}
+
+// Inference: T: int; U: float
+let a = MyStruct { first_field: 1, second_field: 2.3 };
+```
+* Structs can also be used in fields:
+```
+struct Coordinates {
+    x: int,
+    y: int,
+    z: int,
+}
+
+struct Line {
+    start: Coordinates,
+    end: Coordinates,
+}
+```
 
 ## Operators
 - [x] **Basic arithmetic support** [completed 05.06.2025]

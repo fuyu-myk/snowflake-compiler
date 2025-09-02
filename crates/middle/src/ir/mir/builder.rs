@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use snowflake_common::{bug_report, Idx, IndexVec};
 use snowflake_front::{
-    compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}
+    ast::ItemIndex, compilation_unit::{GlobalScope, VariableIndex}
 };
 use snowflake_common::{
     diagnostics::DiagnosticsReportCell,
@@ -11,7 +11,7 @@ use snowflake_common::{
 
 use crate::ir::{
     hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, 
-    mir::{basic_block::{BasicBlock, BasicBlockIdx}, AssertMessage, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Instruction, InstructionIdx, InstructionKind, PhiNode, TerminatorKind, Type, Value, MIR}
+    mir::{basic_block::{BasicBlock, BasicBlockIdx}, AssertMessage, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Global, GlobalIdx, Instruction, InstructionIdx, InstructionKind, ObjectKind, PhiNode, TerminatorKind, Type, Value, MIR}
 };
 
 
@@ -25,12 +25,46 @@ impl MIRBuilder {
         Self { mir: MIR::new(), diagnostics }
     }
 
+    /// Evaluate a constant expression at compile time
+    fn evaluate_const_expr(&self, expr: &HIRExpression, _global_scope: &GlobalScope) -> Value {
+        match &expr.kind {
+            HIRExprKind::Number(value) => Value::Constant(Constant::Int(*value as i32)),
+            HIRExprKind::Float(value) => Value::Constant(Constant::Float(*value as f32)),
+            HIRExprKind::Bool(value) => Value::Constant(Constant::Bool(*value)),
+            _ => {
+                // TODO: const expressions for non-literals
+                Value::Constant(Constant::Void)
+            }
+        }
+    }
+
     /// Builds the MIR.
     /// 
     /// All functions are built first, then all calls are resolved as instructions.
     pub fn build(mut self, hir: &HIR, global_scope: &GlobalScope) -> MIR {
-        let mut fx_map: HashMap<FunctionIndex, FunctionIdx> = HashMap::new();
+        let mut fx_map: HashMap<ItemIndex, FunctionIdx> = HashMap::new();
         let mut calls_to_resolve = Vec::new();
+
+        for (_, statements) in hir.top_statements.iter() {
+            for statement in statements {
+                if let HIRStmtKind::Const { var_idx, init_expr } = &statement.kind {
+                    let variable = &global_scope.variables[*var_idx];
+                    let initializer = init_expr.as_ref().map(|expr| {
+                        self.evaluate_const_expr(expr, global_scope)
+                    });
+                    
+                    let global = Global {
+                        name: variable.name.clone(),
+                        ty: variable.ty.clone().into(),
+                        initializer,
+                        is_constant: true,
+                        variable_index: *var_idx,
+                    };
+                    
+                    self.mir.globals.push(global);
+                }
+            }
+        }
 
         // Building every function
         for (fx_idx, fx_body) in hir.functions.iter() {
@@ -48,7 +82,7 @@ impl MIRBuilder {
                     instructions: IndexVec::new(),
                     locals: HashMap::new(),
                     return_type: fx.return_type.clone().into()
-                })
+                }, &self.mir.globals)
             } else {
                 // Synthetic function (e.g., global init), create a default one
                 FunctionBuilder::new(Function {
@@ -58,7 +92,7 @@ impl MIRBuilder {
                     instructions: IndexVec::new(),
                     locals: HashMap::new(),
                     return_type: crate::ir::mir::Type::Void
-                })
+                }, &self.mir.globals)
             };
 
             let (fx, to_be_resolved) = function_builder.build(&mut self.mir.basic_blocks, global_scope, fx_body);
@@ -102,11 +136,12 @@ struct FunctionBuilder {
     definitions: LocalDefinitions,
     incomplete_phis: HashMap<BasicBlockIdx, Vec<(InstructionIdx, VariableIndex)>>,
     sealed_blocks: HashSet<BasicBlockIdx>,
-    calls_to_resolve: Vec<(InstructionIdx, FunctionIndex)>,
+    calls_to_resolve: Vec<(InstructionIdx, ItemIndex)>,
+    globals: IndexVec<crate::ir::mir::GlobalIdx, Global>,
 }
 
 impl FunctionBuilder {
-    pub fn new(function: Function) -> Self {
+    pub fn new(function: Function, globals: &IndexVec<GlobalIdx, Global>) -> Self {
         Self {
             temp_var_counter: 0,
             function,
@@ -114,13 +149,14 @@ impl FunctionBuilder {
             definitions: HashMap::new(),
             incomplete_phis: HashMap::new(),
             sealed_blocks: HashSet::new(),
-            calls_to_resolve: Vec::new()
+            calls_to_resolve: Vec::new(),
+            globals: globals.clone(),
         }
     }
 
     pub fn build(mut self, basic_blocks: &mut BasicBlocks, global_scope: &GlobalScope, body: &[HIRStatement]) -> (
         Function,
-        Vec<(InstructionIdx, FunctionIndex)>,
+        Vec<(InstructionIdx, ItemIndex)>,
     ) {
         // Basic block building logic
         let mut bb_builder = BasicBlockBuilder::new(basic_blocks, &mut self.function);
@@ -187,15 +223,18 @@ impl FunctionBuilder {
                         ),
                     ))
                 }
-                Type::Tuple(_) => {
+                Type::Object(_) => {
                     tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty tuple return", 
                                  self.function.name, self.function.return_type);
                     Value::InstructionRef(bb_builder.add_instruction(
                         basic_blocks,
                         &mut self.function,
                         Instruction::new(
-                            InstructionKind::Tuple { elements: Vec::new() },
-                            Type::Tuple(vec![Type::Void.into()]),
+                            InstructionKind::Object {
+                                kind: ObjectKind::Unresolved,
+                                fields: Vec::new()
+                            },
+                            Type::Object(vec![Type::Void.into()]),
                             TextSpan::default(),
                         ),
                     ))
@@ -339,7 +378,7 @@ impl FunctionBuilder {
                             );
                         }
                     }
-                    HIRExprKind::TupleField { tuple, field: index } => {
+                    HIRExprKind::Field { object: tuple, field: index } => {
                         let tuple_val = self.build_expr(basic_blocks, bb_builder, global_scope, tuple);
                         let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
                         let value_val = self.build_expr(basic_blocks, bb_builder, global_scope, value);
@@ -349,8 +388,8 @@ impl FunctionBuilder {
                                 basic_blocks,
                                 &mut self.function,
                                 Instruction::new(
-                                    InstructionKind::TupleStore { 
-                                        tuple: tuple_val, 
+                                    InstructionKind::ObjectStore { 
+                                        object: tuple_val, 
                                         field: index_val, 
                                         value: value_val 
                                     }, 
@@ -504,6 +543,9 @@ impl FunctionBuilder {
                 self.pop_loop_and_update(basic_blocks, exit_block);
                 self.seal_block(basic_blocks, exit_block, global_scope);
             }
+            HIRStmtKind::Item { item_id: _ } => {
+                // In the future, this could handle local function definitions, etc.
+            }
         }
     }
 
@@ -516,9 +558,12 @@ impl FunctionBuilder {
             HIRExprKind::Bool(value) => Value::Constant(Constant::Bool(*value)),
             HIRExprKind::Unit => Value::Constant(Constant::Void),
             HIRExprKind::Var { var_idx } => {
-                let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
-
-                Value::InstructionRef(instruct_ref)
+                if let Some(global) = self.globals.iter().find(|g| g.variable_index == *var_idx && g.is_constant) {
+                    global.initializer.clone().unwrap_or(Value::Constant(Constant::Void))
+                } else {
+                    let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
+                    Value::InstructionRef(instruct_ref)
+                }
             }
             HIRExprKind::Array { elements, element_type, alloc_type } => {
                 // Different instructions for static and dynamic arrays
@@ -633,25 +678,49 @@ impl FunctionBuilder {
                     basic_blocks,
                     &mut self.function,
                     Instruction::new(
-                        InstructionKind::Tuple { elements: element_values.clone() },
-                        Type::Tuple(elements.iter().map(|e| Box::new(e.ty.clone().into())).collect()),
+                        InstructionKind::Object {
+                            kind: ObjectKind::Tuple,
+                            fields: element_values.clone()
+                        },
+                        Type::Object(elements.iter().map(|e| Box::new(e.ty.clone().into())).collect()),
                         TextSpan::combine_refs(&element_span_refs),
                     ),
                 );
 
                 Value::InstructionRef(instruct_ref)
             }
-            HIRExprKind::TupleField { tuple, field: index } => {
-                let tuple_val = self.build_expr(basic_blocks, bb_builder, global_scope, tuple);
-                let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
+            HIRExprKind::Field { object, field } => {
+                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
+                let field_val = self.build_expr(basic_blocks, bb_builder, global_scope, field);
+                
+                let instruct_ref = bb_builder.add_instruction(
+                    basic_blocks,
+                    &mut self.function,
+                    Instruction::new(
+                        InstructionKind::Field { object: object_val, field: field_val },
+                        Type::from(expr.ty.clone()),
+                        expr.span.clone(),
+                    ),
+                );
+                Value::InstructionRef(instruct_ref)
+            }
+            HIRExprKind::Struct { fields, tail_expr: _ } => {
+                let mut field_values = Vec::new();
+                for field in fields {
+                    let field_value = self.build_expr(basic_blocks, bb_builder, global_scope, &field.expr);
+                    field_values.push(field_value);
+                }
 
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
                     Instruction::new(
-                        InstructionKind::TupleField { tuple: tuple_val, field: index_val },
+                        InstructionKind::Object {
+                            kind: ObjectKind::Struct,
+                            fields: field_values
+                        },
                         Type::from(expr.ty.clone()),
-                        TextSpan::combine_two(&tuple.span, &index.span),
+                        expr.span.clone(),
                     ),
                 );
 
@@ -710,6 +779,7 @@ impl FunctionBuilder {
             }
             HIRExprKind::Break => {
                 // Current block terminated with an unresolved terminator (for breaks in loops)
+                // maybe problematic?
                 let break_block = bb_builder.terminate(basic_blocks, TerminatorKind::Unresolved);
                 self.push_depending_block(break_block);
                 Value::Constant(Constant::Void)

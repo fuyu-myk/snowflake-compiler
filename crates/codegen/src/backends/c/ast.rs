@@ -48,7 +48,8 @@ impl TryFrom<&Type> for CType {
             Type::Void => Ok(CType::Void),
             Type::Usize => Err(()), // Usize not supported in C codegen yet
             Type::Array(_, _) => Err(()), // Arrays not supported in C codegen yet
-            Type::Tuple(_) => Err(()), // Tuples not supported in C codegen yet
+            Type::Object(_) => Err(()), // Objects (tuples/structs) not supported in C codegen yet
+            Type::ObjectUnresolved(_) => Err(()), // Unresolved objects not supported in C codegen yet
             Type::Unresolved => Err(()),
             Type::Error => Err(()),
         };

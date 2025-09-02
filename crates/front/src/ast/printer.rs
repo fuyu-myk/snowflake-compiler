@@ -6,6 +6,7 @@ use crate::ast::*;
 pub struct ASTPrinter {
     indent: usize,
     pub result: String,
+    is_visiting_top_level: bool,
 }
 
 impl ASTPrinter {
@@ -19,7 +20,7 @@ impl ASTPrinter {
     const SIZE_COLOUR: color::Rgb = color::Rgb(255, 165, 0); // Orange
 
     pub fn new() -> Self {
-        Self { indent: 0, result: String::new() }
+        Self { indent: 0, result: String::new(), is_visiting_top_level: true }
     }
 
     fn add_whitespace(&mut self) {
@@ -49,15 +50,15 @@ impl ASTPrinter {
     }
 
     fn add_bool(&mut self, boolean: bool) {
-        self.result.push_str(&format!("{}{}", Self::BOOL_COLOUR.fg_str(), boolean));
+        self.result.push_str(&format!("{}{}{}", Self::BOOL_COLOUR.fg_str(), boolean, Fg(Reset)));
     }
 
     fn add_type(&mut self, type_: &str) {
-        self.result.push_str(&format!("{}{}", Self::TYPE_COLOUR.fg_str(), type_));
+        self.result.push_str(&format!("{}{}{}", Self::TYPE_COLOUR.fg_str(), type_, Fg(Reset)));
     }
 
     fn add_size(&mut self, size: &str) {
-        self.result.push_str(&format!("{}{}", Self::SIZE_COLOUR.fg_string(), size));
+        self.result.push_str(&format!("{}{}{}", Self::SIZE_COLOUR.fg_string(), size, Fg(Reset)));
     }
 
     fn add_type_annot(&mut self, type_annotation: &StaticTypeAnnotation) {
@@ -99,11 +100,66 @@ impl ASTPrinter {
 }
 
 impl ASTVisitor for ASTPrinter {
-    fn visit_statement(&mut self, ast: &mut Ast, statement: StatementId) {
+    fn visit_item(&mut self, ast: &mut Ast, item: ItemIndex) {
+        let item_ref = ast.query_item(item);
+        if self.is_visiting_top_level && item_ref.is_local {
+            return;
+        }
+        self.visit_item_default(ast, item);
+    }
+
+    fn visit_statement(&mut self, ast: &mut Ast, statement: StmtIndex) {
         self.add_padding();
+        let was_top_level = self.is_visiting_top_level;
+        self.is_visiting_top_level = false;
+        
         Self::do_visit_statement(self, ast, statement);
+        
+        self.is_visiting_top_level = was_top_level;
 
         self.result.push_str(&format!("{}\n", Fg(Reset)));
+    }
+
+    fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
+        self.add_keyword("let"); // let keyword in magenta
+        self.add_whitespace();
+
+        match &let_statement.pattern.kind {
+            PatternKind::Identifier(binding_mode, _) => {
+                if let Mutability::Mutable = binding_mode.0 {
+                    self.add_keyword("mut");
+                    self.add_whitespace();
+                }
+            }
+            _ => {}
+        }
+
+        self.add_text(let_statement.identifier.span.literal.as_str()); // variable name in white
+        if let Some(type_annotation) = &let_statement.type_annotation {
+            self.add_type_annot(type_annotation);
+            self.add_whitespace();
+        } else {
+            self.add_whitespace();
+        }
+
+        self.add_text("="); // '=' in white
+        self.add_whitespace();
+
+        self.visit_expression(ast, let_statement.initialiser);
+    }
+
+    fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, _statement: &Statement) {
+        self.add_keyword("const"); // const keyword in magenta
+        self.add_whitespace();
+
+        self.add_text(&const_statement.identifier.span.literal); // variable name in white
+        self.add_type_annot(&const_statement.type_annotation);
+        self.add_whitespace();
+
+        self.add_text("="); // '=' in white
+        self.add_whitespace();
+
+        self.visit_expression(ast, const_statement.expr);
     }
 
     fn visit_number_expression(&mut self, _ast: &mut Ast, number: &NumberExpression, _expr: &Expression) {
@@ -146,34 +202,6 @@ impl ASTVisitor for ASTPrinter {
         self.visit_expression(ast, parenthesised_expression.expression);
 
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), ")"));
-    }
-
-    fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
-        self.add_keyword("let"); // let keyword in magenta
-        self.add_whitespace();
-
-        match &let_statement.pattern.kind {
-            PatternKind::Identifier(binding_mode, _) => {
-                if let Mutability::Mutable = binding_mode.0 {
-                    self.add_keyword("mut");
-                    self.add_whitespace();
-                }
-            }
-            _ => {}
-        }
-
-        self.add_text(let_statement.identifier.span.literal.as_str()); // variable name in white
-        if let Some(type_annotation) = &let_statement.type_annotation {
-            self.add_type_annot(type_annotation);
-            self.add_whitespace();
-        } else {
-            self.add_whitespace();
-        }
-
-        self.add_text("="); // '=' in white
-        self.add_whitespace();
-
-        self.visit_expression(ast, let_statement.initialiser);
     }
 
     fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
@@ -262,52 +290,6 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), span.literal));
     }
 
-    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemId) {
-        self.indent += 1;
-        self.add_keyword("fx");
-        self.add_whitespace();
-        self.add_text(&fx_decl.identifier.span.literal);
-
-        let are_parameters_empty = fx_decl.generics.is_empty();
-        if !are_parameters_empty {
-            self.add_text("(");
-        } else {
-            self.add_whitespace();
-        }
-
-        for (i, parameter) in fx_decl.generics.iter().enumerate() {
-            if i != 0 {
-                self.add_text(",");
-                self.add_whitespace();
-            }
-
-            self.add_text(&parameter.identifier.span.literal);
-            match &parameter.kind {
-                crate::ast::GenericParamKind::Const { ty, .. } => {
-                    self.add_text(": ");
-                    self.add_type_kind(ty);
-                }
-                crate::ast::GenericParamKind::Type { ty, .. } => {
-                    self.add_text(": ");
-                    self.add_type_kind(ty);
-                }
-            }
-        }
-
-        if !are_parameters_empty {
-            self.add_text(")");
-            self.add_whitespace();
-        }
-
-        self.add_text("{\n");
-        for statement in fx_decl.body.iter() {
-            self.visit_statement(ast, *statement);
-        }
-        self.add_text("}\n");
-        self.add_newline();
-        self.indent -= 1;
-    }
-
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         self.add_keyword("return");
         
@@ -373,51 +355,154 @@ impl ASTVisitor for ASTPrinter {
         self.add_text(")");
     }
 
-    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression) {
-        self.visit_expression(ast, tuple_index_expression.tuple);
+    fn visit_field_expression(&mut self, ast: &mut Ast, field_expression: &FieldExpression, _expr: &Expression) {
+        self.visit_expression(ast, field_expression.object);
         self.add_text(".");
-        self.visit_expression(ast, tuple_index_expression.index.idx_no);
+        self.visit_expression(ast, field_expression.field.idx_no);
     }
 
-    fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, _statement: &Statement) {
-        self.add_keyword("const"); // const keyword in magenta
-        self.add_whitespace();
+    fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, _expr: &Expression) {
+        self.add_text(&struct_expression.identifier.span.literal);
+        self.add_text(" { ");
 
-        self.add_text(&const_statement.identifier.span.literal); // variable name in white
-        self.add_type_annot(&const_statement.type_annotation);
-        self.add_whitespace();
+        for (i, field) in struct_expression.fields.iter().enumerate() {
+            if field.is_shorthand {
+                self.add_text(&field.expr.span.literal);
+            } else {
+                self.add_text(&field.identifier.span.literal);
+                self.add_text(": ");
+                self.visit_expression(ast, field.expr.id);
+            }
 
-        self.add_text("="); // '=' in white
-        self.add_whitespace();
+            if i != struct_expression.fields.len() - 1 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+        }
 
-        self.visit_expression(ast, const_statement.expr);
+        self.add_text(" }");
     }
 
-    fn visit_item_default(&mut self, ast: &mut Ast, item: ItemId) {
+    fn visit_item_default(&mut self, ast: &mut Ast, item: ItemIndex) {
         let item = ast.query_item(item).clone();
 
         match &item.kind {
-            ItemKind::Statement(statement) => {
-                self.visit_statement(ast, *statement);
-            }
             ItemKind::Function(fx_decl) => {
                 self.visit_fx_decl(ast, fx_decl, item.id);
             }
             ItemKind::Const(constant_item) => {
-                self.add_keyword("const");
+                self.visit_constant_item(ast, constant_item, item.id);
+            }
+            ItemKind::Struct(identifier, generics, variant_data) => {
+                self.add_keyword("struct");
                 self.add_whitespace();
+                self.add_text(&identifier.span.literal);
 
-                self.add_text(&constant_item.identifier.span.literal);
-                self.add_type_annot(&constant_item.type_annotation);
+                self.visit_struct_item(ast, generics, variant_data, item.id);
+            }
+        }
+    }
+
+    fn visit_fx_decl(&mut self, ast: &mut Ast, fx_decl: &FxDeclaration, _item_id: ItemIndex) {
+        self.indent += 1;
+        self.add_keyword("fx");
+        self.add_whitespace();
+        self.add_text(&fx_decl.identifier.span.literal);
+
+        let are_parameters_empty = fx_decl.generics.is_empty();
+        if !are_parameters_empty {
+            self.add_text("(");
+        } else {
+            self.add_whitespace();
+        }
+
+        for (i, parameter) in fx_decl.generics.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
                 self.add_whitespace();
+            }
 
-                self.add_text("=");
-                self.add_whitespace();
-
-                if let Some(expr) = &constant_item.expr {
-                    self.visit_expression(ast, **expr);
+            self.add_text(&parameter.identifier.span.literal);
+            match &parameter.kind {
+                crate::ast::GenericParamKind::Const { ty, .. } => {
+                    self.add_text(": ");
+                    self.add_type_kind(ty);
                 }
-                self.result.push_str(&format!("{}\n", Fg(Reset)));
+                crate::ast::GenericParamKind::Type { ty, .. } => {
+                    self.add_text(": ");
+                    self.add_type_kind(ty);
+                }
+            }
+        }
+
+        if !are_parameters_empty {
+            self.add_text(")");
+            self.add_whitespace();
+        }
+
+        self.add_text("{\n");
+        for statement in fx_decl.body.iter() {
+            self.visit_statement(ast, *statement);
+        }
+        self.indent -= 1;
+        self.add_padding();
+        self.add_text("}");
+        self.add_newline();
+    }
+
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex) {
+        self.add_keyword("const");
+        self.add_whitespace();
+
+        self.add_text(&constant_item.identifier.span.literal);
+        self.add_type_annot(&constant_item.type_annotation);
+        self.add_whitespace();
+
+        self.add_text("=");
+        self.add_whitespace();
+
+        if let Some(expr) = &constant_item.expr {
+            self.visit_expression(ast, **expr);
+        }
+        self.result.push_str(&format!("{}\n", Fg(Reset)));
+    }
+
+    fn visit_struct_item(&mut self, _ast: &mut Ast, generics: &Generics, variant_data: &VariantData, _item_id: ItemIndex) {
+        if !generics.params.is_empty() {
+            self.add_text("<");
+
+            for (i, param) in generics.params.iter().enumerate() {
+                self.add_text(&param.identifier.span.literal);
+                if i < generics.params.len() - 1 {
+                    self.add_text(", ");
+                }
+            }
+
+            self.add_text(">");
+        }
+        
+        match variant_data {
+            VariantData::Struct{ fields } => {
+                self.add_text(" {\n");
+                self.indent += 1;
+
+                for field in fields {
+                    self.add_padding();
+                    if let Some(identifier) = &field.identifier {
+                        self.add_text(&identifier.span.literal);
+                        self.add_text(": ");
+                        self.add_type_kind(&field.ty);
+                        self.result.push_str(&format!(",\n"));
+                    } else {
+                        // Tuple struct field
+                        self.add_type_kind(&field.ty);
+                        self.result.push_str(&format!(",\n"));
+                    }
+                }
+
+                self.indent -= 1;
+                self.add_padding();
+                self.add_text("}\n");
             }
         }
     }

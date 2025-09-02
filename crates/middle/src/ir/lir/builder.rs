@@ -72,7 +72,9 @@ impl<'mir> LIRBuilder<'mir> {
                 self.mir_to_lir_bb.insert(bb_idx.index, lir_bb);
             }
 
-            // PASS 2: Process instructions and terminators
+            // PASS 2: Process non-phi instructions
+            let mut phi_instructions = Vec::new(); // Collect phi instructions for later processing
+            
             for bb_idx in mir_fx.basic_blocks.iter().copied() {
                 let bb = self.mir.basic_blocks.get_or_panic(bb_idx);
                 let lir_bb = *self.mir_to_lir_bb.get(&bb_idx.index).unwrap();
@@ -80,6 +82,12 @@ impl<'mir> LIRBuilder<'mir> {
 
                 for instruct_idx in bb.instructions.iter().copied() {
                     let mir_instruction = &mir_fx.instructions[instruct_idx];
+                    
+                    if let mir::InstructionKind::Phi(_) = &mir_instruction.kind {
+                        phi_instructions.push((bb_idx, instruct_idx, lir_bb));
+                        continue;
+                    }
+                    
                     let instruction = match &mir_instruction.kind {
                         mir::InstructionKind::Binary { operator, left, right } => {
                             let left = self.build_operand(left);
@@ -256,8 +264,8 @@ impl<'mir> LIRBuilder<'mir> {
                                     
                                     let value_operand = self.build_operand(element);
                                     
-                                    let store_instruction = InstructionKind::ArrayStore {
-                                        array: array_operand,
+                                    let store_instruction = InstructionKind::ObjectStore {
+                                        object: array_operand,
                                         index: index_operand,
                                         value: value_operand,
                                     };
@@ -283,8 +291,8 @@ impl<'mir> LIRBuilder<'mir> {
                             let array_operand = self.build_operand(array);
                             let index_operand = self.build_operand(index);
                             let value_operand = self.build_operand(value);
-                            InstructionKind::ArrayStore {
-                                array: array_operand,
+                            InstructionKind::ObjectStore {
+                                object: array_operand,
                                 index: index_operand,
                                 value: value_operand,
                             }
@@ -296,94 +304,36 @@ impl<'mir> LIRBuilder<'mir> {
                                 length: array_operand,
                             }
                         }
-                        mir::InstructionKind::Tuple { elements } => {
-                            let element_operands: Vec<Operand> = elements.iter()
-                                .map(|elem| self.build_operand(elem))
+                        mir::InstructionKind::Object { fields, .. } => {
+                            let field_operands: Vec<Operand> = fields.iter()
+                                .map(|field| self.build_operand(field))
                                 .collect();
-                            InstructionKind::Tuple {
+                            InstructionKind::Object {
                                 target: self.get_ref_location(instruct_idx),
-                                elements: element_operands,
+                                elements: field_operands,
                             }
                         }
-                        mir::InstructionKind::TupleField { tuple, field } => {
+                        mir::InstructionKind::Field { object: tuple, field } => {
                             let tuple_operand = self.build_operand(tuple);
                             let field_operand = self.build_operand(field);
-                            InstructionKind::TupleField {
+                            InstructionKind::FieldAccess {
                                 target: self.get_ref_location(instruct_idx),
-                                tuple: tuple_operand,
+                                object: tuple_operand,
                                 field: field_operand,
                             }
                         }
-                        mir::InstructionKind::TupleStore { tuple, field, value } => {
-                            let tuple_operand = self.build_operand(tuple);
+                        mir::InstructionKind::ObjectStore { object, field, value } => {
+                            let tuple_operand = self.build_operand(object);
                             let field_operand = self.build_operand(field);
                             let value_operand = self.build_operand(value);
-                            InstructionKind::TupleStore {
-                                tuple: tuple_operand,
-                                field: field_operand,
+                            InstructionKind::ObjectStore {
+                                object: tuple_operand,
+                                index: field_operand,
                                 value: value_operand,
                             }
                         }
-                        mir::InstructionKind::Phi(phi_node) => {
-                            let mut lir_operands = Vec::new();
-                            for (mir_bb_idx, instruction_idx) in &phi_node.operands {
-                                if let Some(&lir_bb_idx) = self.mir_to_lir_bb.get(&mir_bb_idx.index) {
-                                    let current_fx = self.get_current_fx();
-                                    let instruction = current_fx.instructions.get(*instruction_idx);
-                                    let operand = match &instruction.kind {
-                                        mir::InstructionKind::Value(value) => {
-                                            match value {
-                                                mir::Value::Constant(constant) => {
-                                                    match constant {
-                                                        mir::Constant::Int(val) => Operand {
-                                                            ty: Type::Int32,
-                                                            kind: OperandKind::Const(ConstValue::Int32(*val)),
-                                                        },
-                                                        mir::Constant::Float(val) => Operand {
-                                                            ty: Type::Float32,
-                                                            kind: OperandKind::Const(ConstValue::Float32(*val)),
-                                                        },
-                                                        mir::Constant::Bool(val) => Operand {
-                                                            ty: Type::Bool,
-                                                            kind: OperandKind::Const(ConstValue::Bool(*val)),
-                                                        },
-                                                        mir::Constant::String(val) => Operand {
-                                                            ty: Type::String,
-                                                            kind: OperandKind::Const(ConstValue::String(val.clone())),
-                                                        },
-                                                        mir::Constant::Usize(val) => Operand {
-                                                            ty: Type::UInt64,
-                                                            kind: OperandKind::Const(ConstValue::UInt64(*val as u64)),
-                                                        },
-                                                        mir::Constant::Void => Operand {
-                                                            ty: Type::Void,
-                                                            kind: OperandKind::Const(ConstValue::Null),
-                                                        },
-                                                    }
-                                                }
-                                                _ => {
-                                                    // For non-constant values in Value instructions, use instruction reference
-                                                    let value_ref = mir::Value::InstructionRef(*instruction_idx);
-                                                    self.build_operand(&value_ref)
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            // For other instruction types, use instruction reference
-                                            let value = mir::Value::InstructionRef(*instruction_idx);
-                                            self.build_operand(&value)
-                                        }
-                                    };
-                                    lir_operands.push((lir_bb_idx, operand));
-                                } else {
-                                    // This shouldn't happen
-                                    panic!("MIR basic block index {} not found in mapping", mir_bb_idx.index);
-                                }
-                            }
-                            InstructionKind::Phi {
-                                target: self.get_ref_location(instruct_idx),
-                                operands: lir_operands,
-                            }
+                        mir::InstructionKind::Phi(_) => {
+                            panic!("Phi instructions should be processed in a separate pass");
                         }
                     };
                     self.current_basic_block().instructions.push(Instruction {
@@ -468,6 +418,37 @@ impl<'mir> LIRBuilder<'mir> {
             
             let fx = self.lir.functions.get_mut(fx_idx);
             fx.basic_blocks.extend(self.panic_blocks.iter().copied());
+            
+            // Second pass: Process phi instructions
+            for (_bb_idx, instruct_idx, lir_bb_idx) in phi_instructions {
+                let mir_instruction = &mir_fx.instructions[instruct_idx];
+                if let mir::InstructionKind::Phi(phi_data) = &mir_instruction.kind {
+                    let phi_loc = *self.instruction_to_location.get(&instruct_idx)
+                        .expect("Phi instruction location should exist");
+                    
+                    let mut operands = Vec::new();
+                    for (pred_bb, pred_inst_idx) in &phi_data.operands {
+                        if let Some(pred_loc) = self.instruction_to_location.get(pred_inst_idx) {
+                            let operand = Operand {
+                                ty: mir_fx.instructions[*pred_inst_idx].ty.clone().into(),
+                                kind: OperandKind::Location(*pred_loc),
+                            };
+
+                            let lir_pred_bb = *self.mir_to_lir_bb.get(&pred_bb.index).unwrap();
+                            operands.push((lir_pred_bb, operand));
+                        }
+                    }
+                    
+                    let lir_instruction = Instruction {
+                        kind: InstructionKind::Phi {
+                            target: phi_loc,
+                            operands,
+                        },
+                    };
+                    
+                    self.lir.basic_blocks[lir_bb_idx].instructions.insert(0, lir_instruction);
+                }
+            }
         }
         
         self.lir

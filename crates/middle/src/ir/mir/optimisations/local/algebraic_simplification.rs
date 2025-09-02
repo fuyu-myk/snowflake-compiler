@@ -83,9 +83,9 @@ impl MIRPassLocal for AlgebraicSimplification {
                 InstructionKind::IndexVal { .. } => {}
                 InstructionKind::ArrayIndex { .. } => {}
                 InstructionKind::ArrayStore { .. } => {}
-                InstructionKind::Tuple { .. } => {}
-                InstructionKind::TupleField { .. } => {}
-                InstructionKind::TupleStore { .. } => {}
+                InstructionKind::Object { .. } => {}
+                InstructionKind::Field { .. } => {}
+                InstructionKind::ObjectStore { .. } => {}
                 InstructionKind::Phi(_) => {}
             }
         }

@@ -104,7 +104,12 @@ mod tests {
 
     #[test]
     fn test_undeclared_variable() {
-        let input = "let a = «b»";
+        let input = "
+            fx main() {
+                let a = «b»
+            }
+        ";
+
         let expected = vec![
             "Undeclared variable `b`"
         ];
@@ -114,7 +119,12 @@ mod tests {
 
     #[test]
     fn test_expected_expression() {
-        let input = "let a = «+»";
+        let input = "
+            fx main() {
+                let a = «+»
+            }
+        ";
+
         let expected = vec![
             "Expected expression, found <+>"
         ];
@@ -124,7 +134,12 @@ mod tests {
 
     #[test]
     fn test_bad_token() {
-        let input = "let a = 8 «@» 6";
+        let input = "
+            fx main() {
+                let a = 8 «@» 6
+            }
+        ";
+
         let expected = vec![
             "Expected expression, found <Bad>"
         ];
@@ -135,20 +150,22 @@ mod tests {
     #[test]
     fn test_undeclared_variable_when_variable_was_declared_in_another_scope() {
         let input = "\
-        let a = 0
-        let b = -1
+            fx main() {
+                let a = 0
+                let b = -1
 
-        if b > a {
-            a = 10
-            b = 2
-            let c = 10
-        } else {
-            a = 5
-        }
-        
-        a
-        b
-        «c»
+                if b > a {
+                    a = 10
+                    b = 2
+                    let c = 10
+                } else {
+                    a = 5
+                }
+                
+                a
+                b
+                «c»
+            }
         ";
 
         let expected = vec![
@@ -161,10 +178,12 @@ mod tests {
     #[test]
     fn test_shadowing_variable() { // should not report errors
         let input = "\
-        let a = 0
-        {
-            let a = 10
-        }
+            fx main () {
+                let a = 0
+                {
+                    let a = 10
+                }
+            }
         ";
 
         let expected = vec![];
@@ -175,13 +194,15 @@ mod tests {
     #[test]
     fn test_undeclared_variable_when_variable_was_declared_in_if_statement() { // without block statement; should push an error
         let input = "\
-        let b = -1
+            fx main() {
+                let b = -1
 
-        if b > 10 {
-            let a = 10
-        }
-        
-        «a»
+                if b > 10 {
+                    let a = 10
+                }
+                
+                «a»
+            }
         ";
 
         let expected = vec![
@@ -208,7 +229,9 @@ mod tests {
     #[test]
     fn test_undeclared_function() { // can't call undefined functions
         let input = "\
-        «a»()
+            fx main() {
+                «a»()
+            }
         ";
 
         let expected = vec![
@@ -221,8 +244,11 @@ mod tests {
     #[test]
     fn test_incorrect_no_of_arguments() { // argument count in calls must match definition
         let input = "\
-        fx foo(a: int, b: int) {}
-        «foo»(1)
+            fx foo(a: int, b: int) {}
+            
+            fx main() {
+                «foo»(1)
+            }
         ";
 
         let expected = vec![
@@ -235,9 +261,11 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_int_is_used_in_if_cond() { // int cannot be used in if conditions
         let input = "\
-        if «1» {
-            let a = 10
-        }
+            fx main() {
+                if «1» {
+                    let a = 10
+                }
+            }
         ";
 
         let expected = vec![
@@ -250,10 +278,13 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_variable_of_int_is_used_in_if_cond() { // int variable cannot be used in if conditions
         let input = "\
-        let a = 1
-        if «a» {
-            let a = 10
-        }
+            fx main() {
+                let a = 1
+
+                if «a» {
+                    let a = 10
+                }
+            }
         ";
         
         let expected = vec![
@@ -266,10 +297,12 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_type_int_binary_expression_is_used_in_if_cond() { // int binary exps cannot be used in if conditions
         let input = "\
-        let a = 1
-        if «a + 1» {
-            let a = 10
-        }
+            fx main() {
+                let a = 1
+                if «a + 1» {
+                    let a = 10
+                }
+            }
         ";
 
         let expected = vec![
@@ -282,8 +315,10 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_adding_int_with_bool() { // int cannot be added to bool
         let input = "\
-        let a = 1
-        a + «true»
+            fx main() {
+                let a = 1
+                a + «true»
+            }
         ";
 
         let expected = vec![
@@ -296,8 +331,10 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_using_minus_unary_operator_on_bool() { // - false/true not allowed
         let input = "\
-        let a = true;
-        -«a»
+            fx main() {
+                let a = true;
+                -«a»
+            }
         ";
 
         let expected = vec![
@@ -310,12 +347,14 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_assigning_function_call_result_to_variable_of_another_type() { // [b: bool] cannot be assigned to [fx a -> int]
         let input = "\
-        fx a -> int {
-            return 1
-        }
+            fx a -> int {
+                return 1
+            }
 
-        let b = false
-        b = «a()»
+            fx main() {
+                let b = false
+                b = «a()»
+            }
         ";
 
         let expected = vec![
@@ -358,7 +397,9 @@ mod tests {
     #[test]
     fn test_type_mismatch_when_assigning_wrong_type_to_var_with_static_type() {
         let input = "\
-        let a: int = «true»
+            fx main() {
+                let a: int = «true»
+            }
         ";
 
         let expected = vec![
@@ -375,7 +416,7 @@ mod tests {
         ";
 
         let expected = vec![
-            "Cannot use `return` outside of a function"
+            "Expected item, found Return"
         ];
 
         assert_diagnostics(input, expected);
@@ -384,9 +425,12 @@ mod tests {
     #[test]
     fn test_addition_with_void_type() { // addition cannot be done with void type
         let input = "
-        let a = 1
-        a + «a()»
-        fx a {}
+            fx a {}
+
+            fx main() {
+                let a = 1
+                a + «a()»
+            }
         ";
 
         let expected = vec![
@@ -399,7 +443,9 @@ mod tests {
     #[test]
     fn test_undeclared_type_in_let_assignment() {
         let input = "\
-        let a: «b» = 1
+            fx main() {
+                let a: «b» = 1
+            }
         ";
 
         let expected = vec![
@@ -412,7 +458,7 @@ mod tests {
     #[test]
     fn test_undeclared_type_in_function_return_type() {
         let input = "\
-        fx a -> «b» {}
+            fx a -> «b» {}
         ";
 
         let expected = vec![
@@ -425,7 +471,7 @@ mod tests {
     #[test]
     fn test_undeclared_type_in_function_param_type() {
         let input = "\
-        fx a(a: «b») {}
+            fx a(a: «b») {}
         ";
 
         let expected = vec![
@@ -438,8 +484,11 @@ mod tests {
     #[test]
     fn test_type_mismatch_in_args_in_function_call() {
         let input = "\
-        fx a(a: int) {}
-        a(«true»)
+            fx a(a: int) {}
+
+            fx main() {
+                a(«true»)
+            }
         ";
 
         let expected = vec![
@@ -452,9 +501,9 @@ mod tests {
     #[test]
     fn test_returning_value_from_void_function() { // void functions cannot return a value
         let input = "\
-        fx a() {
-            return «1»
-        }
+            fx a() {
+                return «1»
+            }
         ";
 
         let expected = vec![
@@ -467,9 +516,9 @@ mod tests {
     #[test]
     fn test_return_without_expression_in_non_void_function() {
         let input = "\
-        fx a() -> int {
-            «return»
-        }
+            fx a() -> int {
+                «return»
+            }
         ";
 
         let expected = vec![
@@ -482,7 +531,9 @@ mod tests {
     #[test]
     fn test_assignment_to_undeclared_variable() {
         let input = "\
-        «a» = 1
+            fx main() {
+                «a» = 1
+            }
         ";
 
         let expected = vec![
@@ -495,14 +546,16 @@ mod tests {
     #[test]
     fn test_while_condition_type() { // should not be non-bool
         let input = "\
-        let a = add(1, 2)
-        fx add(a: int, b: int) -> int {
-            return a + b
-        }
+            fx main() {
+                let a = add(1, 2)
+                fx add(a: int, b: int) -> int {
+                    return a + b
+                }
 
-        while «a + 1» {
-            a = a + 1
-        }
+                while «a + 1» {
+                    a = a + 1
+                }
+            }
         ";
 
         let expected = vec![
@@ -536,8 +589,10 @@ mod tests {
     #[test]
     fn test_division_by_zero() {
         let input = "\
-        let a = 1
-        a / «0»
+            fx main() {
+                let a = 1
+                a / «0»
+            }
         ";
 
         let expected = vec![
@@ -550,8 +605,10 @@ mod tests {
     #[test]
     fn test_remainder_by_zero() {
         let input = "\
-        let a = 1
-        a % «0»
+            fx main() {
+                let a = 1
+                a % «0»
+            }
         ";
 
         let expected = vec![
@@ -564,8 +621,10 @@ mod tests {
     #[test]
     fn test_division_assignment_by_zero() {
         let input = "\
-        let a = 1
-        a /= «0»
+            fx main() {
+                let a = 1
+                a /= «0»
+            }
         ";
 
         let expected = vec![
@@ -578,8 +637,10 @@ mod tests {
     #[test]
     fn test_remainder_assignment_by_zero() {
         let input = "\
-        let a = 1
-        a %= «0»
+            fx main() {
+                let a = 1
+                a %= «0»
+            }
         ";
 
         let expected = vec![
@@ -592,7 +653,9 @@ mod tests {
     #[test]
     fn test_break_outside_loop() {
         let input = "\
-        «break»
+            fx main() {
+                «break»
+            }
         ";
 
         let expected = vec![
@@ -605,7 +668,9 @@ mod tests {
     #[test]
     fn test_continue_outside_loop() {
         let input = "\
-        «continue»
+            fx main() {
+                «continue»
+            }
         ";
 
         let expected = vec![
@@ -618,7 +683,9 @@ mod tests {
     #[test]
     fn test_array_type_mismatch() {
         let input = "\
-        let a: [int; 3] = [1, 2, «true»];
+            fx main() {
+                let a: [int; 3] = [1, 2, «true»];
+            }
         ";
 
         let expected = vec![
@@ -631,7 +698,9 @@ mod tests {
     #[test]
     fn test_array_length_mismatch() {
         let input = "\
-        let a: [int; 3] = «[1, 2]»;
+            fx main() {
+                let a: [int; 3] = «[1, 2]»;
+            }
         ";
 
         let expected = vec![
@@ -644,7 +713,9 @@ mod tests {
     #[test]
     fn test_both_type_and_length_mismatch() {
         let input = "\
-        let a: [int; 3] = «[\"this should fail\"]»;
+            fx main() {
+                let a: [int; 3] = «[\"this should fail\"]»;
+            }
         ";
 
         let expected = vec![
@@ -657,8 +728,10 @@ mod tests {
     #[test]
     fn test_array_index_out_of_bounds() {
         let input = "\
-        let a: [int; 3] = [1, 2, 3];
-        a[«3»]
+            fx main() {
+                let a: [int; 3] = [1, 2, 3];
+                a[«3»]
+            }
         ";
 
         let expected = vec![
@@ -671,8 +744,10 @@ mod tests {
     #[test]
     fn test_array_index_negative() {
         let input = "\
-        let a: [int; 3] = [1, 2, 3];
-        a[«-1»]
+            fx main() {
+                let a: [int; 3] = [1, 2, 3];
+                a[«-1»]
+            }
         ";
 
         let expected = vec![
@@ -685,8 +760,10 @@ mod tests {
     #[test]
     fn test_array_index_type_mismatch() {
         let input = "\
-        let a: [int; 3] = [1, 2, 3];
-        a[«true»]
+            fx main() {
+                let a: [int; 3] = [1, 2, 3];
+                a[«true»]
+            }
         ";
 
         let expected = vec![
@@ -699,8 +776,10 @@ mod tests {
     #[test]
     fn test_array_indexing_on_non_array_type() {
         let input = "\
-        let a = 1;
-        «a»[0]
+            fx main() {
+                let a = 1;
+                «a»[0]
+            }
         ";
 
         let expected = vec![
@@ -713,8 +792,10 @@ mod tests {
     #[test]
     fn test_unknown_tuple_field_access() {
         let input = "\
-        let a: (int, int) = (1, 2);
-        a.«5»
+            fx main() {
+                let a: (int, int) = (1, 2);
+                a.«5»
+            }
         ";
 
         let expected = vec![
@@ -727,8 +808,10 @@ mod tests {
     #[test]
     fn test_field_access_on_primitive_type() {
         let input = "\
-        let a = 5;
-        «a».0
+            fx main() {
+                let a = 5;
+                «a».0
+            }
         ";
 
         let expected = vec![
@@ -741,8 +824,10 @@ mod tests {
     #[test]
     fn test_field_access_on_array_type() {
         let input = "\
-        let a: [int; 3] = [1, 2, 3];
-        a.«0»
+            fx main() {
+                let a: [int; 3] = [1, 2, 3];
+                a.«0»
+            }
         ";
 
         let expected = vec![
@@ -755,8 +840,10 @@ mod tests {
     #[test]
     fn test_assignment_to_immutable_variable() {
         let input = "\
-        let a = 5;
-        «a» = 10;
+            fx main() {
+                let a = 5;
+                «a» = 10;
+            }
         ";
 
         let expected = vec![
@@ -769,8 +856,10 @@ mod tests {
     #[test]
     fn test_assignment_to_immutable_array() {
         let input = "\
-        let a: [int; 3] = [1, 2, 3];
-        «a[0]» = 10;
+            fx main() {
+                let a: [int; 3] = [1, 2, 3];
+                «a[0]» = 10;
+            }
         ";
 
         let expected = vec![
@@ -783,8 +872,10 @@ mod tests {
     #[test]
     fn test_assignment_to_immutable_tuple() {
         let input = "\
-        let a: (int, int) = (1, 2);
-        «a.0» = 10;
+            fx main() {
+                let a: (int, int) = (1, 2);
+                «a.0» = 10;
+            }
         ";
 
         let expected = vec![
@@ -797,7 +888,7 @@ mod tests {
     #[test]
     fn test_const_not_uppercase() {
         let input = "\
-        const «a»: int = 5;
+            const «a»: int = 5;
         ";
 
         let expected = vec![

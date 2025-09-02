@@ -1,7 +1,7 @@
 use std::{fmt::{Display, Formatter}, ops::Deref};
 
-use crate::compilation_unit::{FunctionIndex, VariableIndex};
-use snowflake_common::token::Token;
+use crate::compilation_unit::{VariableIndex};
+use snowflake_common::{bug_report, token::{Token, TokenKind}};
 use snowflake_common::{text::span::TextSpan, typings::Type, idx, Idx, IndexVec};
 use visitor::ASTVisitor;
 use printer::ASTPrinter;
@@ -13,15 +13,15 @@ pub mod visitor;
 pub mod printer;
 
 
-idx!(StatementId);
-idx!(ExpressionId);
-idx!(ItemId);
+idx!(StmtIndex);
+idx!(ExprIndex);
+idx!(ItemIndex);
 
 #[derive(Debug, Clone)]
 pub struct Ast {
-    pub statements: IndexVec<StatementId, Statement>,
-    pub expressions: IndexVec<ExpressionId, Expression>,
-    pub items: IndexVec<ItemId, Item>
+    pub statements: IndexVec<StmtIndex, Statement>,
+    pub expressions: IndexVec<ExprIndex, Expression>,
+    pub items: IndexVec<ItemIndex, Item>
 }
 
 impl Ast {
@@ -33,31 +33,31 @@ impl Ast {
         }
     }
 
-    pub fn query_statement(&self, stmt_id: StatementId) -> &Statement {
+    pub fn query_statement(&self, stmt_id: StmtIndex) -> &Statement {
         &self.statements[stmt_id]
     }
 
-    pub fn query_expression(&self, expr_id: ExpressionId) -> &Expression {
+    pub fn query_expression(&self, expr_id: ExprIndex) -> &Expression {
         &self.expressions[expr_id]
     }
 
-    pub fn query_item(&self, item_id: ItemId) -> &Item {
+    pub fn query_item(&self, item_id: ItemIndex) -> &Item {
         &self.items[item_id]
     }
 
-    pub fn query_statement_mut(&mut self, stmt_id: StatementId) -> &mut Statement {
+    pub fn query_statement_mut(&mut self, stmt_id: StmtIndex) -> &mut Statement {
         &mut self.statements[stmt_id]
     }
     
-    pub fn query_expression_mut(&mut self, expr_id: ExpressionId) -> &mut Expression {
+    pub fn query_expression_mut(&mut self, expr_id: ExprIndex) -> &mut Expression {
         &mut self.expressions[expr_id]
     }
 
-    pub fn query_item_mut(&mut self, item_id: ItemId) -> &mut Item {
+    pub fn query_item_mut(&mut self, item_id: ItemIndex) -> &mut Item {
         &mut self.items[item_id]
     }
 
-    pub fn set_variable(&mut self, expr_id: ExpressionId, variable_index: VariableIndex) {
+    pub fn set_variable(&mut self, expr_id: ExprIndex, variable_index: VariableIndex) {
         let expression = self.query_expression_mut(expr_id);
 
         match &mut expression.kind {
@@ -71,7 +71,7 @@ impl Ast {
         }
     }
 
-    pub fn set_variable_for_statement(&mut self, statement_id: &StatementId, variable_index: VariableIndex) {
+    pub fn set_variable_for_statement(&mut self, statement_id: &StmtIndex, variable_index: VariableIndex) {
         let statement = self.query_statement_mut(*statement_id);
 
         match &mut statement.kind {
@@ -85,7 +85,7 @@ impl Ast {
         }
     }
 
-    pub fn set_function(&mut self, expr_id: ExpressionId, fx_idx: FunctionIndex) {
+    pub fn set_function(&mut self, expr_id: ExprIndex, fx_idx: ItemIndex) {
         let expr = self.query_expression_mut(expr_id);
         match &mut expr.kind {
             ExpressionKind::Call(call_expr) => {
@@ -95,14 +95,14 @@ impl Ast {
         }
     }
 
-    pub fn set_type(&mut self, expr_id: ExpressionId, ty: Type) {
+    pub fn set_type(&mut self, expr_id: ExprIndex, ty: Type) {
         let expr = &mut self.expressions[expr_id];
         expr.ty = ty;
     }
 
     // Statement
     fn statement_from_kind(&mut self, kind: StatementKind, span: TextSpan) -> &Statement {
-        let statement = Statement::new(kind, StatementId::new(0), span);
+        let statement = Statement::new(kind, StmtIndex::new(0), span);
         let id = self.statements.push(statement);
 
         self.statements[id].id = id;
@@ -114,13 +114,13 @@ impl Ast {
         &self.statements[id]
     }
 
-    pub fn expression_statement(&mut self, ast: &Ast, expr_id: ExpressionId) -> &Statement {
+    pub fn expression_statement(&mut self, ast: &Ast, expr_id: ExprIndex) -> &Statement {
         let span = self.query_expression(expr_id).span(ast);
         self.statement_from_kind(StatementKind::Expression(expr_id), span)
     }
 
     pub fn let_statement(
-        &mut self, ast: &Ast, identifier: Token, initialiser: ExpressionId, type_annotation: Option<StaticTypeAnnotation>
+        &mut self, ast: &Ast, identifier: Token, initialiser: ExprIndex, type_annotation: Option<StaticTypeAnnotation>
     ) -> &Statement {
         let mut spans = Vec::new();
         
@@ -135,7 +135,7 @@ impl Ast {
         let span = TextSpan::combine_refs(&span_refs);
 
         let pattern = Pattern {
-            id: StatementId::new(0), // Will be set after statement creation
+            id: StmtIndex::new(0), // Will be set after statement creation
             kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
             span: identifier.span.clone(),
             token: identifier.clone(),
@@ -161,7 +161,7 @@ impl Ast {
     ) -> Pattern {
         let span = identifier.span.clone();
         let pattern = Pattern {
-            id: StatementId::new(0), // Will be set when pattern is used in statement
+            id: StmtIndex::new(0), // Will be set when pattern is used in statement
             kind: PatternKind::Identifier(binding_mode, identifier.clone()),
             span,
             token: identifier,
@@ -176,7 +176,7 @@ impl Ast {
         token: Token
     ) -> Pattern {
         Pattern {
-            id: StatementId::new(0), // Will be set when pattern is used in statement
+            id: StmtIndex::new(0), // Will be set when pattern is used in statement
             kind: PatternKind::Tuple(patterns),
             span,
             token,
@@ -189,7 +189,7 @@ impl Ast {
         token: Token
     ) -> Pattern {
         Pattern {
-            id: StatementId::new(0), // Will be set when pattern is used in statement
+            id: StmtIndex::new(0), // Will be set when pattern is used in statement
             kind: PatternKind::Err,
             span,
             token,
@@ -201,7 +201,7 @@ impl Ast {
         &mut self, 
         ast: &Ast, 
         mut pattern: Pattern, 
-        initialiser: ExpressionId, 
+        initialiser: ExprIndex, 
         type_annotation: Option<StaticTypeAnnotation>
     ) -> &Statement {
         let mut spans = Vec::new();
@@ -229,7 +229,7 @@ impl Ast {
                 type_annotation, 
                 variable_index: VariableIndex::new(0) 
             }),
-            StatementId::new(0),
+            StmtIndex::new(0),
             span
         );
         
@@ -248,7 +248,7 @@ impl Ast {
         &mut self, 
         ast: &Ast, 
         identifier: Token, 
-        initialiser: ExpressionId, 
+        initialiser: ExprIndex, 
         type_annotation: StaticTypeAnnotation
     ) -> &Statement {
         let mut spans = Vec::new();
@@ -273,7 +273,7 @@ impl Ast {
     }
 
     pub fn if_expression(
-        &mut self, if_keyword: Token, condition: ExpressionId, then_branch: Body, else_statement: Option<ElseBranch>
+        &mut self, if_keyword: Token, condition: ExprIndex, then_branch: Body, else_statement: Option<ElseBranch>
     ) -> &Expression {
         let mut span_refs = vec![&if_keyword.span];
         let condition_span = self.query_expression(condition).span(self);
@@ -296,7 +296,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::If(IfExpression { if_keyword, condition, then_branch, else_branch: else_statement }), span)
     }
 
-    pub fn block_expression(&mut self, left_brace: Token, statements: Vec<StatementId>, right_brace: Token) -> &Expression {
+    pub fn block_expression(&mut self, left_brace: Token, statements: Vec<StmtIndex>, right_brace: Token) -> &Expression {
         let mut span_refs = vec![&left_brace.span];
         
         let statement_spans: Vec<TextSpan> = statements.iter()
@@ -313,7 +313,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace }), span)
     }
 
-    pub fn while_statement(&mut self, ast: &Ast, while_keyword: Token, condition: ExpressionId, body: Body) -> &Statement {
+    pub fn while_statement(&mut self, ast: &Ast, while_keyword: Token, condition: ExprIndex, body: Body) -> &Statement {
         let condition_span = self.query_expression(condition).span(ast);
         let body_span = body.span(ast);
         let span_refs = vec![&while_keyword.span, &condition_span, &body_span];
@@ -325,7 +325,7 @@ impl Ast {
         )
     }
 
-    pub fn return_statement(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExpressionId>) -> &Statement {
+    pub fn return_statement(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExprIndex>) -> &Statement {
         let mut span_refs = vec![&return_keyword.span];
         
         let return_value_span = if let Some(expr_id) = return_value {
@@ -348,7 +348,7 @@ impl Ast {
 
     // Expression
     pub fn expression_from_kind(&mut self, kind: ExpressionKind, span: TextSpan) -> &Expression {
-        let expression = Expression::new(kind, ExpressionId::new(0), Type::Unresolved, span);
+        let expression = Expression::new(kind, ExprIndex::new(0), Type::Unresolved, span);
         let expr_id = self.expressions.push(expression);
 
         self.expressions[expr_id].id = expr_id;
@@ -375,7 +375,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::String(StringExpression { token, string: value }), span)
     }
 
-    pub fn binary_expression(&mut self, operator: BinaryOp, left: ExpressionId, right: ExpressionId, from_compound: bool) -> &Expression {
+    pub fn binary_expression(&mut self, operator: BinaryOp, left: ExprIndex, right: ExprIndex, from_compound: bool) -> &Expression {
         let left_span = self.query_expression(left).span(self);
         let right_span = self.query_expression(right).span(self);
         let span_refs = vec![&left_span, &operator.token.span, &right_span];
@@ -385,7 +385,7 @@ impl Ast {
     }
 
     pub fn compound_binary_expression(
-        &mut self, operator: AssignmentOpKind, operator_token: Token, left: ExpressionId, right: ExpressionId
+        &mut self, operator: AssignmentOpKind, operator_token: Token, left: ExprIndex, right: ExprIndex
     ) -> &Expression {
         let left_span = self.query_expression(left).span(self);
         let right_span = self.query_expression(right).span(self);
@@ -398,7 +398,7 @@ impl Ast {
         )
     }
 
-    pub fn unary_expression(&mut self, operator: UnaryOp, operand: ExpressionId) -> &Expression {
+    pub fn unary_expression(&mut self, operator: UnaryOp, operand: ExprIndex) -> &Expression {
         let operand_span = self.query_expression(operand).span(self);
         let span_refs = vec![&operator.token.span, &operand_span];
         let span = TextSpan::combine_refs(&span_refs);
@@ -406,7 +406,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Unary(UnaryExpression { operator, operand }), span)
     }
 
-    pub fn parenthesised_expression(&mut self, left_paren:Token, expression: ExpressionId, right_paren: Token) -> &Expression {
+    pub fn parenthesised_expression(&mut self, left_paren:Token, expression: ExprIndex, right_paren: Token) -> &Expression {
         let expr_span = self.query_expression(expression).span(self);
         let span_refs = vec![&left_paren.span, &expr_span, &right_paren.span];
         let span = TextSpan::combine_refs(&span_refs);
@@ -419,7 +419,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Variable(VarExpression { identifier, variable_index: VariableIndex::new(0) }), span)
     }
 
-    pub fn assignment_expression(&mut self, left_hand_side: ExpressionId, equals: Token, expression: ExpressionId) -> &Expression {
+    pub fn assignment_expression(&mut self, left_hand_side: ExprIndex, equals: Token, expression: ExprIndex) -> &Expression {
         let lhs_span = self.query_expression(left_hand_side).span(self);
         let expr_span = self.query_expression(expression).span(self);
         let span_refs = vec![&lhs_span, &equals.span, &expr_span];
@@ -436,7 +436,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }), span)
     }
 
-    pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExpressionId>, right_paren: Token) -> &Expression {
+    pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExprIndex>, right_paren: Token) -> &Expression {
         let mut span_refs = vec![&callee.span, &left_paren.span];
         
         let arg_spans: Vec<TextSpan> = arguments.iter()
@@ -451,7 +451,7 @@ impl Ast {
         let span = TextSpan::combine_refs(&span_refs);
         
         self.expression_from_kind(
-            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: FunctionIndex::unreachable() }),
+            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: ItemIndex::unreachable() }),
             span
         )
     }
@@ -467,7 +467,7 @@ impl Ast {
     }
 
     pub fn array_expression(
-        &mut self, type_decl: Token, open_square_bracket: Token, elements: Vec<ExpressionId>, commas: Vec<Token>, close_square_bracket: Token
+        &mut self, type_decl: Token, open_square_bracket: Token, elements: Vec<ExprIndex>, commas: Vec<Token>, close_square_bracket: Token
     ) -> &Expression {
         let mut span_refs = vec![&type_decl.span, &open_square_bracket.span];
         
@@ -491,7 +491,7 @@ impl Ast {
         )
     }
 
-    pub fn index_expression(&mut self, object: ExpressionId, open_square_bracket: Token, index: ExpressionId, close_square_bracket: Token) -> &Expression {
+    pub fn index_expression(&mut self, object: ExprIndex, open_square_bracket: Token, index: ExprIndex, close_square_bracket: Token) -> &Expression {
         let object_span = self.query_expression(object).span(self);
         let index_span = self.query_expression(index).span(self);
         let span_refs = vec![&object_span, &open_square_bracket.span, &index_span, &close_square_bracket.span];
@@ -509,7 +509,7 @@ impl Ast {
         )
     }
 
-    pub fn tuple_expression(&mut self, open_paren: Token, elements: Vec<ExpressionId>, close_paren: Token) -> &Expression {
+    pub fn tuple_expression(&mut self, open_paren: Token, elements: Vec<ExprIndex>, close_paren: Token) -> &Expression {
         let mut span_refs = vec![&open_paren.span];
         
         let element_spans: Vec<TextSpan> = elements.iter()
@@ -529,20 +529,61 @@ impl Ast {
         )
     }
 
-    pub fn tuple_index_expression(&mut self, tuple: ExpressionId, period: Token, index: ExpressionId) -> &Expression {
-        let tuple_span = self.query_expression(tuple).span(self);
+    pub fn field_expression(&mut self, object: ExprIndex, period: Token, index: ExprIndex) -> &Expression {
+        let object_span = self.query_expression(object).span(self);
         let index_span = self.query_expression(index).span(self);
-        let span_refs = vec![&tuple_span, &period.span, &index_span];
+        let span_refs = vec![&object_span, &period.span, &index_span];
         let span = TextSpan::combine_refs(&span_refs);
         
-        let tuple_index = TupleIndex {
+        let field = FieldName {
             period,
             idx_no: index,
         };
         
         self.expression_from_kind(
-            ExpressionKind::TupleIndexExpression(TupleIndexExpression { tuple, index: tuple_index }),
+            ExpressionKind::FieldExpression(FieldExpression { object, field }),
             span
+        )
+    }
+
+    pub fn struct_expression(
+        &mut self,
+        identifier: Token,
+        fields: Vec<ExprField>,
+        rest_token: Option<Token>,
+        left_brace: Token,
+        right_brace: Token
+    ) -> &Expression {
+        let rest = if let Some(rest_token) = rest_token.clone() {
+            match &rest_token.kind {
+                TokenKind::DoublePeriod => {
+                    StructRest::Rest(rest_token.span)
+                }
+                _ => bug_report!("Unexpected token kind for struct rest"),
+            }
+        } else {
+            StructRest::None
+        };
+
+        let mut all_spans = vec![identifier.span.clone(), left_brace.span.clone()];
+        for field_idx in fields.iter() {
+            if field_idx.is_shorthand {
+                all_spans.push(field_idx.identifier.span.clone());
+            } else {
+                all_spans.push(field_idx.identifier.span.clone());
+                all_spans.push(field_idx.expr.span(self));
+            }
+        }
+
+        if let Some(ref rest_tok) = rest_token {
+            all_spans.push(rest_tok.span.clone());
+        }
+
+        all_spans.push(right_brace.span.clone());
+
+        self.expression_from_kind(
+            ExpressionKind::Struct(StructExpression { identifier: identifier.clone(), fields, rest }),
+            TextSpan::combine(all_spans)
         )
     }
 
@@ -553,11 +594,46 @@ impl Ast {
 
     // Item
     pub fn item_from_kind(&mut self, kind: ItemKind, span: TextSpan) -> &Item {
-        let item = Item::new(kind, ItemId::new(0), span);
+        let item = Item::new(kind, ItemIndex::new(0), span);
         let id = self.items.push(item);
         self.items[id].id = id;
 
         &self.items[id]
+    }
+    
+    pub fn item_from_kind_local(&mut self, kind: ItemKind, span: TextSpan, is_local: bool) -> &Item {
+        let item = if is_local {
+            Item::new_local(kind, ItemIndex::new(0), span)
+        } else {
+            Item::new(kind, ItemIndex::new(0), span)
+        };
+        let id = self.items.push(item);
+        self.items[id].id = id;
+
+        &self.items[id]
+    }
+
+    pub fn struct_item(
+        &mut self,
+        identifier: Token,
+        generics: Generics,
+        variant_data: VariantData,
+    ) -> &Item {
+        let all_spans = vec![identifier.span.clone(), generics.span.clone()];
+
+        self.item_from_kind(ItemKind::Struct(identifier, generics, variant_data), TextSpan::combine(all_spans))
+    }
+    
+    pub fn struct_item_local(
+        &mut self,
+        identifier: Token,
+        generics: Generics,
+        variant_data: VariantData,
+        is_local: bool,
+    ) -> &Item {
+        let all_spans = vec![identifier.span.clone(), generics.span.clone()];
+
+        self.item_from_kind_local(ItemKind::Struct(identifier, generics, variant_data), TextSpan::combine(all_spans), is_local)
     }
 
     pub fn constant_item(
@@ -565,7 +641,7 @@ impl Ast {
         identifier: Token,
         generics: Generics,
         type_annotation: StaticTypeAnnotation,
-        expr: Option<Box<ExpressionId>>,
+        expr: Option<Box<ExprIndex>>,
     ) -> &Item {
         let mut all_spans = vec![identifier.span.clone(), generics.span.clone()];
 
@@ -592,7 +668,7 @@ impl Ast {
         generics: Generics,
         body: Body,
         return_type: Option<FxReturnType>,
-        index: FunctionIndex
+        index: ItemIndex
     ) -> &Item {
         let mut all_spans = vec![
             fx_keyword.span.clone(),
@@ -628,21 +704,26 @@ impl Ast {
 #[derive(Debug, Clone)]
 pub struct Item {
     pub kind: ItemKind,
-    pub id: ItemId,
+    pub id: ItemIndex,
     pub span: TextSpan,
+    pub is_local: bool,
 }
 
 impl Item {
-    pub fn new(kind: ItemKind, id: ItemId, span: TextSpan) -> Self {
-        Self { kind, id, span }
+    pub fn new(kind: ItemKind, id: ItemIndex, span: TextSpan) -> Self {
+        Self { kind, id, span, is_local: false }
+    }
+    
+    pub fn new_local(kind: ItemKind, id: ItemIndex, span: TextSpan) -> Self {
+        Self { kind, id, span, is_local: true }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum ItemKind {
-    Statement(StatementId),
     Function(FxDeclaration),
     Const(Box<ConstantItem>),
+    Struct(Token, Generics, VariantData),
 }
 
 #[derive(Debug, Clone)]
@@ -650,7 +731,7 @@ pub struct ConstantItem {
     pub identifier: Token,
     pub generics: Generics,
     pub type_annotation: StaticTypeAnnotation,
-    pub expr: Option<Box<ExpressionId>>,
+    pub expr: Option<Box<ExprIndex>>,
 }
 
 #[derive(Debug, Clone)]
@@ -673,7 +754,7 @@ pub struct FxDeclaration {
     pub generics: Generics,
     pub body: Body,
     pub return_type: Option<FxReturnType>,
-    pub index: FunctionIndex,
+    pub index: ItemIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -733,27 +814,47 @@ pub enum GenericParamKind {
 }
 
 #[derive(Debug, Clone)]
+pub enum VariantData {
+    Struct {
+        fields: Vec<FieldDefinition>,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldDefinition {
+    pub identifier: Option<Token>,
+    pub ty: Box<TypeKind>,
+}
+
+impl FieldDefinition {
+    pub fn new(identifier: Option<Token>, ty: Box<TypeKind>) -> Self {
+        Self { identifier, ty }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum StatementKind {
-    Expression(ExpressionId),
+    Expression(ExprIndex),
     Let(LetStatement),
     While(WhileStatement),
     Return(ReturnStatement),
     Const(ConstStatement),
+    Item(ItemIndex),
 }
 
 #[derive(Debug, Clone)]
 pub struct Body {
     pub open_brace: Token,
-    pub statements: Vec<StatementId>,
+    pub statements: Vec<StmtIndex>,
     pub close_brace: Token,
 }
 
 impl Body {
-    pub fn new(open_brace: Token, statements: Vec<StatementId>, close_brace: Token) -> Self {
+    pub fn new(open_brace: Token, statements: Vec<StmtIndex>, close_brace: Token) -> Self {
         Self { open_brace, statements, close_brace }
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &StatementId> {
+    pub fn iter(&self) -> impl Iterator<Item = &StmtIndex> {
         self.statements.iter()
     }
 
@@ -783,7 +884,7 @@ impl Body {
 }
 
 impl Deref for Body {
-    type Target = Vec<StatementId>;
+    type Target = Vec<StmtIndex>;
 
     fn deref(&self) -> &Self::Target {
         &self.statements
@@ -793,7 +894,7 @@ impl Deref for Body {
 #[derive(Debug, Clone)]
 pub struct ReturnStatement {
     pub return_keyword: Token,
-    pub return_value: Option<ExpressionId>,
+    pub return_value: Option<ExprIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -930,7 +1031,7 @@ impl StaticTypeAnnotation {
 #[derive(Debug, Clone)]
 pub struct WhileStatement {
     pub while_keyword: Token,
-    pub condition: ExpressionId,
+    pub condition: ExprIndex,
     pub body: Body,
 }
 
@@ -938,7 +1039,7 @@ pub struct WhileStatement {
 pub struct LetStatement {
     pub identifier: Token,
     pub pattern: Pattern,
-    pub initialiser: ExpressionId,
+    pub initialiser: ExprIndex,
     pub type_annotation: Option<StaticTypeAnnotation>,
     pub variable_index: VariableIndex,
 }
@@ -946,7 +1047,7 @@ pub struct LetStatement {
 #[derive(Debug, Clone)]
 pub struct ConstStatement {
     pub identifier: Token,
-    pub expr: ExpressionId,
+    pub expr: ExprIndex,
     pub type_annotation: StaticTypeAnnotation,
     pub variable_index: VariableIndex,
 }
@@ -954,12 +1055,12 @@ pub struct ConstStatement {
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
-    pub id: StatementId,
+    pub id: StmtIndex,
     pub span: TextSpan,
 }
 
 impl Statement {
-    pub fn new(kind: StatementKind, id: StatementId, span: TextSpan) -> Self {
+    pub fn new(kind: StatementKind, id: StmtIndex, span: TextSpan) -> Self {
         Statement { kind, id, span }
     }
 
@@ -997,13 +1098,14 @@ impl Statement {
 
                 TextSpan::combine(spans)
             }
+            StatementKind::Item(item_id) => ast.query_item(*item_id).span.clone(),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    pub id: StatementId,
+    pub id: StmtIndex,
     pub kind: PatternKind,
     pub span: TextSpan,
     pub token: Token,
@@ -1048,7 +1150,8 @@ pub enum ExpressionKind {
     Array(ArrayExpression),
     IndexExpression(IndexExpression),
     Tuple(TupleExpression),
-    TupleIndexExpression(TupleIndexExpression),
+    FieldExpression(FieldExpression),
+    Struct(StructExpression),
     Error(TextSpan),
 }
 
@@ -1063,34 +1166,54 @@ impl ExpressionKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct TupleIndexExpression {
-    pub tuple: ExpressionId,
-    pub index: TupleIndex,
+pub struct StructExpression {
+    pub identifier: Token,
+    pub fields: Vec<ExprField>,
+    pub rest: StructRest,
 }
 
 #[derive(Debug, Clone)]
-pub struct TupleIndex {
+pub struct ExprField {
+    pub identifier: Token,
+    pub expr: Expression,
+    pub is_shorthand: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum StructRest {
+    Rest(TextSpan), // ..
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldExpression {
+    pub object: ExprIndex,
+    pub field: FieldName,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldName {
     pub period: Token,
-    pub idx_no: ExpressionId,
+    pub idx_no: ExprIndex,
 }
 
 #[derive(Debug, Clone)]
 pub struct TupleExpression {
     pub open_paren: Token,
-    pub elements: Vec<ExpressionId>,
+    pub elements: Vec<ExprIndex>,
     pub close_paren: Token,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexExpression {
-    pub object: ExpressionId,
+    pub object: ExprIndex,
     pub index: ArrayIndex,
 }
 
 #[derive(Debug, Clone)]
 pub struct ArrayIndex {
     pub open_square_bracket: Token,
-    pub idx_no: ExpressionId,
+    pub idx_no: ExprIndex,
     pub close_square_bracket: Token,
 }
 
@@ -1098,7 +1221,7 @@ pub struct ArrayIndex {
 pub struct ArrayExpression {
     pub type_decl: Token,
     pub open_square_bracket: Token,
-    pub elements: Vec<ExpressionId>,
+    pub elements: Vec<ExprIndex>,
     pub commas: Vec<Token>,
     pub close_square_bracket: Token,
 }
@@ -1116,12 +1239,12 @@ pub struct ContinueExpression {
 #[derive(Debug, Clone)]
 pub struct BlockExpression {
     pub left_brace: Token,
-    pub statements: Vec<StatementId>,
+    pub statements: Vec<StmtIndex>,
     pub right_brace: Token,
 }
 
 impl BlockExpression {
-    pub fn returning_expression(&self, ast: &Ast) -> Option<ExpressionId> {
+    pub fn returning_expression(&self, ast: &Ast) -> Option<ExprIndex> {
         if let Some(last_statement) = self.statements.last() {
             let statement = ast.query_statement(*last_statement);
 
@@ -1148,7 +1271,7 @@ impl ElseBranch {
 #[derive(Debug, Clone)]
 pub struct IfExpression {
     pub if_keyword: Token,
-    pub condition: ExpressionId,
+    pub condition: ExprIndex,
     pub then_branch: Body,
     pub else_branch: Option<ElseBranch>,
 }
@@ -1157,9 +1280,9 @@ pub struct IfExpression {
 pub struct CallExpression {
     pub callee: Token,
     pub left_paren: Token,
-    pub arguments: Vec<ExpressionId>,
+    pub arguments: Vec<ExprIndex>,
     pub right_paren: Token,
-    pub fx_idx: FunctionIndex,
+    pub fx_idx: ItemIndex,
 }
 
 impl CallExpression {
@@ -1176,9 +1299,9 @@ pub struct BoolExpression {
 
 #[derive(Debug, Clone)]
 pub struct AssignExpression {
-    pub lhs: ExpressionId,
+    pub lhs: ExprIndex,
     pub equals: Token,
-    pub expression: ExpressionId,
+    pub expression: ExprIndex,
     pub variable_index: VariableIndex,
 }
 
@@ -1212,7 +1335,7 @@ impl UnaryOp {
 #[derive(Debug, Clone)]
 pub struct UnaryExpression {
     pub operator: UnaryOp,
-    pub operand: ExpressionId,
+    pub operand: ExprIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -1349,18 +1472,18 @@ pub enum AssignmentOpKind {
 
 #[derive(Debug, Clone)]
 pub struct BinaryExpression {
-    pub left: ExpressionId, // stored in heap instead of stack
+    pub left: ExprIndex, // stored in heap instead of stack
     pub operator: BinaryOp,
-    pub right: ExpressionId,
+    pub right: ExprIndex,
     pub from_compound: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct CompoundBinaryExpression {
-    pub left: ExpressionId,
+    pub left: ExprIndex,
     pub operator: AssignmentOpKind,
     pub operator_token: Token,
-    pub right: ExpressionId,
+    pub right: ExprIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -1390,20 +1513,20 @@ pub struct StringExpression {
 #[derive(Debug, Clone)]
 pub struct ParenExpression {
     pub left_paren: Token,
-    pub expression: ExpressionId,
+    pub expression: ExprIndex,
     pub right_paren: Token,
 }
 
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub kind: ExpressionKind,
-    pub id: ExpressionId,
+    pub id: ExprIndex,
     pub ty: Type,
     pub span: TextSpan,
 }
 
 impl Expression {
-    pub fn new(kind: ExpressionKind, id: ExpressionId, ty: Type, span: TextSpan) -> Self {
+    pub fn new(kind: ExpressionKind, id: ExprIndex, ty: Type, span: TextSpan) -> Self {
         Expression { kind, id, ty, span }
     }
 
@@ -1521,13 +1644,27 @@ impl Expression {
 
                 TextSpan::combine(spans)
             },
-            ExpressionKind::TupleIndexExpression(tuple_index_expression) => {
-                let tuple_span = ast.query_expression(tuple_index_expression.tuple).span(ast);
+            ExpressionKind::FieldExpression(tuple_index_expression) => {
+                let tuple_span = ast.query_expression(tuple_index_expression.object).span(ast);
                 let spans = vec![
                     tuple_span,
-                    tuple_index_expression.index.period.span.clone(),
-                    ast.query_expression(tuple_index_expression.index.idx_no).span(ast)
+                    tuple_index_expression.field.period.span.clone(),
+                    ast.query_expression(tuple_index_expression.field.idx_no).span(ast)
                 ];
+
+                TextSpan::combine(spans)
+            },
+            ExpressionKind::Struct(struct_expression) => {
+                let mut spans = Vec::new();
+                for field in &struct_expression.fields {
+                    spans.push(field.identifier.span.clone());
+                    spans.push(field.expr.span(ast));
+                }
+
+                match &struct_expression.rest {
+                    StructRest::Rest(rest_span) => spans.push(rest_span.clone()),
+                    StructRest::None => {}
+                }
 
                 TextSpan::combine(spans)
             },

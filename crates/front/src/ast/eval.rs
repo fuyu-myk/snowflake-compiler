@@ -1,6 +1,6 @@
 use snowflake_common::Idx;
 
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ContinueExpression, Expression, FxDeclaration, IfExpression, IndexExpression, ItemId, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, TupleExpression, TupleIndexExpression, UnaryExpression, UnaryOpKind, VarExpression, WhileStatement}, compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, Expression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StructExpression, TupleExpression, FieldExpression, UnaryExpression, UnaryOpKind, VarExpression, VariantData, WhileStatement}, compilation_unit::{GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 use std::{collections::HashMap};
 
@@ -75,7 +75,7 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Void,
-    Function(FunctionIndex),
+    Function(ItemIndex),
     Array(Vec<Value>),
     Tuple(Vec<Value>),
 }
@@ -105,7 +105,7 @@ impl Value {
         }
     }
 
-    pub fn expect_function(&self) -> FunctionIndex {
+    pub fn expect_function(&self) -> ItemIndex {
         match self {
             Value::Function(value) => *value,
             _ => panic!("Expected function value"),
@@ -326,7 +326,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.pop_frame();
     }
 
-    fn visit_fx_decl(&mut self, _ast: &mut Ast, _fx_expr: &FxDeclaration, _item_id: ItemId) {
+    fn visit_fx_decl(&mut self, _ast: &mut Ast, _fx_expr: &FxDeclaration, _item_id: ItemIndex) {
     }
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
@@ -398,11 +398,11 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.last_value = Some(Value::Tuple(elements)); 
     }
 
-    fn visit_tuple_index_expression(&mut self, ast: &mut Ast, tuple_index_expression: &TupleIndexExpression, _expr: &Expression) {
-        self.visit_expression(ast, tuple_index_expression.tuple);
+    fn visit_field_expression(&mut self, ast: &mut Ast, field_expression: &FieldExpression, _expr: &Expression) {
+        self.visit_expression(ast, field_expression.object);
         let mut current_value = self.expect_last_value().clone();
 
-        self.visit_expression(ast, tuple_index_expression.index.idx_no);
+        self.visit_expression(ast, field_expression.field.idx_no);
         let index_value = self.expect_last_value();
         
         // Handle both usize and converted numbers as tuple indices
@@ -429,6 +429,20 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         };
 
         self.last_value = Some(current_value);
+    }
+
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex) {
+        if constant_item.expr.is_some() {
+            self.visit_expression(ast, **constant_item.expr.as_ref().unwrap());
+        }
+    }
+
+    fn visit_struct_item(&mut self, _ast: &mut Ast, _generics: &Generics, _variant_data: &VariantData, _item_id: ItemIndex) {
+        // No evaluation needed for struct items
+    }
+
+    fn visit_struct_expression(&mut self, _ast: &mut Ast, _struct_expression: &StructExpression, _expr: &Expression) {
+        // No evaluation needed for struct expressions
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

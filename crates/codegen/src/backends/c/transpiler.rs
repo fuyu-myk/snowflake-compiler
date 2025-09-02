@@ -1,7 +1,8 @@
+use core::panic;
 use std::collections::HashMap;
 
 use snowflake_front::{
-    ast::{Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, CallExpression, Expression, ExpressionId, ExpressionKind, FxDeclaration, IfExpression, Item, ItemKind, StatementId, StatementKind, UnaryExpression, UnaryOp, UnaryOpKind},
+    ast::{Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, CallExpression, Expression, ExprIndex, ExpressionKind, FxDeclaration, IfExpression, Item, ItemKind, StmtIndex, StatementKind, UnaryExpression, UnaryOp, UnaryOpKind},
     compilation_unit::{GlobalScope, VariableIndex}
 };
 use snowflake_common::typings::Type;
@@ -29,9 +30,9 @@ impl <'a> CTranspiler<'a> {
         items.extend(
             ast.items.iter().filter(|item| matches!(item.kind, ItemKind::Function(_)))
                 .map(|item| match &item.kind {
-                    ItemKind::Statement(_) => unreachable!(),
                     ItemKind::Function(function) => self.transpile_fx_decl(ast, function),
                     ItemKind::Const(_) => unreachable!(),
+                    ItemKind::Struct(_, _, _) => unreachable!(),
                 }).collect::<Vec<_>>()
         );
 
@@ -44,7 +45,7 @@ impl <'a> CTranspiler<'a> {
         CAst::new(items)
     }
 
-    fn transpile_statement(&mut self, ast: &Ast, stmt_id: StatementId) -> Vec<CStatement> {
+    fn transpile_statement(&mut self, ast: &Ast, stmt_id: StmtIndex) -> Vec<CStatement> {
         let mut statements = vec![];
         let statement = ast.query_statement(stmt_id);
         let c_statement = match &statement.kind {
@@ -125,13 +126,16 @@ impl <'a> CTranspiler<'a> {
                     }
                 };
             }
+            StatementKind::Item(_item_id) => {
+                unimplemented!("Item statements not yet supported in C transpiler")
+            }
         };
 
         statements.push(c_statement);
         return statements;
     }
 
-    fn transpile_expr(&mut self, ast: &Ast, expr_id: ExpressionId) -> (Option<Vec<CStatement>>, CExpr) {
+    fn transpile_expr(&mut self, ast: &Ast, expr_id: ExprIndex) -> (Option<Vec<CStatement>>, CExpr) {
         let expr = ast.query_expression(expr_id);
         match &expr.kind {
             ExpressionKind::Number(number) => (
@@ -183,7 +187,8 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Array(_) => unimplemented!("Array expressions not yet supported in C transpiler"),
             ExpressionKind::IndexExpression(_) => unimplemented!("Index expressions not yet supported in C transpiler"),
             ExpressionKind::Tuple(_) => unimplemented!("Tuple expressions not yet supported in C transpiler"),
-            ExpressionKind::TupleIndexExpression(_) => unimplemented!("TupleIndex expressions not yet supported in C transpiler"),
+            ExpressionKind::FieldExpression(_) => unimplemented!("TupleIndex expressions not yet supported in C transpiler"),
+            ExpressionKind::Struct(_struct_expr) => unimplemented!("Struct expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -290,9 +295,9 @@ impl <'a> CTranspiler<'a> {
 
     fn transpile_items(&mut self, ast: &Ast, item: &Item) -> CItem {
         match &item.kind {
-            ItemKind::Statement(_) => panic!("Statement is not supported in global scope"),
             ItemKind::Function(function) => self.transpile_function(ast, function),
             ItemKind::Const(_) => unreachable!(),
+            ItemKind::Struct(_, _, _) => unreachable!(),
         }
     }
 
@@ -333,8 +338,14 @@ impl <'a> CTranspiler<'a> {
             Type::Void => "void".to_string(),
             Type::Usize => "size_t".to_string(),
             Type::Array(_, _) => panic!("Array types not supported in C codegen yet"),
+            Type::Object(object_type) => {
+                match &object_type.kind {
+                    snowflake_common::typings::ObjectKind::Struct(_) => panic!("Struct types not supported in C codegen yet"),
+                    snowflake_common::typings::ObjectKind::Tuple => panic!("Tuple types not supported in C codegen yet"),
+                }
+            },
+            Type::ObjectUnresolved(name) => format!("struct_{}", name.span.literal),
             Type::Unresolved => panic!("Unresolved type"),
-            Type::Tuple(_) => panic!("Tuple types not supported in C codegen yet"),
             Type::Error => panic!("Error type"),
         }
     }
@@ -368,7 +379,7 @@ impl <'a> CTranspiler<'a> {
         };
     }
 
-    fn is_valid_r_value(&mut self, ast: &Ast, expr_id: ExpressionId) -> bool {
+    fn is_valid_r_value(&mut self, ast: &Ast, expr_id: ExprIndex) -> bool {
         let expr = ast.query_expression(expr_id);
 
         return match &expr.kind {
@@ -402,7 +413,8 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Array(_) => false,
             ExpressionKind::IndexExpression(_) => false,
             ExpressionKind::Tuple(_) => false,
-            ExpressionKind::TupleIndexExpression(_) => false,
+            ExpressionKind::FieldExpression(_) => false,
+            ExpressionKind::Struct(_) => false,
             ExpressionKind::Error(_) => panic!("Error expression"),
         };
     }

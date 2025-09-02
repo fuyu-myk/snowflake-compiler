@@ -3,11 +3,12 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
+    basic_block::BasicBlock,
     types::{BasicType, BasicTypeEnum},
     values::{BasicValueEnum, FunctionValue, PointerValue},
     IntPredicate, FloatPredicate, AddressSpace,
 };
-use std::{collections::HashMap};
+use std::collections::{HashMap, HashSet};
 
 use snowflake_middle::ir::lir::{
     self, LIR, Function, InstructionKind, Operand, OperandKind, ConstValue, 
@@ -24,7 +25,9 @@ pub struct LLVMBackend<'ctx> {
     builder: Builder<'ctx>,
     functions: HashMap<FunctionIdx, FunctionValue<'ctx>>,
     locations: HashMap<LocationIdx, PointerValue<'ctx>>,
-    basic_blocks: HashMap<BasicBlockIdx, inkwell::basic_block::BasicBlock<'ctx>>,
+    basic_blocks: HashMap<BasicBlockIdx, BasicBlock<'ctx>>,
+    last_stored_values: HashMap<(BasicBlockIdx, LocationIdx), BasicValueEnum<'ctx>>,
+    current_basic_block: Option<BasicBlockIdx>,
 }
 
 impl<'ctx> LLVMBackend<'ctx> {
@@ -39,6 +42,8 @@ impl<'ctx> LLVMBackend<'ctx> {
             functions: HashMap::new(),
             locations: HashMap::new(),
             basic_blocks: HashMap::new(),
+            last_stored_values: HashMap::new(),
+            current_basic_block: None,
         }
     }
 
@@ -109,9 +114,33 @@ impl<'ctx> LLVMBackend<'ctx> {
             self.locations.insert(param_loc, alloca);
         }
 
+        // Pre-pass: Create all location allocs
+        let mut used_locations = HashSet::new();
+
+        for &bb_idx in &function.basic_blocks {
+            let bb = &lir.basic_blocks[bb_idx];
+            for instruction in &bb.instructions {
+                self.collect_locations_from_instruction(instruction, &mut used_locations);
+            }
+            if let Some(ref terminator) = bb.terminator {
+                self.collect_locations_from_terminator(terminator, &mut used_locations);
+            }
+        }
+        
+        for &loc_idx in &used_locations {
+            if !self.locations.contains_key(&loc_idx) {
+                let location = &lir.locations[loc_idx];
+                let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap_or_else(|| self.context.i32_type().into());
+                let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index)).unwrap();
+                self.locations.insert(loc_idx, alloca);
+            }
+        }
+
+        // Process all instructions in order
         for &bb_idx in &function.basic_blocks {
             let basic_block = self.basic_blocks[&bb_idx];
             self.builder.position_at_end(basic_block);
+            self.current_basic_block = Some(bb_idx);
             
             let bb = &lir.basic_blocks[bb_idx];
             
@@ -446,62 +475,14 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 self.store_to_location(*target, loaded_val, lir)?;
             }
-            InstructionKind::ArrayStore { array, index, value } => {
-                let array_ptr = match &array.kind {
-                    OperandKind::Location(loc_idx) => {
-                        if !self.locations.contains_key(loc_idx) {
-                            let location = &lir.locations[*loc_idx];
-                            let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
-                            let alloca = self.builder.build_alloca(llvm_type, &format!("loc_{}", loc_idx.index))?;
-                            self.locations.insert(*loc_idx, alloca);
-                        }
-                        
-                        if let Some(alloca) = self.locations.get(loc_idx) {
-                            *alloca
-                        } else {
-                            return Err(anyhow::anyhow!("Array location not found after allocation"));
-                        }
-                    }
-                    _ => {
-                        return Err(anyhow::anyhow!("ArrayStore requires array operand to be a location"));
-                    }
-                };
-                
-                let index_val = self.compile_operand(index, lir)?;
-                let value_val = self.compile_operand(value, lir)?;
-                
-                // Get the type of the array location
-                let array_location = match &array.kind {
-                    OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
-                    _ => return Err(anyhow::anyhow!("ArrayStore requires array operand to be a location")),
-                };
-                let ptr_type = self.lir_type_to_llvm(&array_location.ty).unwrap();
-                
-                // Use two indices: 0 (to get the array pointer) and the actual index
-                let zero = self.context.i32_type().const_int(0, false);
-                let index_int = index_val.into_int_value();
-                let indices = [zero.into(), index_int.into()];
-                
-                let element_ptr = unsafe {
-                    self.builder.build_gep(
-                        ptr_type,
-                        array_ptr,
-                        &indices,
-                        "array_store_gep"
-                    )?
-                };
-                
-                // Store the value at the computed address
-                self.builder.build_store(element_ptr, value_val)?;
-            }
             InstructionKind::ArrayLength { target, length } => {
                 let length_val = self.compile_operand(length, lir)?;
                 self.store_to_location(*target, length_val, lir)?;
             }
-            InstructionKind::Tuple { target, elements } => {
+            InstructionKind::Object { target, elements } => {
                 let location = &lir.locations[*target];
-                let tuple_type = self.lir_type_to_llvm(&location.ty).unwrap();
-                let tuple_alloca = self.builder.build_alloca(tuple_type, &format!("tuple_{}", target.index))?;
+                let object_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                let object_alloca = self.builder.build_alloca(object_type, &format!("object_{}", target.index))?;
                 
                 for (i, element) in elements.iter().enumerate() {
                     let element_value = self.compile_operand(element, lir)?;
@@ -512,20 +493,20 @@ impl<'ctx> LLVMBackend<'ctx> {
                     // Pointer to i-th element in tuple
                     let element_ptr = unsafe {
                         self.builder.build_gep(
-                            tuple_type,
-                            tuple_alloca,
+                            object_type,
+                            object_alloca,
                             &indices,
-                            &format!("tuple_elem_{}", i)
+                            &format!("object_elem_{}", i)
                         )?
                     };
                     
                     self.builder.build_store(element_ptr, element_value)?;
                 }
                 
-                self.locations.insert(*target, tuple_alloca);
+                self.locations.insert(*target, object_alloca);
             }
-            InstructionKind::TupleField { target, tuple, field: index } => {
-                let tuple_ptr = match &tuple.kind {
+            InstructionKind::FieldAccess { target, object, field } => {
+                let object_ptr = match &object.kind {
                     OperandKind::Location(loc_idx) => {
                         if !self.locations.contains_key(loc_idx) {
                             let location = &lir.locations[*loc_idx];
@@ -537,47 +518,47 @@ impl<'ctx> LLVMBackend<'ctx> {
                         if let Some(alloca) = self.locations.get(loc_idx) {
                             *alloca
                         } else {
-                            return Err(anyhow::anyhow!("Tuple location not found after allocation"));
+                            return Err(anyhow::anyhow!("Object location not found after allocation"));
                         }
                     }
                     _ => {
-                        return Err(anyhow::anyhow!("TupleIndex requires tuple operand to be a location"));
+                        return Err(anyhow::anyhow!("ObjectIndex requires object operand to be a location"));
                     }
                 };
                 
                 // Get the index (compile-time constant)
-                let index_value = match &index.kind {
+                let index_value = match &field.kind {
                     OperandKind::Const(ConstValue::Int32(idx)) => *idx as u32,
                     OperandKind::Const(ConstValue::UInt64(idx)) => *idx as u32,
                     _ => {
-                        return Err(anyhow::anyhow!("TupleIndex requires constant index, got {:?}", index.kind));
+                        return Err(anyhow::anyhow!("ObjectIndex requires constant index, got {:?}", field.kind));
                     }
                 };
-                
-                // Get the tuple type
-                let tuple_location = match &tuple.kind {
+
+                // Get the object type
+                let object_location = match &object.kind {
                     OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
-                    _ => return Err(anyhow::anyhow!("TupleIndex requires tuple operand to be a location")),
+                    _ => return Err(anyhow::anyhow!("ObjectIndex requires object operand to be a location")),
                 };
-                let tuple_type = self.lir_type_to_llvm(&tuple_location.ty).unwrap();
+                let object_type = self.lir_type_to_llvm(&object_location.ty).unwrap();
                 
-                // Use GEP to point to specific tuple element
+                // Use GEP to point to specific object element
                 let zero = self.context.i32_type().const_int(0, false);
                 let field_index = self.context.i32_type().const_int(index_value as u64, false);
                 let indices = [zero.into(), field_index.into()];
                 
                 let element_ptr = unsafe {
                     self.builder.build_gep(
-                        tuple_type,
-                        tuple_ptr,
+                        object_type,
+                        object_ptr,
                         &indices,
-                        &format!("tuple_field_{}", index_value)
+                        &format!("object_field_{}", index_value)
                     )?
                 };
                 
                 // Get the element type for loading
-                let element_type = match &tuple_location.ty {
-                    Type::Tuple { element_types } => {
+                let element_type = match &object_location.ty {
+                    Type::Object { element_types } => {
                         if index_value < element_types.len() as u32 {
                             self.lir_type_to_llvm(&element_types[index_value as usize]).unwrap()
                         } else {
@@ -586,7 +567,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                                 index_value, element_types.len()));
                         }
                     }
-                    _ => return Err(anyhow::anyhow!("Expected tuple type, got {:?}", tuple_location.ty)),
+                    _ => return Err(anyhow::anyhow!("Expected tuple type, got {:?}", object_location.ty)),
                 };
                 
                 // Load the value from the computed address
@@ -598,8 +579,8 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 self.store_to_location(*target, loaded_val, lir)?;
             }
-            InstructionKind::TupleStore { tuple, field: index, value } => {
-                let tuple_ptr = match &tuple.kind {
+            InstructionKind::ObjectStore { object, index, value } => {
+                let object_ptr = match &object.kind {
                     OperandKind::Location(loc_idx) => {
                         if !self.locations.contains_key(loc_idx) {
                             let location = &lir.locations[*loc_idx];
@@ -611,11 +592,11 @@ impl<'ctx> LLVMBackend<'ctx> {
                         if let Some(alloca) = self.locations.get(loc_idx) {
                             *alloca
                         } else {
-                            return Err(anyhow::anyhow!("Tuple location not found after allocation"));
+                            return Err(anyhow::anyhow!("Object location not found after allocation"));
                         }
                     }
                     _ => {
-                        return Err(anyhow::anyhow!("TupleStore requires tuple operand to be a location"));
+                        return Err(anyhow::anyhow!("ObjectStore requires object operand to be a location"));
                     }
                 };
                 
@@ -624,30 +605,30 @@ impl<'ctx> LLVMBackend<'ctx> {
                     OperandKind::Const(ConstValue::Int32(idx)) => *idx as u32,
                     OperandKind::Const(ConstValue::UInt64(idx)) => *idx as u32,
                     _ => {
-                        return Err(anyhow::anyhow!("TupleStore requires constant index, got {:?}", index.kind));
+                        return Err(anyhow::anyhow!("ObjectStore requires constant index, got {:?}", index.kind));
                     }
                 };
                 
                 let value_val = self.compile_operand(value, lir)?;
-                
-                // Get the tuple type
-                let tuple_location = match &tuple.kind {
+
+                // Get the object type
+                let object_location = match &object.kind {
                     OperandKind::Location(loc_idx) => &lir.locations[*loc_idx],
-                    _ => return Err(anyhow::anyhow!("TupleStore requires tuple operand to be a location")),
+                    _ => return Err(anyhow::anyhow!("ObjectStore requires object operand to be a location")),
                 };
-                let tuple_type = self.lir_type_to_llvm(&tuple_location.ty).unwrap();
-                
-                // Use GEP to point to specific tuple element
+                let object_type = self.lir_type_to_llvm(&object_location.ty).unwrap();
+
+                // Use GEP to point to specific object field
                 let zero = self.context.i32_type().const_int(0, false);
                 let field_index = self.context.i32_type().const_int(index_value as u64, false);
                 let indices = [zero.into(), field_index.into()];
                 
                 let element_ptr = unsafe {
                     self.builder.build_gep(
-                        tuple_type,
-                        tuple_ptr,
+                        object_type,
+                        object_ptr,
                         &indices,
-                        &format!("tuple_store_field_{}", index_value)
+                        &format!("object_store_field_{}", index_value)
                     )?
                 };
                 
@@ -655,19 +636,19 @@ impl<'ctx> LLVMBackend<'ctx> {
                 self.builder.build_store(element_ptr, value_val)?;
             }
             InstructionKind::Phi { target, operands } => {
-                // In LLVM, phi nodes must be at the beginning of a basic block
-                let target_location = &lir.locations[*target];
-                let llvm_type = self.lir_type_to_llvm(&target_location.ty).unwrap();
-                
-                let phi = self.builder.build_phi(llvm_type, "phi")?;
-                
-                for (bb_idx, operand) in operands {
-                    let value = self.compile_operand(operand, lir)?;
-                    let bb = self.basic_blocks[bb_idx];
-                    phi.add_incoming(&[(&value, bb)]);
+                // Handle phi nodes by using the first operand (the initial/entry value)
+                if let Some((_, first_operand)) = operands.first() {
+                    let value = self.compile_operand(first_operand, lir)?;
+                    self.store_to_location(*target, value, lir)?;
+                } else {
+                    let target_location = &lir.locations[*target];
+                    let default_value = match target_location.ty {
+                        Type::Int32 => self.context.i32_type().const_int(0, false).into(),
+                        Type::Bool => self.context.bool_type().const_int(0, false).into(),
+                        _ => self.context.i32_type().const_int(0, false).into(),
+                    };
+                    self.store_to_location(*target, default_value, lir)?;
                 }
-                
-                self.store_to_location(*target, phi.as_basic_value(), lir)?;
             }
             InstructionKind::Nop => {
                 // No operation - do nothing
@@ -694,11 +675,57 @@ impl<'ctx> LLVMBackend<'ctx> {
                 }
             }
             Terminator::Goto { target } => {
+                // For loops
+                if let Some(current_bb_idx) = self.current_basic_block {
+                    // Check if this is a loop back edge (current block > target block)
+                    if current_bb_idx.index > target.index {
+                        // This might be a loop back edge - check for phi nodes in the target
+                        let target_bb_lir = &lir.basic_blocks[*target];
+                        for instruction in &target_bb_lir.instructions {
+                            if let InstructionKind::Phi { target: _phi_target, operands } = &instruction.kind {
+                                for (pred_bb, operand) in operands {
+                                    if pred_bb == &current_bb_idx {
+                                        let value = self.compile_operand(operand, lir)?;
+                                        
+                                        // Copy to the original source location for next iteration
+                                        if let Some((_, first_operand)) = operands.first() {
+                                            if let OperandKind::Location(orig_loc) = &first_operand.kind {
+                                                self.store_to_location(*orig_loc, value, lir)?;
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 let target_bb = self.basic_blocks[target];
                 self.builder.build_unconditional_branch(target_bb)?;
             }
             Terminator::Switch { value, targets, default_target } => {
                 let condition_val = self.compile_operand(value, lir)?;
+                
+                if let OperandKind::Location(loc_idx) = &value.kind {
+                    let location = &lir.locations[*loc_idx];
+                    if location.ty == Type::Bool {
+                        // Use direct boolean branching instead of switch for bools
+                        let bool_val = condition_val.into_int_value();
+                        let false_target = targets.iter()
+                            .find(|(case_val, _)| matches!(case_val, ConstValue::Int32(0)))
+                            .map(|(_, target)| *target)
+                            .unwrap_or(*default_target);
+                        
+                        let true_target = *default_target;
+                        
+                        let false_bb = self.basic_blocks[&false_target];
+                        let true_bb = self.basic_blocks[&true_target];
+                        
+                        self.builder.build_conditional_branch(bool_val, true_bb, false_bb)?;
+                        return Ok(());
+                    }
+                }
                 
                 let switch_val = if condition_val.is_int_value() {
                     let int_val = condition_val.into_int_value();
@@ -797,6 +824,10 @@ impl<'ctx> LLVMBackend<'ctx> {
     }
 
     fn store_to_location(&mut self, loc_idx: LocationIdx, value: BasicValueEnum<'ctx>, lir: &LIR) -> Result<()> {
+        if let Some(current_bb) = self.current_basic_block {
+            self.last_stored_values.insert((current_bb, loc_idx), value);
+        }
+        
         if let Some(alloca) = self.locations.get(&loc_idx) {
             self.builder.build_store(*alloca, value)?;
         } else {
@@ -845,7 +876,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                     None
                 }
             }
-            Type::Tuple { element_types } => { // TODO: verify
+            Type::Object { element_types } => {
                 let mut llvm_elem_types = Vec::new();
                 for elem_type in element_types {
                     if let Some(llvm_type) = self.lir_type_to_llvm(elem_type) {
@@ -885,5 +916,118 @@ impl<'ctx> LLVMBackend<'ctx> {
         self.builder.build_return(Some(&zero))?;
         
         Ok(())
+    }
+
+    /// Collect all locations referenced in an instruction
+    fn collect_locations_from_instruction(&self, instruction: &lir::Instruction, locations: &mut HashSet<LocationIdx>) {
+        match &instruction.kind {
+            InstructionKind::Add { target, left, right } |
+            InstructionKind::Sub { target, left, right } |
+            InstructionKind::Mul { target, left, right } |
+            InstructionKind::Div { target, left, right } |
+            InstructionKind::Mod { target, left, right } |
+            InstructionKind::Eq { target, left, right } |
+            InstructionKind::Ne { target, left, right } |
+            InstructionKind::Lt { target, left, right } |
+            InstructionKind::Gt { target, left, right } |
+            InstructionKind::Le { target, left, right } |
+            InstructionKind::Ge { target, left, right } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(left, locations);
+                self.collect_locations_from_operand(right, locations);
+            }
+            InstructionKind::Move { target, source } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(source, locations);
+            }
+            InstructionKind::AllocInit { target, value } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(value, locations);
+            }
+            InstructionKind::Load { target, source } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(source, locations);
+            }
+            InstructionKind::Store { target, value } => {
+                self.collect_locations_from_operand(target, locations);
+                self.collect_locations_from_operand(value, locations);
+            }
+            InstructionKind::ArrayAlloc { target, size, .. } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(size, locations);
+            }
+            InstructionKind::Call { target, args, .. } => {
+                if let Some(target_loc) = target {
+                    locations.insert(*target_loc);
+                }
+                for arg in args {
+                    self.collect_locations_from_operand(arg, locations);
+                }
+            }
+            InstructionKind::ArrayIndex { target, array, index } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(array, locations);
+                self.collect_locations_from_operand(index, locations);
+            }
+            InstructionKind::ArrayLength { target, length } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(length, locations);
+            }
+            InstructionKind::Object { target, elements } => {
+                locations.insert(*target);
+                for element in elements {
+                    self.collect_locations_from_operand(element, locations);
+                }
+            }
+            InstructionKind::FieldAccess { target, object, field } => {
+                locations.insert(*target);
+                self.collect_locations_from_operand(object, locations);
+                self.collect_locations_from_operand(field, locations);
+            }
+            InstructionKind::ObjectStore { object, index, value } => {
+                self.collect_locations_from_operand(object, locations);
+                self.collect_locations_from_operand(index, locations);
+                self.collect_locations_from_operand(value, locations);
+            }
+            InstructionKind::Phi { target, operands } => {
+                locations.insert(*target);
+                for (_, operand) in operands {
+                    self.collect_locations_from_operand(operand, locations);
+                }
+            }
+            InstructionKind::Nop => {}
+            _ => {}
+        }
+    }
+
+    /// Collect all locations referenced in a terminator
+    fn collect_locations_from_terminator(&self, terminator: &Terminator, locations: &mut HashSet<LocationIdx>) {
+        match terminator {
+            Terminator::Return { value } => {
+                if let Some(operand) = value {
+                    self.collect_locations_from_operand(operand, locations);
+                }
+            }
+            Terminator::Switch { value, .. } => {
+                self.collect_locations_from_operand(value, locations);
+            }
+            Terminator::Branch { condition, .. } => {
+                self.collect_locations_from_operand(condition, locations);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect all locations referenced in an operand
+    fn collect_locations_from_operand(&self, operand: &Operand, locations: &mut HashSet<LocationIdx>) {
+        match &operand.kind {
+            OperandKind::Location(loc_idx) => {
+                locations.insert(*loc_idx);
+            }
+            OperandKind::Deref(loc_idx) => {
+                locations.insert(*loc_idx);
+            }
+            _ => {}
+        }
     }
 }

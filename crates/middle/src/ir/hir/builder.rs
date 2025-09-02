@@ -1,13 +1,13 @@
 use std::{cell::Cell, collections::HashMap};
 
-use snowflake_common::{bug_report, diagnostics::DiagnosticsReportCell, Idx};
+use snowflake_common::{bug_report, diagnostics::DiagnosticsReportCell, typings::ObjectKind, Idx};
 use snowflake_front::{
-    ast::{Ast, ExpressionId, ExpressionKind, ItemKind, StatementId, StatementKind},
-    compilation_unit::{FunctionIndex, GlobalScope, VariableIndex}
+    ast::{Ast, ExprIndex, ExpressionKind, ItemIndex, ItemKind, StatementKind, StmtIndex, StructRest},
+    compilation_unit::{GlobalScope, VariableIndex}
 };
 use snowflake_common::{text::span::TextSpan, typings::Type};
 
-use crate::ir::hir::{AllocType, HIRContext, HIRExprKind, HIRExpression, HIRNodeId, HIRStatement, HIRStmtKind, ScopeId, HIR};
+use crate::ir::hir::{AllocType, HIRContext, HIRExprField, HIRExprKind, HIRExpression, HIRItemId, HIRNodeId, HIRStatement, HIRStmtKind, HIRStructTailExpr, ScopeId, HIR};
 
 
 struct Ctx {
@@ -36,6 +36,7 @@ impl HIRBuilder {
         Self {
             hir: HIR { 
                 functions: HashMap::new(),
+                top_statements: HashMap::new(),
                 source_map: HashMap::new(),
             },
             temp_var_count: Cell::new(0),
@@ -70,19 +71,11 @@ impl HIRBuilder {
 
     pub fn build(mut self, ast: &Ast, global_scope: &mut GlobalScope) -> HIR {
         for item in ast.items.iter() {
+            if item.is_local {
+                continue;
+            }
+            
             match &item.kind {
-                ItemKind::Statement(stmt_id) => {
-                    // Handle top-level statements
-                    // These could be global initializations, module-level expressions, etc.
-                    let global_init_idx = FunctionIndex::new(0); // Use a reserved index for global init
-                    
-                    let mut temp_ctx = Ctx::new();
-                    self.build_statement(*stmt_id, ast, global_scope, &mut temp_ctx, false);
-                    
-                    let ctx = self.hir.functions.entry(global_init_idx)
-                        .or_insert_with(Vec::new);
-                    ctx.extend(temp_ctx.statements);
-                },
                 ItemKind::Function(fx_decl) => {
                     let mut ctx = Ctx::new();
                     for stmt_id in fx_decl.body.iter() {
@@ -91,19 +84,7 @@ impl HIRBuilder {
                     self.hir.functions.insert(fx_decl.index, ctx.statements);
                 }
                 ItemKind::Const(const_decl) => {
-                    let global_init_idx = FunctionIndex::new(0);
-                    let const_type = if let Some(const_expr) = const_decl.expr.as_ref() {
-                        ast.query_expression(**const_expr).ty.clone()
-                    } else {
-                        Type::Int
-                    };
-
-                    if const_decl.identifier.span.literal.chars().any(|c| c.is_lowercase()) {
-                        self.diagnostics.borrow_mut().warn_non_upper_case_globals(&const_decl.identifier.span.literal, &const_decl.identifier.span);
-                    }
-
-                    let const_name = format!("const_{}", const_decl.identifier.span.literal);
-                    let var_idx = global_scope.declare_variable(&const_name, const_type, true, false);
+                    let global_init_idx = ItemIndex::new(0);
 
                     let mut temp_ctx = Ctx::new();
                     let init_expr = if let Some(ref expr) = const_decl.expr {
@@ -111,6 +92,10 @@ impl HIRBuilder {
                     } else {
                         None
                     };
+
+                    let const_name = &const_decl.identifier.span.literal;
+                    let var_idx = global_scope.lookup_global_variable_by_name(const_name)
+                        .expect("Const variable should be declared during resolution phase");
 
                     let const_stmt = HIRStatement {
                         kind: HIRStmtKind::Const {
@@ -121,10 +106,24 @@ impl HIRBuilder {
                         span: const_decl.identifier.span.clone(),
                     };
 
-                    let ctx = self.hir.functions.entry(global_init_idx)
+                    let ctx = self.hir.top_statements.entry(global_init_idx)
                         .or_insert_with(Vec::new);
                     ctx.extend(temp_ctx.statements);
                     ctx.push(const_stmt);
+                }
+                ItemKind::Struct(name, generics, _) => {
+                    let struct_name = &name.span.literal;
+                    let struct_idx = global_scope.lookup_struct(struct_name)
+                        .expect("Struct should be declared during resolution phase");
+                    let span = TextSpan::combine_two(&name.span, &generics.span);
+
+                    let struct_stmt = HIRStatement {
+                        kind: HIRStmtKind::Item { item_id: HIRItemId { from: struct_idx } },
+                        id: self.next_node_id(),
+                        span,
+                    };
+
+                    self.hir.top_statements.insert(struct_idx, vec![struct_stmt]);
                 }
             }
         }
@@ -132,7 +131,7 @@ impl HIRBuilder {
         self.hir
     }
 
-    fn build_statement(&mut self, stmt_id: StatementId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, _temp_needed: bool) {
+    fn build_statement(&mut self, stmt_id: StmtIndex, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, _temp_needed: bool) {
         let statement = ast.query_statement(stmt_id);
         let span = statement.span.clone();
         let kind = match &statement.kind {
@@ -196,12 +195,30 @@ impl HIRBuilder {
 
                 HIRStmtKind::Return { expr }
             }
+            StatementKind::Item(item_id) => {
+                let ast_item = ast.query_item(*item_id);
+
+                match &ast_item.kind {
+                    ItemKind::Struct(_, _, _) => {
+                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                    }
+                    ItemKind::Function(_) => {
+                        // Placeholder
+                        HIRStmtKind::Expression { 
+                            expr: self.create_expression(HIRExprKind::Unit, Type::Void, ast_item.span.clone()) 
+                        }
+                    }
+                    ItemKind::Const(_) => {
+                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                    }
+                }
+            }
         };
 
         ctx.statements.push(self.create_statement(kind, span));
     }
 
-    fn build_expression(&mut self, expr_id: ExpressionId, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, temp_needed: bool) -> HIRExpression {
+    fn build_expression(&mut self, expr_id: ExprIndex, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, temp_needed: bool) -> HIRExpression {
         let expr = ast.query_expression(expr_id);
         let kind = match &expr.kind {
             ExpressionKind::Number(number_expr) => HIRExprKind::Number(number_expr.number),
@@ -379,15 +396,10 @@ impl HIRBuilder {
                     .map(|elem_id| self.build_expression(*elem_id, ast, global_scope, ctx, true))
                     .collect::<Vec<_>>();
 
-                // Get element type from the first element or default to Void for empty arrays
                 let element_type = if let Some(first_elem) = elements.first() {
                     first_elem.ty.clone()
                 } else {
-                    let ty = Type::from_str(&array_expr.type_decl.span.literal);
-                    match ty {
-                        None => bug_report!("Array type declaration is missing or invalid"),
-                        Some(ty) => ty
-                    }
+                    Type::from_token(&array_expr.type_decl)
                 };
 
                 HIRExprKind::Array {
@@ -446,43 +458,93 @@ impl HIRBuilder {
                     element_types,
                 }
             },
-            ExpressionKind::TupleIndexExpression(tuple_index_expr) => {
-                let mut tuple = self.build_expression(tuple_index_expr.tuple, ast, global_scope, ctx, true);
-                let index = self.build_expression(tuple_index_expr.index.idx_no, ast, global_scope, ctx, true);
+            ExpressionKind::FieldExpression(tuple_index_expr) => {
+                let mut object = self.build_expression(tuple_index_expr.object, ast, global_scope, ctx, true);
+                let mut field = self.build_expression(tuple_index_expr.field.idx_no, ast, global_scope, ctx, true);
 
-                // Get the element type from the current tuple type
-                let element_type = match &tuple.ty {
-                    Type::Tuple(element_types) => {
-                        let idx = match &index.kind {
-                            HIRExprKind::Usize(n) => *n,
-                            HIRExprKind::Number(n) => {
-                                if *n < 0 {
-                                    bug_report!("Tuple index cannot be negative");
+                let element_type = match &object.ty {
+                    Type::Object(object_type) => {
+                        match &object_type.kind {
+                            ObjectKind::Tuple => {
+                                let idx = match &field.kind {
+                                    HIRExprKind::Usize(n) => *n,
+                                    HIRExprKind::Number(n) => {
+                                        if *n < 0 {
+                                            bug_report!("Tuple index cannot be negative");
+                                        }
+                                        *n as usize
+                                    },
+                                    _ => bug_report!("Tuple index is not a constant usize or number"),
+                                };
+                                if idx >= object_type.fields.len() {
+                                    Type::Error
+                                } else {
+                                    object_type.fields[idx].ty.as_ref().clone()
                                 }
-                                *n as usize
                             },
-                            _ => bug_report!("Tuple index is not a constant usize or number"),
-                        };
-                        if idx >= element_types.len() {
-                            Type::Error
-                        } else {
-                            *element_types[idx].clone()
+                            ObjectKind::Struct(_struct_idx) => {
+                                let field_ast_expr = ast.query_expression(tuple_index_expr.field.idx_no);
+                                let field_name = match &field_ast_expr.kind {
+                                    ExpressionKind::Variable(var_expr) => {
+                                        var_expr.identifier.span.literal.clone()
+                                    }
+                                    _ => {
+                                        bug_report!("Expected variable expression for struct field name, got {:?}", field_ast_expr.kind);
+                                    }
+                                };
+
+                                if let Some((field_index, field_def)) = object_type.fields.iter().enumerate().find(|(_, f)| {
+                                    if let Some(name) = &f.name {
+                                        name == &field_name
+                                    } else {
+                                        false
+                                    }
+                                }) {
+                                    // Convert the field name to a constant index
+                                    field = self.create_expression(
+                                        HIRExprKind::Usize(field_index),
+                                        Type::Usize,
+                                        field_ast_expr.span.clone()
+                                    );
+                                    field_def.ty.as_ref().clone()
+                                } else {
+                                    Type::Error
+                                }
+                            }
                         }
                     },
-                    _ => Type::Error,
+                    _ => {
+                        Type::Error
+                    },
                 };
 
-                // Create a new tuple index operation
-                tuple = self.create_expression(
-                    HIRExprKind::TupleField {
-                        tuple: Box::new(tuple),
-                        field: Box::new(index),
+                // Create a new field access operation
+                object = self.create_expression(
+                    HIRExprKind::Field {
+                        object: Box::new(object),
+                        field: Box::new(field),
                     },
                     element_type,
                     expr.span.clone()
                 );
 
-                return tuple;
+                return object;
+            },
+            ExpressionKind::Struct(struct_expr) => {
+                HIRExprKind::Struct {
+                    fields: struct_expr.fields.iter().map(|field| {
+                        let field_expr = self.build_expression(field.expr.id, ast, global_scope, ctx, true);
+                        HIRExprField {
+                            identifier: field.identifier.clone(),
+                            expr: field_expr,
+                            is_shorthand: field.is_shorthand,
+                        }
+                    }).collect(),
+                    tail_expr: match &struct_expr.rest {
+                        StructRest::None => HIRStructTailExpr::None,
+                        StructRest::Rest(span) => HIRStructTailExpr::Default(span.clone()),
+                    },
+                }
             },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };

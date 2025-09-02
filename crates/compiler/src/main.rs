@@ -19,7 +19,7 @@ mod cli;
 use cli::CliArgs;
 
 
-fn main() -> ExitCode{
+fn main() -> ExitCode {
     unsafe {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
@@ -62,6 +62,7 @@ fn run() -> Result<()> {
                 )
             }
         })?;
+    
     //compilation_unit.run_compiler(); // For eval
 
     // GCC codegen
@@ -127,11 +128,6 @@ fn run() -> Result<()> {
     
     // Generate execs based on configuration
     let output_name = args.file_path.replace(".snow", "");
-    
-    if config.generate_executable {
-        snowflake_codegen::compile_to_executable(&lir, "my_module", &output_name)?;
-        println!("Executable generated: {}\n", output_name);
-    }
 
     // Optional LLVM IR file generation
     if config.generate_llvm_file {
@@ -181,6 +177,11 @@ fn run() -> Result<()> {
     if config.show_all_ir || config.show_llvm {
         println!("=== LLVM IR ===");
         println!("{}", llvm_ir);
+    }
+
+    if config.generate_executable {
+        snowflake_codegen::compile_to_executable(&lir, "my_module", &output_name)?;
+        println!("Executable generated: {}\n", output_name);
     }
 
     Ok(())

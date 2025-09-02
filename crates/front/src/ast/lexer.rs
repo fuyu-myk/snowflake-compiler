@@ -11,11 +11,16 @@ enum NumberResult {
 pub struct Lexer<'a> {
     input: &'a str,
     current_pos: usize,
+    potential_field_access: bool,
 }
 
 impl <'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
-        Self { input, current_pos: 0 }
+        Self { 
+            input, 
+            current_pos: 0,
+            potential_field_access: false,
+        }
     }
 
     pub fn next_token(&mut self) -> Option<Token> {
@@ -45,6 +50,7 @@ impl <'a> Lexer<'a> {
                         match suffix.as_deref() {
                             Some("usize") => TokenKind::Usize(number as usize),
                             Some("u32") | Some("u64") => TokenKind::Usize(number as usize), // temp
+                            Some("float") => TokenKind::Float(number as f64),
                             None => TokenKind::Number(number),
                             _ => {
                                 // todo: error reporting for unsupported suffixes
@@ -58,14 +64,16 @@ impl <'a> Lexer<'a> {
                     },
                     NumberResult::Malformed => TokenKind::Bad,
                 };
+                
+                if !self.potential_field_access {
+                    self.potential_field_access = false;
+                }
             } else if c == '"' {
                 self.consume();
                 let string_value = self.consume_string_literal();
                 self.consume();
                 kind = TokenKind::String(string_value);
-            } else if c == '.' {
-                self.consume();
-                kind = TokenKind::Period;
+                self.potential_field_access = false;
             } else if Self::is_whitespace(&c) {
                 self.consume();
                 kind = TokenKind::Whitespace;
@@ -85,10 +93,23 @@ impl <'a> Lexer<'a> {
                     "return" => TokenKind::Return,
                     "mut" => TokenKind::Mutable,
                     "const" => TokenKind::Const,
+                    "struct" => TokenKind::Struct,
                     _ => TokenKind::Identifier,
-                }
+                };
+
+                self.potential_field_access = matches!(kind, TokenKind::Identifier);
             } else {
                 kind = self.consume_punctuation();
+                match kind {
+                    TokenKind::Period => {
+                    },
+                    TokenKind::RightParen | TokenKind::CloseBracket | TokenKind::CloseBrace => {
+                        self.potential_field_access = true;
+                    },
+                    _ => {
+                        self.potential_field_access = false;
+                    }
+                }
             }
 
             let end: usize = self.current_pos;
@@ -118,14 +139,16 @@ impl <'a> Lexer<'a> {
             // Look ahead to ensure it's not a method call (e.g., "123.method()")
             if let Some(next_char) = self.peek_char() {
                 if next_char.is_digit(10) {
-                    has_decimal = true;
-                    self.consume().unwrap();
-                    
-                    while let Some(c) = self.current_char() {
-                        if c.is_digit(10) {
-                            self.consume().unwrap();
-                        } else {
-                            break;
+                    if !self.potential_field_access {
+                        has_decimal = true;
+                        self.consume().unwrap();
+                        
+                        while let Some(c) = self.current_char() {
+                            if c.is_digit(10) {
+                                self.consume().unwrap();
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -248,6 +271,7 @@ impl <'a> Lexer<'a> {
             ':' => TokenKind::Colon,
             ';' => TokenKind::SemiColon,
             '"' => TokenKind::DoubleQuote,
+            '.' => self.potential_multi_char_operator('.'),
             _ => TokenKind::Bad,
         }
     }
@@ -400,6 +424,15 @@ impl <'a> Lexer<'a> {
                     _ => TokenKind::Bad,
                 }
             },
+            '.' => {
+                match self.current_char() {
+                    Some('.') => {
+                        self.consume();
+                        TokenKind::DoublePeriod
+                    },
+                    _ => TokenKind::Period,
+                }
+            }
             _ => TokenKind::Bad,
         }
     }

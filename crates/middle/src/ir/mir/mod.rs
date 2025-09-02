@@ -10,7 +10,7 @@ use std::{
 
 use snowflake_common::{bug_report, idx, Idx, IndexVec};
 
-use snowflake_front::{ast, compilation_unit::{self, GlobalScope, VariableIndex}};
+use snowflake_front::{ast, compilation_unit::{GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 
 use basic_block::{BasicBlock, BasicBlockIdx};
@@ -108,27 +108,30 @@ pub enum Type {
     String,
     Bool,
     Array(Box<Type>, usize),
-    Tuple(Vec<Box<Type>>),
+    Object(Vec<Box<Type>>),
     Void,
 }
 
-impl From<snowflake_front::compilation_unit::Type> for Type {
-    fn from(value: snowflake_front::compilation_unit::Type) -> Self {
+impl From<snowflake_common::typings::Type> for Type {
+    fn from(value: snowflake_common::typings::Type) -> Self {
         match value {
-            compilation_unit::Type::Int => Self::Int,
-            compilation_unit::Type::Float => Self::Float,
-            compilation_unit::Type::String => Self::String,
-            compilation_unit::Type::Bool => Self::Bool,
-            compilation_unit::Type::Void => Self::Void,
-            compilation_unit::Type::Usize => Self::Usize,
-            compilation_unit::Type::Array(elements, size) => {
+            snowflake_common::typings::Type::Int => Self::Int,
+            snowflake_common::typings::Type::Float => Self::Float,
+            snowflake_common::typings::Type::String => Self::String,
+            snowflake_common::typings::Type::Bool => Self::Bool,
+            snowflake_common::typings::Type::Void => Self::Void,
+            snowflake_common::typings::Type::Usize => Self::Usize,
+            snowflake_common::typings::Type::Array(elements, size) => {
                 Self::Array(Box::new(Type::from(*elements)), size)
             }
-            compilation_unit::Type::Tuple(elements) => {
-                Self::Tuple(elements.into_iter().map(|e| Box::new(Type::from(*e))).collect())
+            snowflake_common::typings::Type::Object(object_type) => {
+                Self::Object(object_type.fields.iter().map(|f| Box::new(Type::from(f.ty.as_ref().clone()))).collect())
             }
-            compilation_unit::Type::Unresolved | compilation_unit::Type::Error => {
-                bug_report!("Unresolved type")
+            snowflake_common::typings::Type::ObjectUnresolved(_) => {
+                bug_report!("Unresolved struct type should have been resolved before MIR conversion")
+            }
+            snowflake_common::typings::Type::Unresolved | snowflake_common::typings::Type::Error => {
+                bug_report!("Unresolved or error type")
             }
         }
     }
@@ -195,9 +198,9 @@ impl Instruction {
             InstructionKind::ArrayIndex { .. } => false,
             InstructionKind::ArrayStore { .. } => false,
             InstructionKind::IndexVal { .. } => true,
-            InstructionKind::Tuple { .. } => true,
-            InstructionKind::TupleField { .. } => false,
-            InstructionKind::TupleStore { .. } => false,
+            InstructionKind::Object { .. } => true,
+            InstructionKind::Field { .. } => false,
+            InstructionKind::ObjectStore { .. } => false,
             InstructionKind::Binary { .. } => true,
             InstructionKind::Unary { .. } => true,
             InstructionKind::Call { .. } => false,
@@ -228,15 +231,16 @@ pub enum InstructionKind {
     IndexVal {
         array_len: Value,
     },
-    Tuple {
-        elements: Vec<Value>,
+    Object {
+        kind: ObjectKind,
+        fields: Vec<Value>,
     },
-    TupleField {
-        tuple: Value,
+    Field {
+        object: Value,
         field: Value,
     },
-    TupleStore {
-        tuple: Value,
+    ObjectStore {
+        object: Value,
         field: Value,
         value: Value,
     },
@@ -270,6 +274,13 @@ impl InstructionKind {
             _ => None,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum ObjectKind {
+    Unresolved, // Placeholder
+    Struct,
+    Tuple,
 }
 
 #[derive(Debug, Clone, PartialEq)]

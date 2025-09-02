@@ -59,6 +59,7 @@ pub enum TokenKind {
     Return,
     Mutable,
     Const,
+    Struct,
 
     // separators
     LeftParen,
@@ -73,6 +74,7 @@ pub enum TokenKind {
     SemiColon,
     DoubleQuote,
     Period,
+    DoublePeriod,
 
     // comments (handled by lexer, not tokenized)
     LineComment, // // for single line comments
@@ -161,6 +163,7 @@ impl Display for TokenKind {
             TokenKind::Return => write!(f, "Return"),
             TokenKind::Mutable => write!(f, "Mutable"),
             TokenKind::Const => write!(f, "Const"),
+            TokenKind::Struct => write!(f, "Struct"),
 
             // separators
             TokenKind::LeftParen => write!(f, "("),
@@ -174,7 +177,8 @@ impl Display for TokenKind {
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::SemiColon => write!(f, "Semicolon"),
             TokenKind::DoubleQuote => write!(f, "\""),
-            TokenKind::Period => write!(f, "Period"),
+            TokenKind::Period => write!(f, "."),
+            TokenKind::DoublePeriod => write!(f, ".."),
 
             // comments
             TokenKind::LineComment => write!(f, "LineComment"),

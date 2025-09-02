@@ -178,8 +178,8 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::Tuple { elements } => {
-                    for element in elements.iter_mut() {
+                InstructionKind::Object { fields, .. } => {
+                    for element in fields.iter_mut() {
                         if let Some(const_value) = constants.get_constant_value(element) {
                             if element.replace_if_unequal(const_value) {
                                 changes += 1;
@@ -187,9 +187,9 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::TupleField { tuple, field } => {
-                    if let Some(value) = constants.get_constant_value(tuple) {
-                        if tuple.replace_if_unequal(value) {
+                InstructionKind::Field { object, field } => {
+                    if let Some(value) = constants.get_constant_value(object) {
+                        if object.replace_if_unequal(value) {
                             changes += 1;
                         }
                     }
@@ -199,7 +199,7 @@ impl MIRPassLocal for ConstantsFolding {
                         }
                     }
                 }
-                InstructionKind::TupleStore { tuple, value, .. } => {
+                InstructionKind::ObjectStore { object: tuple, value, .. } => {
                     if let Some(value) = constants.get_constant_value(tuple) {
                         if tuple.replace_if_unequal(value) {
                             changes += 1;

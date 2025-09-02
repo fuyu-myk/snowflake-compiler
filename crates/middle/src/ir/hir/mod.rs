@@ -2,12 +2,12 @@
  * This module handles the high-level intermediate representation for the compiler
  */
 
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
 use snowflake_front::{
-    ast::{BinaryOpKind, UnaryOpKind}, compilation_unit::{FunctionIndex, VariableIndex}
+    ast::{BinaryOpKind, ItemIndex, UnaryOpKind}, compilation_unit::VariableIndex
 };
-use snowflake_common::{text::span::TextSpan, typings::Type};
+use snowflake_common::{text::span::TextSpan, token::Token, typings::Type};
 
 mod builder;
 mod writer;
@@ -21,7 +21,8 @@ pub use writer::HIRWriter;
 
 #[derive(Debug)]
 pub struct HIR {
-    pub functions: HashMap<FunctionIndex, Vec<HIRStatement>>,
+    pub functions: HashMap<ItemIndex, Vec<HIRStatement>>,
+    pub top_statements: HashMap<ItemIndex, Vec<HIRStatement>>,
     pub source_map: HashMap<HIRNodeId, TextSpan>,  // Source location mapping
 }
 
@@ -107,7 +108,7 @@ pub enum HIRStmtKind {
     Declaration {
         var_idx: VariableIndex,
         init_expr: Option<HIRExpression>,
-        is_mutable: bool,  // Track mutability from pattern
+        is_mutable: bool,
     },
     Const {
         var_idx: VariableIndex,
@@ -119,6 +120,12 @@ pub enum HIRStmtKind {
     },
     Return { expr: HIRExpression },
     Loop { body: Vec<HIRStatement> },
+    Item { item_id: HIRItemId },
+}
+
+#[derive(Debug)]
+pub struct HIRItemId {
+    pub from: ItemIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -156,9 +163,13 @@ pub enum HIRExprKind {
         elements: Vec<HIRExpression>,
         element_types: Vec<Box<Type>>,
     },
-    TupleField {
-        tuple: Box<HIRExpression>,
+    Field {
+        object: Box<HIRExpression>,
         field: Box<HIRExpression>,
+    },
+    Struct {
+        fields: Vec<HIRExprField>,
+        tail_expr: HIRStructTailExpr,
     },
     Binary {
         operator: BinaryOpKind,
@@ -170,11 +181,24 @@ pub enum HIRExprKind {
         operand: Box<HIRExpression>,
     },
     Call {
-        fx_idx: FunctionIndex,
+        fx_idx: ItemIndex,
         args: Vec<HIRExpression>,
     },
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone)]
+pub struct HIRExprField {
+    pub identifier: Token,
+    pub expr: HIRExpression,
+    pub is_shorthand: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum HIRStructTailExpr {
+    None,
+    Default(TextSpan),
 }
 
 #[derive(Debug, Clone, Copy)]

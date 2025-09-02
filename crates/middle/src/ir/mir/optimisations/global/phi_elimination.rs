@@ -72,16 +72,16 @@ impl MIRPass for PhiElimination {
                     InstructionKind::IndexVal { array_len } => {
                         Self::replace_value_refs(array_len, &phi_replacements);
                     }
-                    InstructionKind::Tuple { elements } => {
-                        for element in elements.iter_mut() {
+                    InstructionKind::Object { fields, .. } => {
+                        for element in fields.iter_mut() {
                             Self::replace_value_refs(element, &phi_replacements);
                         }
                     }
-                    InstructionKind::TupleField { tuple, field } => {
-                        Self::replace_value_refs(tuple, &phi_replacements);
+                    InstructionKind::Field { object, field } => {
+                        Self::replace_value_refs(object, &phi_replacements);
                         Self::replace_value_refs(field, &phi_replacements);
                     }
-                    InstructionKind::TupleStore { tuple, field, value } => {
+                    InstructionKind::ObjectStore { object: tuple, field, value } => {
                         Self::replace_value_refs(tuple, &phi_replacements);
                         Self::replace_value_refs(field, &phi_replacements);
                         Self::replace_value_refs(value, &phi_replacements);

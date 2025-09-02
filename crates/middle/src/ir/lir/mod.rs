@@ -178,25 +178,28 @@ pub enum InstructionKind {
         target: LocationIdx,
         length: Operand,
     },
-    ArrayStore {
-        array: Operand,
-        index: Operand,
-        value: Operand,
-    },
 
-    // Tuple operations
-    Tuple {
+    // Object operations
+    Object {
         target: LocationIdx,
         elements: Vec<Operand>,
     },
-    TupleField {
+
+    /// Field access for objects
+    /// 
+    /// For example: tuples, structs
+    FieldAccess {
         target: LocationIdx,
-        tuple: Operand,
+        object: Operand,
         field: Operand,
     },
-    TupleStore {
-        tuple: Operand,
-        field: Operand,
+
+    /// Generic storage instruction for objects
+    /// 
+    /// For example: Arrays, tuples, structs
+    ObjectStore {
+        object: Operand,
+        index: Operand,
         value: Operand,
     },
 
@@ -333,7 +336,7 @@ pub enum Type {
         element_type: Box<Type>,
         size: usize,
     },
-    Tuple {
+    Object {
         element_types: Vec<Box<Type>>,
     },
 
@@ -364,8 +367,8 @@ impl Type {
                     size: element_layout.size * size,
                     alignment: element_layout.alignment,
                 }
-            }
-            Type::Tuple { element_types } => {
+            },
+            Type::Object { element_types } => {
                 let mut size = 0;
                 let mut alignment = 1;
 
@@ -422,7 +425,7 @@ impl From<mir::Type> for Type {
                 element_type: Box::new(Type::from(*element_type)),
                 size,
             },
-            mir::Type::Tuple(element_types) => Type::Tuple {
+            mir::Type::Object(element_types) => Type::Object {
                 element_types: element_types.into_iter().map(|t| Box::new(Type::from(*t))).collect(),
             },
             mir::Type::Void => Type::Void,

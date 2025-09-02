@@ -303,17 +303,14 @@ impl X86_64Codegen {
                             // Phi nodes should be resolved before code generation
                             bug_report!("Phi nodes should be resolved before code generation: {:?}", operands);
                         }
-                        InstructionKind::ArrayStore { .. } => {
-                            unimplemented!("ArrayStore instruction not yet implemented for x86_64 backend");
+                        InstructionKind::ObjectStore { .. } => {
+                            unimplemented!("ObjectStore instruction not yet implemented for x86_64 backend");
                         }
-                        InstructionKind::Tuple { .. } => {
-                            unimplemented!("Tuple instruction not yet implemented for x86_64 backend");
+                        InstructionKind::Object { .. } => {
+                            unimplemented!("Object instruction not yet implemented for x86_64 backend");
                         }
-                        InstructionKind::TupleField { .. } => {
-                            unimplemented!("TupleIndex instruction not yet implemented for x86_64 backend");
-                        }
-                        InstructionKind::TupleStore { .. } => {
-                            unimplemented!("TupleStore instruction not yet implemented for x86_64 backend");
+                        InstructionKind::FieldAccess { .. } => {
+                            unimplemented!("FieldAccess instruction not yet implemented for x86_64 backend");
                         }
                         InstructionKind::Nop => {
                             // nothing
@@ -2429,10 +2426,9 @@ impl X86_64Codegen {
             InstructionKind::Phi { target, .. } => Some(*target),
             InstructionKind::Call { target, .. } => *target,
             InstructionKind::Store { .. } |
-            InstructionKind::ArrayStore { .. } |
-            InstructionKind::Tuple { .. } |
-            InstructionKind::TupleField { .. } |
-            InstructionKind::TupleStore { .. } |
+            InstructionKind::ObjectStore { .. } |
+            InstructionKind::Object { .. } |
+            InstructionKind::FieldAccess { .. } |
             InstructionKind::Nop => None,
         }
     }
