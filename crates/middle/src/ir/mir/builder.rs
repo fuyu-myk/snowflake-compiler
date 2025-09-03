@@ -259,10 +259,12 @@ impl FunctionBuilder {
                     assert_eq!(
                         phi.operands.len(),
                         predecessors_len,
-                        "Phi node in {} has {} operand(s), but {} predecessor(s)",
+                        "Phi node in {} has {} operand(s), but {} predecessor(s). Operands: {:?}, Predecessors: {:?}",
                         basic_block,
                         phi.operands.len(),
                         predecessors_len,
+                        phi.operands,
+                        immediate_predecessors
                     );
 
                     for (predecessor, _) in phi.operands.iter() {
@@ -273,7 +275,7 @@ impl FunctionBuilder {
                                 phi,
                                 predecessor,
                                 basic_block,
-                            )
+                            );
                         }
                     }
                 }
@@ -405,64 +407,6 @@ impl FunctionBuilder {
                     }
                 }
             }
-            HIRStmtKind::If { condition, then_block, else_block } => {
-                // A condition bb is constructed first, with a `SwitchInt` terminator that jumps to the
-                // then bb if the condition holds true, or the else bb if it is false
-                //
-                // Finally, a bb, `if_end_bb`, is created to terminate the if statement
-                tracing::debug!("Building if statement");
-
-                // building condition
-                tracing::debug!("Building condition");
-                let condition = self.build_expr(basic_blocks, bb_builder, global_scope, condition);
-                let predecessor = bb_builder.current;
-                let then_start_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
-                let else_start_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
-
-                bb_builder.set_bb(predecessor);
-                bb_builder.terminate(
-                    basic_blocks,
-                    TerminatorKind::SwitchInt {
-                        value: condition,
-                        targets: vec![(0, else_start_bb)],
-                        default: then_start_bb
-                    },
-                );
-                tracing::debug!("Condition built");
-
-                self.seal_block(basic_blocks, then_start_bb, global_scope);
-                self.seal_block(basic_blocks, else_start_bb, global_scope);
-
-                // building then block
-                tracing::debug!("Building then block");
-                bb_builder.set_bb(then_start_bb);
-                for statement in then_block.iter() {
-                    self.build_statement(basic_blocks, bb_builder, global_scope, statement);
-                }
-                tracing::debug!("Then block built");
-                let then_exit_bb = bb_builder.current;
-
-                // building else block
-                tracing::debug!("Building else block");
-                bb_builder.set_bb(else_start_bb);
-                for statement in else_block.iter() {
-                    self.build_statement(basic_blocks, bb_builder, global_scope, statement);
-                }
-                tracing::debug!("Else block built");
-                let else_exit_bb = bb_builder.current;
-
-                // building terminator
-                let if_end_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
-                tracing::debug!("Building if statement terminator");
-
-                basic_blocks.get_mut_or_panic(then_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
-                basic_blocks.get_mut_or_panic(else_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
-                
-                // Set current basic block to the if end block for subsequent statements
-                bb_builder.set_bb(if_end_bb);
-                self.seal_block(basic_blocks, if_end_bb, global_scope);
-                tracing::debug!("If terminator built");
-            }
             HIRStmtKind::Declaration { var_idx, init_expr, is_mutable: _ } => {
                 // Transforms initialiser into a value and assigns it to a new instruction,
                 // where the instruction represents the variable
@@ -493,12 +437,6 @@ impl FunctionBuilder {
                 );
 
                 self.write_variable(*var_idx, bb_builder.current, instruct_idx);
-            }
-            HIRStmtKind::Block { body, scope_id: _ } => {
-                // Builds every statement inside the block
-                for statement in body.iter() {
-                    self.build_statement(basic_blocks, bb_builder, global_scope, statement);
-                }
             }
             HIRStmtKind::Return { expr } => {
                 // Transforms the return expression to a value
@@ -634,17 +572,17 @@ impl FunctionBuilder {
                 }
             }
             HIRExprKind::Index { object, index, bounds_check, length } => {
-                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
-                let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, index);
-                let length_val = self.build_expr(basic_blocks, bb_builder, global_scope, length);
+                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, &object);
+                let index_val = self.build_expr(basic_blocks, bb_builder, global_scope, &index);
+                let length_val = self.build_expr(basic_blocks, bb_builder, global_scope, &length);
 
                 if *bounds_check {
                     self.arr_index_bounds_check(
                         basic_blocks,
                         bb_builder,
                         global_scope,
-                        object,
-                        index,
+                        &object,
+                        &index,
                         &index_val,
                         length_val,
                     );
@@ -690,8 +628,8 @@ impl FunctionBuilder {
                 Value::InstructionRef(instruct_ref)
             }
             HIRExprKind::Field { object, field } => {
-                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, object);
-                let field_val = self.build_expr(basic_blocks, bb_builder, global_scope, field);
+                let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, &object);
+                let field_val = self.build_expr(basic_blocks, bb_builder, global_scope, &field);
                 
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
@@ -727,8 +665,8 @@ impl FunctionBuilder {
                 Value::InstructionRef(instruct_ref)
             }
             HIRExprKind::Binary { operator, left, right } => {
-                let left_value = self.build_expr(basic_blocks, bb_builder, global_scope, left);
-                let right_value = self.build_expr(basic_blocks, bb_builder, global_scope, right);
+                let left_value = self.build_expr(basic_blocks, bb_builder, global_scope, &left);
+                let right_value = self.build_expr(basic_blocks, bb_builder, global_scope, &right);
                 let ty = expr.ty.clone().into();
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
@@ -743,7 +681,7 @@ impl FunctionBuilder {
                 Value::InstructionRef(instruct_ref)
             },
             HIRExprKind::Unary { operator, operand } => {
-                let operand_value = self.build_expr(basic_blocks, bb_builder, global_scope, operand);
+                let operand_value = self.build_expr(basic_blocks, bb_builder, global_scope, &operand);
                 let ty = expr.ty.clone().into();
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
@@ -757,6 +695,169 @@ impl FunctionBuilder {
 
                 Value::InstructionRef(instruct_ref)
             },
+            HIRExprKind::If { condition, then_block, else_block } => {
+                // A condition bb is constructed first, with a `SwitchInt` terminator that jumps to the
+                // then bb if the condition holds true, or the else bb if it is false
+                //
+                // Finally, a bb, `if_end_bb`, is created to terminate the if statement
+                tracing::debug!("Building if expression");
+
+                // building condition
+                tracing::debug!("Building condition");
+                let condition = self.build_expr(basic_blocks, bb_builder, global_scope, &condition);
+                let predecessor = bb_builder.current;
+                let then_start_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
+                let else_start_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
+                let if_end_bb = bb_builder.new_bb(basic_blocks, &mut self.function);
+
+                bb_builder.set_bb(predecessor);
+                bb_builder.terminate(
+                    basic_blocks,
+                    TerminatorKind::SwitchInt {
+                        value: condition,
+                        targets: vec![(0, else_start_bb)],
+                        default: then_start_bb
+                    },
+                );
+                tracing::debug!("Condition built");
+
+                self.seal_block(basic_blocks, then_start_bb, global_scope);
+                self.seal_block(basic_blocks, else_start_bb, global_scope);
+
+                // building then block
+                tracing::debug!("Building then block");
+                bb_builder.set_bb(then_start_bb);
+                let then_value = self.build_expr(basic_blocks, bb_builder, global_scope, &then_block);
+                let then_exit_bb = bb_builder.current;
+                basic_blocks.get_mut_or_panic(then_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
+                tracing::debug!("Then block built");
+
+                // building else block
+                tracing::debug!("Building else block");
+                bb_builder.set_bb(else_start_bb);
+                let else_value = if let Some(else_block) = else_block {
+                    self.build_expr(basic_blocks, bb_builder, global_scope, &else_block)
+                } else {
+                    Value::Constant(Constant::Void)
+                };
+                let else_exit_bb = bb_builder.current;
+                basic_blocks.get_mut_or_panic(else_exit_bb).maybe_set_terminator(TerminatorKind::Goto(if_end_bb));
+                tracing::debug!("Else block built");
+
+                // Create merge block and phi node for the result
+                bb_builder.set_bb(if_end_bb);
+                let ty: Type = expr.ty.clone().into();
+                let mut operands = Vec::new();
+
+                let then_block = basic_blocks.get_or_panic(then_exit_bb);
+                let then_reaches_merge = if let Some(terminator) = &then_block.terminator {
+                    matches!(terminator.kind, TerminatorKind::Goto(_) | TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. })
+                } else {
+                    false
+                };
+                
+                if then_reaches_merge {
+                    match then_value {
+                        Value::InstructionRef(then_instr) => operands.push((then_exit_bb, then_instr)),
+                        _ => {
+                            let then_instr = bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(
+                                    InstructionKind::Value(then_value),
+                                    ty.clone(),
+                                    expr.span.clone(),
+                                ),
+                            );
+                            operands.push((then_exit_bb, then_instr));
+                        }
+                    }
+                }
+                
+                let else_block = basic_blocks.get_or_panic(else_exit_bb);
+                let else_reaches_merge = if let Some(terminator) = &else_block.terminator {
+                    matches!(terminator.kind, TerminatorKind::Goto(_) | TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. })
+                } else {
+                    false
+                };
+                
+                if else_reaches_merge {
+                    match else_value {
+                        Value::InstructionRef(else_instr) => operands.push((else_exit_bb, else_instr)),
+                        _ => {
+                            let else_instr = bb_builder.add_instruction(
+                                basic_blocks,
+                                &mut self.function,
+                                Instruction::new(
+                                    InstructionKind::Value(else_value),
+                                    ty.clone(),
+                                    expr.span.clone(),
+                                ),
+                            );
+                            operands.push((else_exit_bb, else_instr));
+                        }
+                    }
+                }
+
+                // Only create a phi node if we have operands from multiple predecessors
+                let phi_ref = if operands.len() > 1 {
+                    bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(
+                            InstructionKind::Phi(PhiNode {
+                                operands,
+                            }),
+                            ty,
+                            expr.span.clone(),
+                        ),
+                    )
+                } else if operands.len() == 1 {
+                    // Use the value directly
+                    operands[0].1
+                } else {
+                    // Create a void value
+                    bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(
+                            InstructionKind::Value(Value::Constant(Constant::Void)),
+                            ty,
+                            expr.span.clone(),
+                        ),
+                    )
+                };
+
+                self.seal_block(basic_blocks, if_end_bb, global_scope);
+                tracing::debug!("If expression built");
+                Value::InstructionRef(phi_ref)
+            }
+            HIRExprKind::Block { body, scope_id: _ } => {
+                let mut last_value = Value::Constant(Constant::Void);
+                
+                for statement in body.statements.iter() {
+                    match &statement.kind {
+                        HIRStmtKind::Expression { expr } => {
+                            last_value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
+                            let ty = expr.ty.clone().into();
+                            
+                            if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                                bb_builder.add_instruction(
+                                    basic_blocks,
+                                    &mut self.function,
+                                    Instruction::new(InstructionKind::Value(last_value.clone()), ty, statement.span.clone())
+                                );
+                            }
+                        }
+                        _ => {
+                            self.build_statement(basic_blocks, bb_builder, global_scope, statement);
+                            last_value = Value::Constant(Constant::Void);
+                        }
+                    }
+                }
+                
+                last_value
+            }
             HIRExprKind::Call { fx_idx, args } => {
                 let args_values = args.iter()
                     .map(|arg| self.build_expr(basic_blocks, bb_builder, global_scope, arg))

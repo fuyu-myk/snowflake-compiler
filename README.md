@@ -234,7 +234,7 @@ a += a * 2 + 3
     }
     ```
 
-- [x] **`if` statements** [completed 09.06.2025]
+- [x] **`if` expressions** [completed 09.06.2025]
 * Inclusive of optional `else` statements
 * Ability to parse and evaluate the below statement:
     ```

@@ -196,27 +196,8 @@ impl MutabilityChecker {
             HIRStmtKind::Expression{ expr } => {
                 self.check_expression(expr, global_scope, hir)
             }
-            HIRStmtKind::If { condition, then_block, else_block } => {
-                self.check_expression(condition, global_scope, hir)?;
-                
-                for statement in then_block {
-                    self.check_statement(statement, global_scope, hir)?;
-                }
-                
-                for statement in else_block {
-                    self.check_statement(statement, global_scope, hir)?;
-                }
-                
-                Ok(())
-            }
+            
             HIRStmtKind::Loop { body } => {
-                for statement in body {
-                    self.check_statement(statement, global_scope, hir)?;
-                }
-
-                Ok(())
-            }
-            HIRStmtKind::Block { body, scope_id: _ } => {
                 for statement in body {
                     self.check_statement(statement, global_scope, hir)?;
                 }
@@ -255,6 +236,19 @@ impl MutabilityChecker {
             }
             HIRExprKind::Unary { operand, .. } => {
                 self.check_expression(operand, global_scope, hir)
+            }
+            HIRExprKind::If { then_block, else_block, .. } => {
+                self.check_expression(&then_block, global_scope, hir)?;
+                if let Some(else_expr) = else_block {
+                    self.check_expression(else_expr, global_scope, hir)?;
+                }
+                Ok(())
+            }
+            HIRExprKind::Block { body, .. } => {
+                for stmt in &body.statements {
+                    self.check_statement(stmt, global_scope, hir)?;
+                }
+                Ok(())
             }
             HIRExprKind::Index { object, index, .. } => {
                 self.check_expression(object, global_scope, hir)?;

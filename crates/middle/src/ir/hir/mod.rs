@@ -86,24 +86,19 @@ impl HIRContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HIRNodeId(usize);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HIRStatement {
     pub kind: HIRStmtKind,
     pub id: HIRNodeId,
     pub span: TextSpan,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum HIRStmtKind {
     Expression { expr: HIRExpression },
     Assignment {
         target: HIRExpression,  // Can be variable, index, etc.
         value: HIRExpression,
-    },
-    If {
-        condition: HIRExpression,
-        then_block: Vec<HIRStatement>,
-        else_block: Vec<HIRStatement>,
     },
     Declaration {
         var_idx: VariableIndex,
@@ -114,16 +109,12 @@ pub enum HIRStmtKind {
         var_idx: VariableIndex,
         init_expr: Option<HIRExpression>,
     },
-    Block {
-        body: Vec<HIRStatement>,
-        scope_id: ScopeId,
-    },
     Return { expr: HIRExpression },
     Loop { body: Vec<HIRStatement> },
     Item { item_id: HIRItemId },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HIRItemId {
     pub from: ItemIndex,
 }
@@ -184,8 +175,23 @@ pub enum HIRExprKind {
         fx_idx: ItemIndex,
         args: Vec<HIRExpression>,
     },
+    If {
+        condition: Box<HIRExpression>,
+        then_block: Box<HIRExpression>,
+        else_block: Option<Box<HIRExpression>>,
+    },
+    Block {
+        body: Box<Block>,
+        scope_id: ScopeId,
+    },
     Break,
     Continue,
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub statements: Vec<Box<HIRStatement>>,
+    pub span: TextSpan,
 }
 
 #[derive(Debug, Clone)]

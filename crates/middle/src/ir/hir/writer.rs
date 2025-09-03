@@ -104,36 +104,6 @@ impl <W> HIRWriter<W> where W: Write {
                 Self::write_expression(writer, value, global_scope, indent)?;
                 writeln!(writer)?;
             }
-            HIRStmtKind::If { condition, then_block, else_block } => {
-                write!(writer, "if ")?;
-                Self::write_expression(writer, condition, global_scope, indent)?;
-                writeln!(writer, " {{")?;
-
-                for statement in then_block {
-                    Self::write_indent(writer, indent + 1)?;
-                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
-                }
-                Self::write_indent(writer, indent)?;
-                writeln!(writer, "}} else {{")?;
-
-                for statement in else_block {
-                    Self::write_indent(writer, indent + 1)?;
-                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
-                }
-                Self::write_indent(writer, indent)?;
-                writeln!(writer, "}}")?;
-            }
-            HIRStmtKind::Block { body, scope_id: _ } => {
-                Self::write_indent(writer, indent)?;
-                writeln!(writer, "{{")?;
-                for statement in body {
-                    Self::write_indent(writer, indent + 1)?;
-                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
-                }
-
-                Self::write_indent(writer, indent)?;
-                writeln!(writer, "}}")?;
-            }
             HIRStmtKind::Return { expr } => {
                 write!(writer, "return ")?;
                 Self::write_expression(writer, expr, global_scope, indent)?;
@@ -242,6 +212,34 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Unary { operator, operand } => {
                 write!(writer, "{}", operator)?;
                 Self::write_expression(writer, operand.as_ref(), global_scope, indent)?;
+            }
+            HIRExprKind::If { condition, then_block, else_block } => {
+                write!(writer, "if ")?;
+                Self::write_expression(writer, condition, global_scope, indent)?;
+                writeln!(writer, " {{")?;
+
+                Self::write_expression(writer, then_block, global_scope, indent + 1)?;
+                
+                if let Some(else_block) = else_block {
+                    Self::write_indent(writer, indent)?;
+                    writeln!(writer, "}} else {{")?;
+                    Self::write_expression(writer, else_block, global_scope, indent + 1)?;
+                }
+                
+                Self::write_indent(writer, indent)?;
+                writeln!(writer, "}}")?;
+            }
+            HIRExprKind::Block { body, scope_id: _ } => {
+                Self::write_indent(writer, indent)?;
+                writeln!(writer, "{{")?;
+                
+                for statement in body.statements.iter() {
+                    Self::write_indent(writer, indent + 1)?;
+                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
+                }
+
+                Self::write_indent(writer, indent)?;
+                writeln!(writer, "}}")?;
             }
             HIRExprKind::Call { fx_idx, args } => {
                 let fx = global_scope.functions.get(*fx_idx);
