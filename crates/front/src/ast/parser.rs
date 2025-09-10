@@ -47,8 +47,12 @@ impl <'a> Parser<'a> {
     ) -> Self {
         Self { 
             tokens: tokens.iter()
-                .filter(|token| token.kind != TokenKind::Whitespace)
-                .map(|token| token.clone()).collect(), // filter whitespaces
+                .filter(|token| {
+                    token.kind != TokenKind::Whitespace && 
+                    token.kind != TokenKind::LineComment && 
+                    token.kind != TokenKind::BlockComment
+                })
+                .map(|token| token.clone()).collect(), // filter whitespaces and comments
             current: Counter::new(),
             diagnostics_report,
             ast,
@@ -79,9 +83,6 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_statement(&mut self) -> StmtIndex {
-        self.consume_if(TokenKind::LineComment);
-        self.consume_if(TokenKind::BlockComment);
-        
         let statement = match self.current().kind {
             TokenKind::Let => self.parse_let_statement().id,
             TokenKind::Const => self.parse_const_statement().id,
@@ -107,9 +108,6 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_item(&mut self) -> Result<&Item, ()> {
-        self.consume_if(TokenKind::LineComment);
-        self.consume_if(TokenKind::BlockComment);
-        
         return match &self.current().kind {
             TokenKind::Function => Ok(self.parse_fx_item()),
             TokenKind::Const => Ok(self.parse_const_item()),
