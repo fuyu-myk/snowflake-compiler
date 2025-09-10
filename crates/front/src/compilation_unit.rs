@@ -804,9 +804,8 @@ impl ASTVisitor for Resolver {
                 self.visit_expression(ast, binary_expr_id);
                 
                 // Create the assignment expression (a = (a + b))
-                let left_hand_side_expr_id = ast.variable_expression(var_identifier.clone()).id;
                 let assignment_expr = AssignExpression {
-                    lhs: left_hand_side_expr_id,
+                    lhs: left_expr_id,
                     equals: self.create_synthetic_equals_token(&var_identifier),
                     expression: binary_expr_id,
                     variable_index: var_idx,
