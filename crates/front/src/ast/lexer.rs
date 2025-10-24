@@ -94,6 +94,7 @@ impl <'a> Lexer<'a> {
                     "mut" => TokenKind::Mutable,
                     "const" => TokenKind::Const,
                     "struct" => TokenKind::Struct,
+                    "enum" => TokenKind::Enum,
                     _ => TokenKind::Identifier,
                 };
 
@@ -268,7 +269,7 @@ impl <'a> Lexer<'a> {
             '[' => TokenKind::OpenBracket,
             ']' => TokenKind::CloseBracket,
             ',' => TokenKind::Comma,
-            ':' => TokenKind::Colon,
+            ':' => self.potential_multi_char_operator(':'),
             ';' => TokenKind::SemiColon,
             '"' => TokenKind::DoubleQuote,
             '.' => self.potential_multi_char_operator('.'),
@@ -431,6 +432,15 @@ impl <'a> Lexer<'a> {
                         TokenKind::DoublePeriod
                     },
                     _ => TokenKind::Period,
+                }
+            }
+            ':' => {
+                match self.current_char() {
+                    Some(':') => {
+                        self.consume();
+                        TokenKind::DoubleColon
+                    },
+                    _ => TokenKind::Colon,
                 }
             }
             _ => TokenKind::Bad,

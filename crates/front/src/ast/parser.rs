@@ -1,10 +1,12 @@
-use crate::ast::{AssignmentOpKind, Ast, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, Body, ElseBranch, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, Mutability, Pattern, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, TypeKind, UnaryOp, UnaryOpKind, VariantData};
+use crate::ast::{AssignmentOpKind, Ast, AstType, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, BlockExpression, ElseBranch, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, Mutability, Path, PathSegment, Pattern, PatternKind, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, UnaryOp, UnaryOpKind, Variant, VariantData};
 use snowflake_common::text::span::TextSpan;
 use snowflake_common::token::{Token, TokenKind};
+use snowflake_common::Idx;
 use crate::compilation_unit::{GlobalScope};
 use snowflake_common::diagnostics::DiagnosticsReportCell;
-use snowflake_common::typings::Type;
+use snowflake_common::typings::TypeKind;
 use std::cell::Cell;
+use std::vec;
 
 
 #[derive(Debug, Clone)]
@@ -86,7 +88,6 @@ impl <'a> Parser<'a> {
         let statement = match self.current().kind {
             TokenKind::Let => self.parse_let_statement().id,
             TokenKind::Const => self.parse_const_statement().id,
-            TokenKind::While => self.parse_while_statement().id,
             TokenKind::Return => self.parse_return_statement().id,
             TokenKind::Function => {
                 let item = self.parse_fx_item();
@@ -112,24 +113,38 @@ impl <'a> Parser<'a> {
             TokenKind::Function => Ok(self.parse_fx_item()),
             TokenKind::Const => Ok(self.parse_const_item()),
             TokenKind::Struct => Ok(self.parse_struct_item()),
+            TokenKind::Enum => Ok(self.parse_enum_item()),
             _ => {
                 Err(self.diagnostics_report.borrow_mut().report_expected_item(self.current()))
             }
         };
     }
 
-    fn parse_body(&mut self) -> Body {
+    fn parse_body(&mut self) -> BlockExpression {
         let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
         let mut body = Vec::new();
+        let mut spans = vec![open_brace.span.clone()];
+
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
             body.push(self.parse_statement());
         }
-        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
 
-        Body::new(open_brace, body, close_brace)
+        for statement in body.iter() {
+            let stmt_span = self.ast.query_statement(*statement).span.clone();
+            spans.push(stmt_span);
+        }
+
+        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+        spans.push(close_brace.span.clone());
+        
+        let span = TextSpan::combine(spans);
+
+        BlockExpression::new(open_brace, body, close_brace, span)
     }
 
     fn parse_fx_item(&mut self) -> &Item {
+        let mut spans = vec![];
+
         // fx keyword & identifier
         let fx_keyword = self.consume_and_check(TokenKind::Function).clone();
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
@@ -140,25 +155,36 @@ impl <'a> Parser<'a> {
         // parse body
         let return_type = self.parse_optional_return_type();
         let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        spans.push(open_brace.span.clone());
         let mut body = Vec::new();
         
         self.function_depth += 1;
+
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
             body.push(self.parse_statement());
         }
+
+        for statement in body.iter() {
+            let stmt_span = self.ast.query_statement(*statement).span(self.ast).clone();
+            spans.push(stmt_span);
+        }
+
         self.function_depth -= 1;
         
         let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+        spans.push(close_brace.span.clone());
 
-        let body = Body::new(open_brace, body.clone(), close_brace);
+        let span = TextSpan::combine(spans);
+
+        let body = BlockExpression::new(open_brace, body.clone(), close_brace, span);
         let resolved_return_type = return_type.clone().map(
             |return_type| {
                 match &return_type.ty {
-                    TypeKind::Simple { type_name } => Type::from_token(type_name),
-                    _ => Type::Void // Will be properly resolved in the resolution phase
+                    AstType::Simple { type_name } => TypeKind::from_token(type_name),
+                    _ => TypeKind::Void // Will be properly resolved in the resolution phase
                 }
             }
-        ).unwrap_or(Type::Void);
+        ).unwrap_or(TypeKind::Void);
 
         let fx_idx_result = self.global_scope.create_function(
             identifier.span.literal.clone(),
@@ -196,7 +222,7 @@ impl <'a> Parser<'a> {
                     return Some(FxReturnType::new(
                         arrow, 
                         vec![open_bracket.clone(), semicolon.clone(), length.clone(), close_bracket.clone()],
-                        TypeKind::Array {
+                        AstType::Array {
                             open_bracket,
                             element_type: Box::new(element_type),
                             semicolon,
@@ -211,7 +237,7 @@ impl <'a> Parser<'a> {
                     return Some(FxReturnType::new(
                         arrow, 
                         vec![open_bracket.clone(), close_bracket.clone()],
-                        TypeKind::Slice {
+                        AstType::Slice {
                             open_bracket,
                             element_type: Box::new(element_type),
                             close_bracket,
@@ -236,13 +262,13 @@ impl <'a> Parser<'a> {
                 return Some(FxReturnType::new(
                     arrow,
                     vec![open_paren.clone(), close_paren.clone()],
-                    TypeKind::Tuple { open_paren, element_types, close_paren },
+                    AstType::Tuple { open_paren, element_types, close_paren },
                 ));
             } else {
                 let type_name = vec![self.consume_and_check(TokenKind::Identifier).clone()];
 
                 if let Some(type_token) = type_name.first() {
-                    let type_kind = TypeKind::Simple { type_name: type_token.clone() };
+                    let type_kind = AstType::Simple { type_name: type_token.clone() };
                     return Some(FxReturnType::new(arrow, type_name, type_kind));
                 }
             }
@@ -268,11 +294,25 @@ impl <'a> Parser<'a> {
             all_spans.extend(type_annotation.collect_spans());
             
             let ty = match &type_annotation.type_kind {
-                TypeKind::Simple { type_name } => Type::from_token(type_name),
-                _ => Type::Void,
+                AstType::Simple { type_name } => TypeKind::from_token(type_name),
+                _ => TypeKind::Void,
             };
             
-            let var_idx = self.global_scope.declare_variable(&identifier.span.literal, ty, false, false);
+            let var_idx = self.global_scope.declare_variable(
+                &Path {
+                    span: identifier.span.clone(),
+                    segments: vec![
+                        PathSegment {
+                            identifier: identifier.clone(),
+                            arguments: None,
+                        }
+                    ],
+                    tokens: vec![identifier.clone()],
+                },
+                ty,
+                false,
+                false,
+            );
             
             let generic_param = GenericParam::new(
                 var_idx,
@@ -317,7 +357,12 @@ impl <'a> Parser<'a> {
         self.consume_and_check(TokenKind::SemiColon);
 
         self.ast.constant_item(
-            identifier.clone(), 
+            Pattern {
+                id: StmtIndex::new(0),
+                kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
+                span: identifier.span.clone(),
+                token: identifier.clone(),
+            },
             Generics::empty(identifier.span.clone()),
             type_annotation.unwrap_or(
                 StaticTypeAnnotation::new_simple(
@@ -345,12 +390,20 @@ impl <'a> Parser<'a> {
             Generics::new(Vec::new(), TextSpan::default())
         };
 
-        let variant_data = self.parse_struct_variant_data();
-
-        let is_local = self.function_depth > 0;
-        let struct_item = self.ast.struct_item_local(identifier, generics, variant_data, is_local);
+        let variant_data = if self.current().kind == TokenKind::OpenBrace {
+            self.parse_struct_variant_data()
+        } else if self.current().kind == TokenKind::LeftParen {
+            let data = self.parse_tuple_variant_data();
+            self.consume_and_check(TokenKind::SemiColon);
+            data
+        } else {
+            self.consume_and_check(TokenKind::SemiColon);
+            VariantData::Unit
+        };
         
-        struct_item
+        let is_local = self.function_depth > 0;
+        
+        self.ast.struct_item_local(identifier, generics, variant_data, is_local)
     }
 
     /// Parse generic parameters like `<T, U>`
@@ -366,8 +419,17 @@ impl <'a> Parser<'a> {
 
                 // TODO: Add support for bounds like T: Clone
                 let var_idx = self.global_scope.declare_variable(
-                    &identifier.span.literal, 
-                    Type::Unresolved, // Use Unresolved for generic type parameters for now
+                    &Path {
+                        span: identifier.span.clone(),
+                        segments: vec![
+                            PathSegment {
+                                identifier: identifier.clone(),
+                                arguments: None,
+                            }
+                        ],
+                        tokens: vec![identifier.clone()],
+                    }, 
+                    TypeKind::Unresolved, // Use Unresolved for generic type parameters for now
                     false, 
                     false
                 );
@@ -376,7 +438,7 @@ impl <'a> Parser<'a> {
                     var_idx,
                     identifier.clone(),
                     GenericParamKind::Type {
-                        ty: Box::new(TypeKind::Simple { 
+                        ty: Box::new(AstType::Simple { 
                             type_name: Token::new(TokenKind::Identifier, TextSpan::default())
                         }),
                         span: TextSpan::default(),
@@ -400,7 +462,7 @@ impl <'a> Parser<'a> {
         Generics::new(generic_params, TextSpan::combine(all_spans))
     }
 
-    /// Parse struct fields like `{ field1: type1, field2: type2 }`
+    /// Parse fields like `{ field1: type1, field2: type2 }`
     fn parse_struct_variant_data(&mut self) -> VariantData {
         self.consume_and_check(TokenKind::OpenBrace);
         let mut fields = Vec::new();
@@ -430,6 +492,86 @@ impl <'a> Parser<'a> {
         VariantData::Struct { fields }
     }
 
+    fn parse_tuple_variant_data(&mut self) -> VariantData {
+        self.consume_and_check(TokenKind::LeftParen);
+        let mut field_defs = Vec::new();
+
+        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+            let ty = self.parse_type_kind();
+            let field_def = FieldDefinition::new(
+                None,
+                Box::new(ty),
+            );
+            field_defs.push(field_def);
+
+            if self.current().kind == TokenKind::Comma {
+                self.consume_and_check(TokenKind::Comma);
+            } else {
+                break;
+            }
+        }
+
+        self.consume_and_check(TokenKind::RightParen);
+        VariantData::Tuple(field_defs)
+    }
+
+    fn parse_enum_item(&mut self) -> &Item {
+        self.consume_and_check(TokenKind::Enum);
+        let identifier = self.consume_and_check(TokenKind::Identifier).clone();
+
+        let generics = if self.current().kind == TokenKind::LessThan {
+            self.parse_generic_params()
+        } else {
+            Generics::new(Vec::new(), TextSpan::default())
+        };
+
+        let variants = self.parse_variants();
+
+
+        if self.function_depth > 0 {
+            self.diagnostics_report.borrow_mut().report_enum_in_function(&identifier);
+        }
+
+        self.ast.enum_item(identifier, generics, variants)
+    }
+
+    fn parse_variants(&mut self) -> Vec<Variant> {
+        let mut variants = Vec::new();
+        self.consume_and_check(TokenKind::OpenBrace);
+
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            let variant_name = self.consume_and_check(TokenKind::Identifier).clone();
+            let variant_data = if self.current().kind == TokenKind::OpenBrace {
+                self.parse_struct_variant_data()
+            } else if self.current().kind == TokenKind::LeftParen {
+                self.parse_tuple_variant_data()
+            } else {
+                VariantData::Unit
+            };
+
+            variants.push(
+                Variant {
+                    identifier: variant_name,
+                    data: variant_data
+                }
+            );
+
+            if self.current().kind == TokenKind::Comma {
+                self.consume_and_check(TokenKind::Comma);
+            } else if self.current().kind != TokenKind::CloseBrace {
+                self.diagnostics_report.borrow_mut().report_unexpected_token_two(
+                    &TokenKind::Comma,
+                    &TokenKind::CloseBrace,
+                    &self.current()
+                );
+            }
+        }
+        
+        self.consume_and_check(TokenKind::CloseBrace);
+
+        variants
+    }
+
     fn parse_return_statement(&mut self) -> &Statement {
         let return_keyword = self.consume_and_check(TokenKind::Return).clone();
         
@@ -444,14 +586,6 @@ impl <'a> Parser<'a> {
         self.ast.return_statement(&self.ast.clone(), return_keyword, expression)
     }
 
-    fn parse_while_statement(&mut self) -> &Statement {
-        let while_keyword = self.consume_and_check(TokenKind::While).clone();
-        let condition_expr = self.parse_condition_expression();
-        let body = self.parse_body();
-
-        self.ast.while_statement(&self.ast.clone(), while_keyword, condition_expr, body)
-    }
-
     fn parse_let_statement(&mut self) -> &Statement {
         self.consume_and_check(TokenKind::Let); // check 'let'
         let pattern = self.parse_pattern();
@@ -461,7 +595,7 @@ impl <'a> Parser<'a> {
 
         let expr = self.parse_expression();
 
-        self.ast.let_statement_with_pattern(&self.ast.clone(), pattern, expr, optional_type_annotation)
+        self.ast.let_statement(&self.ast.clone(), pattern, expr, optional_type_annotation)
     }
 
     fn parse_const_statement(&mut self) -> &Statement {
@@ -546,7 +680,7 @@ impl <'a> Parser<'a> {
         }
     }
 
-    fn parse_type_kind(&mut self) -> TypeKind {
+    fn parse_type_kind(&mut self) -> AstType {
         if self.current().kind == TokenKind::OpenBracket {
             // Nested array/slice type
             let open_bracket = self.consume_and_check(TokenKind::OpenBracket).clone();
@@ -558,7 +692,7 @@ impl <'a> Parser<'a> {
                 let length = self.consume().clone(); // Length token
                 let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
                 
-                return TypeKind::Array {
+                return AstType::Array {
                     open_bracket,
                     element_type: Box::new(element_type),
                     semicolon,
@@ -568,7 +702,7 @@ impl <'a> Parser<'a> {
             } else {
                 // Slice type
                 let close_bracket = self.consume_and_check(TokenKind::CloseBracket).clone();
-                return TypeKind::Slice {
+                return AstType::Slice {
                     open_bracket,
                     element_type: Box::new(element_type),
                     close_bracket,
@@ -588,11 +722,11 @@ impl <'a> Parser<'a> {
             }
 
             let close_paren = self.consume_and_check(TokenKind::RightParen).clone();
-            return TypeKind::Tuple { open_paren, element_types, close_paren };
+            return AstType::Tuple { open_paren, element_types, close_paren };
         } else {
             // Simple type
             let type_name = self.consume_and_check(TokenKind::Identifier).clone();
-            return TypeKind::Simple { type_name };
+            return AstType::Simple { type_name };
         }
     }
 
@@ -602,14 +736,11 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_condition_expression(&mut self) -> ExprIndex {
-        //self.consume_and_check(TokenKind::LeftParen);
-        let condition = self.parse_expression_in_context(false);
-        //self.consume_and_check(TokenKind::RightParen);
-        condition
+        self.parse_expression_in_context(false)
     }
 
     fn parse_expression(&mut self) -> ExprIndex {
-        return self.parse_assignment_expression();
+        return self.parse_expression_in_context(true);
     }
 
     fn parse_expression_in_context(&mut self, allow_struct_expr: bool) -> ExprIndex {
@@ -720,17 +851,6 @@ impl <'a> Parser<'a> {
 
         loop {
             match self.current().kind {
-                TokenKind::LeftParen => {
-                    // Function call
-                    let expr_kind = &self.ast.query_expression(expr).kind;
-                    if let ExpressionKind::Variable(var_expr) = expr_kind {
-                        let identifier = var_expr.identifier.clone();
-                        expr = self.parse_call_expression(identifier);
-                    } else {
-                        // Not a simple identifier, can't call
-                        break;
-                    }
-                }
                 TokenKind::OpenBracket => {
                     // Array indexing
                     let open_bracket = self.consume().clone();
@@ -846,6 +966,13 @@ impl <'a> Parser<'a> {
         self.ast.block_expression(left_brace, statements, right_brace)
     }
 
+    fn parse_while_expression(&mut self, while_keyword: Token) -> &Expression {
+        let condition_expr = self.parse_condition_expression();
+        let body = self.parse_body();
+
+        self.ast.while_expression(&self.ast.clone(), while_keyword, condition_expr, body)
+    }
+
     fn parse_if_expression(&mut self, if_keyword: Token) -> &Expression {
         let condition_expr = self.parse_condition_expression(); // parsing condition expression
         let then = self.parse_body(); // parsing 'then' statement
@@ -864,7 +991,7 @@ impl <'a> Parser<'a> {
         None
     }
 
-    fn parse_call_expression(&mut self, identifier: Token) -> ExprIndex {
+    fn parse_call_expression(&mut self, identifier: Path) -> ExprIndex {
         let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
         let mut arguments = Vec::new();
 
@@ -884,7 +1011,7 @@ impl <'a> Parser<'a> {
         self.peek(0)
     }
 
-    fn parse_struct_expression(&mut self, struct_token: Token) -> ExprIndex {
+    fn parse_struct_expression(&mut self, path: Path) -> ExprIndex {
         let left_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
         let mut fields = Vec::new();
         let mut rest = None;
@@ -894,8 +1021,8 @@ impl <'a> Parser<'a> {
             let field_expr = self.ast.query_expression(field);
 
             let field_token = match &field_expr.kind {
-                ExpressionKind::Variable(var_expr) => {
-                    var_expr.identifier.clone()
+                ExpressionKind::Path(path_expr) => {
+                    path_expr.path.tokens.last().unwrap().clone()
                 }
                 _ => {
                     //self.diagnostics_report.borrow_mut().report_expected_identifier(&self.current());
@@ -924,7 +1051,29 @@ impl <'a> Parser<'a> {
 
         let right_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
 
-        self.ast.struct_expression(struct_token, fields, rest, left_brace, right_brace).id
+        self.ast.struct_expression(path, fields, rest, left_brace, right_brace).id
+    }
+
+    fn parse_path(&mut self, base_ident: Token) -> Path {
+        let mut segments = vec![PathSegment { identifier: base_ident.clone(), arguments: None }];
+        let mut tokens = vec![base_ident];
+
+        while self.current().kind == TokenKind::DoubleColon {
+            let sep = self.consume().clone(); // consume '::'
+            tokens.push(sep);
+
+            let seg = self.consume_and_check(TokenKind::Identifier);
+            segments.push(PathSegment { identifier: seg.clone(), arguments: None });
+            tokens.push(seg.clone());
+        }
+
+        let span = TextSpan::combine(tokens.iter().map(|t| t.span.clone()).collect());
+
+        Path {
+            span,
+            segments,
+            tokens,
+        }
     }
 
     fn parse_primary_expression(&mut self) -> ExprIndex { // for string literals, numbers, function calls
@@ -966,13 +1115,16 @@ impl <'a> Parser<'a> {
                 }
             },
             TokenKind::Identifier => {
+                let identifier = token.clone();
+                let path = self.parse_path(identifier);
+
                 if matches!(self.current().kind, TokenKind::LeftParen) {
-                    return self.parse_call_expression(token.clone());
+                    return self.parse_call_expression(path.clone());
                 } else if allow_struct_expr && matches!(self.current().kind, TokenKind::OpenBrace) {
-                    return self.parse_struct_expression(token.clone());
+                    return self.parse_struct_expression(path);
                 }
 
-                self.ast.variable_expression(token.clone())
+                self.ast.path_expression(path.segments, path.tokens)
             },
             TokenKind::True | TokenKind::False => {
                 let value = token.kind == TokenKind::True;
@@ -984,6 +1136,7 @@ impl <'a> Parser<'a> {
                 let type_decl = self.peek(-6).clone();
                 self.parse_array_expression(type_decl, token.clone())
             }
+            TokenKind::While => self.parse_while_expression(token.clone()),
             TokenKind::Break => self.ast.break_expression(token.clone()),
             TokenKind::Continue => self.ast.continue_expression(token.clone()),
             _ => {

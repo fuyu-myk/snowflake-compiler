@@ -340,7 +340,7 @@ pub enum Type {
         element_types: Vec<Box<Type>>,
     },
 
-    // Void type
+    Unit,
     Void,
 }
 
@@ -380,6 +380,7 @@ impl Type {
 
                 Layout { size, alignment }
             },
+            Type::Unit => Layout { size: 0, alignment: 1 },
             Type::Void => Layout { size: 0, alignment: 1 },
         }
     }
@@ -428,6 +429,25 @@ impl From<mir::Type> for Type {
             mir::Type::Object(element_types) => Type::Object {
                 element_types: element_types.into_iter().map(|t| Box::new(Type::from(*t))).collect(),
             },
+            mir::Type::Enum { discriminant, variants } => {
+                // Convert enum tagged union to LIR representation
+                // Tagged union: struct with discriminant and largest variant payload
+                let discriminant_type = Box::new(Type::from(*discriminant));
+                let mut all_field_types = vec![discriminant_type];
+                
+                // TODO: Calculate size and use byte array
+                for variant_fields in variants {
+                    for field_type in variant_fields {
+                        all_field_types.push(Box::new(Type::from(*field_type)));
+                    }
+                }
+                
+                // TODO: Union type in future?
+                Type::Object {
+                    element_types: all_field_types,
+                }
+            }
+            mir::Type::Unit => Type::Unit,
             mir::Type::Void => Type::Void,
         }
     }

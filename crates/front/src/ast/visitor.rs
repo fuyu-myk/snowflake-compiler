@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, Body, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, ExprIndex, Expression, ExpressionKind, FloatExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StatementKind, StmtIndex, StringExpression, StructExpression, TupleExpression, FieldExpression, UnaryExpression, VarExpression, VariantData, WhileStatement};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, ExprIndex, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, PathExpression, ReturnStatement, Statement, StatementKind, StmtIndex, StringExpression, StructExpression, TupleExpression, UnaryExpression, VariantData, WhileExpression};
 use snowflake_common::text::span::TextSpan;
 
 
@@ -24,9 +24,6 @@ pub trait ASTVisitor {
             }
             StatementKind::Const(const_stmt) => {
                 self.visit_const_statement(ast, &const_stmt, &statement);
-            }
-            StatementKind::While(statement) => {
-                self.visit_while_statement(ast, &statement);
             }
             StatementKind::Return(statement) => {
                 self.visit_return_statement(ast, &statement);
@@ -54,6 +51,9 @@ pub trait ASTVisitor {
             ItemKind::Struct(_, generics, variant_data) => {
                 self.visit_struct_item(ast, generics, variant_data, item.id);
             }
+            ItemKind::Enum(_, generics, enum_definition) => {
+                self.visit_enum_item(ast, generics, enum_definition, item.id);
+            }
         }
     }
 
@@ -61,17 +61,14 @@ pub trait ASTVisitor {
 
     fn visit_struct_item(&mut self, ast: &mut Ast, generics: &Generics, variant_data: &VariantData, item_id: ItemIndex);
 
+    fn visit_enum_item(&mut self, ast: &mut Ast, generics: &Generics, enum_definition: &EnumDefinition, item_id: ItemIndex);
+
     fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex);
 
     fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
         if let Some(expr) = &return_statement.return_value {
             self.visit_expression(ast, *expr);
         }
-    }
-
-    fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
-        self.visit_expression(ast, while_statement.condition);
-        self.visit_body(ast, &while_statement.body);
     }
 
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement);
@@ -112,9 +109,6 @@ pub trait ASTVisitor {
             ExpressionKind::Parenthesised(expr) => {
                 self.visit_parenthesised_expression(ast, &expr, &expression);
             }
-            ExpressionKind::Variable(expr) => {
-                self.visit_variable_expression(ast, &expr, &expression);
-            }
             ExpressionKind::Assignment(expr) => {
                 self.visit_assignment_expression(ast, &expr, &expression);
             }
@@ -129,6 +123,9 @@ pub trait ASTVisitor {
             }
             ExpressionKind::Block(expr) => {
                 self.visit_block_expression(ast, &expr, &expression);
+            }
+            ExpressionKind::While(expr) => {
+                self.visit_while_expression(ast, &expr, &expression);
             }
             ExpressionKind::Break(expr) => {
                 self.visit_break_expression(ast, &expr, &expression);
@@ -151,11 +148,16 @@ pub trait ASTVisitor {
             ExpressionKind::Struct(struct_expression) => {
                 self.visit_struct_expression(ast, &struct_expression, &expression);
             }
+            ExpressionKind::Path(path_expression) => {
+                self.visit_path_expression(ast, &path_expression, &expression);
+            }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, &span);
             }
         }
     }
+
+    fn visit_path_expression(&mut self, ast: &mut Ast, path_expression: &PathExpression, expr: &Expression);
 
     fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, expr: &Expression);
 
@@ -178,6 +180,11 @@ pub trait ASTVisitor {
     fn visit_continue_expression(&mut self, ast: &mut Ast, continue_expression: &ContinueExpression, expr: &Expression);
 
     fn visit_break_expression(&mut self, ast: &mut Ast, break_expression: &BreakExpression, expr: &Expression);
+
+    fn visit_while_expression(&mut self, ast: &mut Ast, while_expression: &WhileExpression, expr: &Expression) {
+        self.visit_expression(ast, while_expression.condition);
+        self.visit_block_expression(ast, &while_expression.body, expr);
+    }
 
     fn visit_block_expression(&mut self, ast: &mut Ast, block_expression: &BlockExpression, _expr: &Expression) {
         for statement in &block_expression.statements {
@@ -210,8 +217,6 @@ pub trait ASTVisitor {
         self.visit_expression(ast, assignment_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, ast: &mut Ast, variable_expression: &VarExpression, expr: &Expression);
-
     fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {
         self.visit_expression(ast, parenthesised_expression.expression);
     }
@@ -237,14 +242,4 @@ pub trait ASTVisitor {
     fn visit_float_expression(&mut self, ast: &mut Ast, float: &FloatExpression, expr: &Expression);
 
     fn visit_error(&mut self, ast: &mut Ast, span: &TextSpan);
-
-    fn visit_body(&mut self, ast: &mut Ast, body: &Body) {
-        self.visit_body_default(ast, body);
-    }
-
-    fn visit_body_default(&mut self, ast: &mut Ast, body: &Body) {
-        for statement in body.iter() {
-            self.visit_statement(ast, *statement);
-        }
-    }
 }

@@ -5,7 +5,7 @@ use snowflake_front::{
     ast::{Ast, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, CallExpression, Expression, ExprIndex, ExpressionKind, FxDeclaration, IfExpression, Item, ItemKind, StmtIndex, StatementKind, UnaryExpression, UnaryOp, UnaryOpKind},
     compilation_unit::{GlobalScope, VariableIndex}
 };
-use snowflake_common::typings::Type;
+use snowflake_common::typings::TypeKind;
 
 use crate::backends::c::ast::{CAssignExpr, CAst, CBinExpr, CBinOp, CBlockStatement, CBool, CCallExpr, CExpr, CFloat, CFxDecl, CFxImpl, CIfStatement, CItem, CNumber, CParams, CReturn, CStatement, CType, CUnaryExpr, CUnaryOp, CUsize, CVarDecl, CVarExpr, CWhileStatement};
 
@@ -33,6 +33,7 @@ impl <'a> CTranspiler<'a> {
                     ItemKind::Function(function) => self.transpile_fx_decl(ast, function),
                     ItemKind::Const(_) => unreachable!(),
                     ItemKind::Struct(_, _, _) => unreachable!(),
+                    ItemKind::Enum(_, _, _) => unreachable!(),
                 }).collect::<Vec<_>>()
         );
 
@@ -88,31 +89,6 @@ impl <'a> CTranspiler<'a> {
                     init: Some(init)
                 })
             }
-            StatementKind::While(while_statement) => {
-                let (condition_statements, condition) = self.transpile_expr(ast, while_statement.condition);
-                let (body_statements, body) = unreachable!();
-                let mut while_body_statements = Vec::new();
-
-                if let Some(condition_statements) = condition_statements {
-                    while_body_statements.extend(condition_statements.clone());
-                }
-
-                let mut then_statements = match body_statements {
-                    None => vec![],
-                    Some(body_statements) => body_statements,
-                };
-                then_statements.push(CStatement::Expr(body));
-                while_body_statements.push(CStatement::If(CIfStatement {
-                    condition,
-                    then_block: CBlockStatement { statements: then_statements },
-                    else_block: Some(CBlockStatement { statements: vec![CStatement::Break]}),
-                }));
-
-                CStatement::While(CWhileStatement {
-                    condition: CExpr::Bool(CBool { value: true }),
-                    body: CBlockStatement { statements: while_body_statements }
-                })
-            }
             StatementKind::Return(return_statement) => {
                 let return_value = return_statement.return_value.map(|expr| self.transpile_expr(ast, expr));
                 return match return_value {
@@ -164,10 +140,14 @@ impl <'a> CTranspiler<'a> {
                 let (expr_statements, expr) = self.transpile_expr(ast, paren_expr.expression);
                 (expr_statements, CExpr::Parenthesised(Box::new(expr)))
             }
-            ExpressionKind::Variable(var_expr) => (
-                None,
-                CExpr::Variable(CVarExpr { name: self.get_variable_name(var_expr.variable_index) }),
-            ),
+            ExpressionKind::Path(path_expr) => {
+                let var_idx = self.global_scope.lookup_variable_by_path(&path_expr.path)
+                    .expect("Path should be resolved to variable during semantic analysis");
+                (
+                    None,
+                    CExpr::Variable(CVarExpr { name: self.get_variable_name(var_idx) }),
+                )
+            }
             ExpressionKind::Assignment(assignment_expr) => {
                 let (assign_expr_statements, assign_expr) = self.transpile_expr(ast, assignment_expr.expression);
                 (
@@ -182,13 +162,14 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Block(block_expr) => self.transpile_block_expression(ast, &expr, block_expr),
             ExpressionKind::Call(call_expr) => self.transpile_call_expression(ast, call_expr),
             ExpressionKind::CompoundBinary(_) => unimplemented!("CompoundBinary expressions not yet supported in C transpiler"),
+            ExpressionKind::While(_) => unimplemented!("While expressions not yet supported in C transpiler"),
             ExpressionKind::Break(_) => unimplemented!("Break expressions not yet supported in C transpiler"),
             ExpressionKind::Continue(_) => unimplemented!("Continue expressions not yet supported in C transpiler"),
             ExpressionKind::Array(_) => unimplemented!("Array expressions not yet supported in C transpiler"),
             ExpressionKind::IndexExpression(_) => unimplemented!("Index expressions not yet supported in C transpiler"),
             ExpressionKind::Tuple(_) => unimplemented!("Tuple expressions not yet supported in C transpiler"),
             ExpressionKind::FieldExpression(_) => unimplemented!("TupleIndex expressions not yet supported in C transpiler"),
-            ExpressionKind::Struct(_struct_expr) => unimplemented!("Struct expressions not yet supported in C transpiler"),
+            ExpressionKind::Struct(_) => unimplemented!("Struct expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -236,7 +217,7 @@ impl <'a> CTranspiler<'a> {
 
     fn transpile_block_expression(&mut self, ast: &Ast, expr: &&Expression, block_expr: &BlockExpression) -> (Option<Vec<CStatement>>, CExpr) {
         let mut statements = Vec::new();
-        let temp_returning_expr = !matches!(&expr.ty, Type::Void);
+        let temp_returning_expr = !matches!(&expr.ty, TypeKind::Void);
         let (temp_var, temp_var_name) = if temp_returning_expr {
             let temp_var_decl = self.next_temp_var_decl(&expr.ty);
             let temp_var_name = temp_var_decl.name.clone();
@@ -277,7 +258,7 @@ impl <'a> CTranspiler<'a> {
     }
 
     fn transpile_call_expression(&mut self, ast: &Ast, call_expr: &CallExpression) -> (Option<Vec<CStatement>>, CExpr) {
-        let fx = self.global_scope.functions.get(call_expr.fx_idx);
+        let fx = self.global_scope.functions.get(call_expr.idx_ref);
         let mut statements = Vec::new();
         let arguments = call_expr.arguments.iter().map(|arg| {
             let (arg_statements, arg_expr) = self.transpile_expr(ast, *arg);
@@ -298,6 +279,7 @@ impl <'a> CTranspiler<'a> {
             ItemKind::Function(function) => self.transpile_function(ast, function),
             ItemKind::Const(_) => unreachable!(),
             ItemKind::Struct(_, _, _) => unreachable!(),
+            ItemKind::Enum(_, _, _) => unreachable!(),
         }
     }
 
@@ -329,24 +311,19 @@ impl <'a> CTranspiler<'a> {
         CItem::FxImpl(CFxImpl { identifier: fx_decl.identifier, parameters: fx_decl.parameters, body, return_type: fx_decl.return_type })
     }
 
-    fn transpile_type(ty: &Type) -> String {
+    fn transpile_type(ty: &TypeKind) -> String {
         return match ty {
-            Type::Int => "int".to_string(),
-            Type::Float => "float".to_string(),
-            Type::String => "char*".to_string(),
-            Type::Bool => "int".to_string(),
-            Type::Void => "void".to_string(),
-            Type::Usize => "size_t".to_string(),
-            Type::Array(_, _) => panic!("Array types not supported in C codegen yet"),
-            Type::Object(object_type) => {
-                match &object_type.kind {
-                    snowflake_common::typings::ObjectKind::Struct(_) => panic!("Struct types not supported in C codegen yet"),
-                    snowflake_common::typings::ObjectKind::Tuple => panic!("Tuple types not supported in C codegen yet"),
-                }
-            },
-            Type::ObjectUnresolved(name) => format!("struct_{}", name.span.literal),
-            Type::Unresolved => panic!("Unresolved type"),
-            Type::Error => panic!("Error type"),
+            TypeKind::Int => "int".to_string(),
+            TypeKind::Float => "float".to_string(),
+            TypeKind::String => "char*".to_string(),
+            TypeKind::Bool => "int".to_string(),
+            TypeKind::Void => "void".to_string(),
+            TypeKind::Usize => "size_t".to_string(),
+            TypeKind::ObjectUnresolved(name) => format!("struct_{}", name.span.literal),
+            TypeKind::Unit => "void".to_string(),
+            TypeKind::Unresolved => panic!("Unresolved type"),
+            TypeKind::Error => panic!("Error type"),
+            _ => panic!("Unsupported type in C transpiler"),
         }
     }
 
@@ -389,7 +366,7 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::String(_) => true,
             ExpressionKind::Boolean(_) => true,
             ExpressionKind::Unary(_) => self.is_valid_r_value(ast, expr.id),
-            ExpressionKind::Variable(_) => true,
+            ExpressionKind::Path(_) => true,
             ExpressionKind::Binary(bin_expr) => {
                 let left = self.is_valid_r_value(ast, bin_expr.left);
                 let right = self.is_valid_r_value(ast, bin_expr.right);
@@ -405,21 +382,12 @@ impl <'a> CTranspiler<'a> {
                 }
                 true
             },
-            ExpressionKind::If(_) => false,
-            ExpressionKind::Block(_) => false,
-            ExpressionKind::CompoundBinary(_) => false, // Compound binary expressions should be desugared before reaching here
-            ExpressionKind::Break(_) => false,
-            ExpressionKind::Continue(_) => false,
-            ExpressionKind::Array(_) => false,
-            ExpressionKind::IndexExpression(_) => false,
-            ExpressionKind::Tuple(_) => false,
-            ExpressionKind::FieldExpression(_) => false,
-            ExpressionKind::Struct(_) => false,
             ExpressionKind::Error(_) => panic!("Error expression"),
+            _ => false,
         };
     }
 
-    fn next_temp_var_decl(&mut self, ty: &Type) -> CVarDecl {
+    fn next_temp_var_decl(&mut self, ty: &TypeKind) -> CVarDecl {
         let name = self.next_temp_var_name();
         return CVarDecl {
             name,
@@ -439,16 +407,17 @@ impl <'a> CTranspiler<'a> {
 impl CTranspiler<'_> {
     fn get_variable_name(&mut self, var_idx: VariableIndex) -> String {
         let var = self.global_scope.variables.get(var_idx);
-        let shadowing_vars = self.shadowing_vars.get_mut(&var.name);
+        let var_name_str = var.name.to_string();
+        let shadowing_vars = self.shadowing_vars.get_mut(&var_name_str);
         let shadowing_vars = match shadowing_vars {
             None => {
-                self.shadowing_vars.insert(var.name.clone(), vec![var_idx]);
-                self.shadowing_vars.get_mut(&var.name).unwrap()
+                self.shadowing_vars.insert(var_name_str.clone(), vec![var_idx]);
+                self.shadowing_vars.get_mut(&var_name_str).unwrap()
             }
             Some(shadowing_vars) => shadowing_vars,
         };
 
-        let format = |index: usize| format!("{}_{}", var.name, index);
+        let format = |index: usize| format!("{}_{}", var_name_str, index);
         for (index, var) in shadowing_vars.iter().rev().enumerate() {
             if var == &var_idx {
                 return format(index);

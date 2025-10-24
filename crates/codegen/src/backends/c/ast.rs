@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use anyhow::Result;
 
 use snowflake_front::ast::{BinaryOpKind, BinaryOp, UnaryOpKind, UnaryOp};
-use snowflake_common::typings::Type;
+use snowflake_common::typings::TypeKind;
 
 
 pub struct CAst {
@@ -36,22 +36,20 @@ impl Display for CType {
     }
 }
 
-impl TryFrom<&Type> for CType {
+impl TryFrom<&TypeKind> for CType {
     type Error = ();
 
-    fn try_from(value: &Type) -> Result<Self, Self::Error> {
+    fn try_from(value: &TypeKind) -> Result<Self, Self::Error> {
         return match value {
-            Type::Int => Ok(CType::Int),
-            Type::Float => Ok(CType::Float),
-            Type::String => Ok(CType::String),
-            Type::Bool => Ok(CType::Bool),
-            Type::Void => Ok(CType::Void),
-            Type::Usize => Err(()), // Usize not supported in C codegen yet
-            Type::Array(_, _) => Err(()), // Arrays not supported in C codegen yet
-            Type::Object(_) => Err(()), // Objects (tuples/structs) not supported in C codegen yet
-            Type::ObjectUnresolved(_) => Err(()), // Unresolved objects not supported in C codegen yet
-            Type::Unresolved => Err(()),
-            Type::Error => Err(()),
+            TypeKind::Int => Ok(CType::Int),
+            TypeKind::Float => Ok(CType::Float),
+            TypeKind::String => Ok(CType::String),
+            TypeKind::Bool => Ok(CType::Bool),
+            TypeKind::Void => Ok(CType::Void),
+            TypeKind::Usize => Err(()), // Usize not supported in C codegen yet
+            TypeKind::Unit => Ok(CType::Void),
+            TypeKind::Error => Err(()),
+            _ => Err(()),
         };
     }
 }

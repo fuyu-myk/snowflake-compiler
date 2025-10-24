@@ -67,24 +67,24 @@ impl ASTPrinter {
         self.add_type_kind(&type_annotation.type_kind);
     }
 
-    fn add_type_kind(&mut self, type_kind: &TypeKind) {
+    fn add_type_kind(&mut self, type_kind: &AstType) {
         match type_kind {
-            TypeKind::Simple { type_name } => {
+            AstType::Simple { type_name } => {
                 self.add_type(&type_name.span.literal);
             }
-            TypeKind::Array { element_type, length, .. } => {
+            AstType::Array { element_type, length, .. } => {
                 self.add_text("[");
                 self.add_type_kind(element_type);
                 self.add_text("; ");
                 self.add_size(&length.span.literal);
                 self.add_text("]");
             }
-            TypeKind::Slice { element_type, .. } => {
+            AstType::Slice { element_type, .. } => {
                 self.add_text("[");
                 self.add_type_kind(element_type);
                 self.add_text("]");
             }
-            TypeKind::Tuple { element_types, .. } => {
+            AstType::Tuple { element_types, .. } => {
                 self.add_text("(");
                 for (i, elem_type) in element_types.iter().enumerate() {
                     self.add_type_kind(elem_type);
@@ -95,6 +95,54 @@ impl ASTPrinter {
                 }
                 self.add_text(")");
             }
+            _ => {}
+        }
+    }
+    
+    fn add_variant_data(&mut self, variant_data: &VariantData) {
+        match variant_data {
+            VariantData::Struct{ fields } => {
+                self.add_text(" {\n");
+                self.indent += 1;
+    
+                for field in fields {
+                    self.add_padding();
+                    if let Some(identifier) = &field.identifier {
+                        self.add_text(&identifier.span.literal);
+                        self.add_text(": ");
+                        self.add_type_kind(&field.ty);
+                        self.result.push_str(&format!(",\n"));
+                    } else {
+                        // Tuple struct field
+                        self.add_type_kind(&field.ty);
+                        self.result.push_str(&format!(",\n"));
+                    }
+                }
+    
+                self.indent -= 1;
+                self.add_padding();
+                self.add_text("}");
+            }
+            VariantData::Tuple(fields) => {
+                self.add_text("(");
+    
+                for field in fields {
+                    if let Some(identifier) = &field.identifier {
+                        self.add_text(&identifier.span.literal);
+                    } else {
+                        // Tuple struct field
+                        self.add_type_kind(&field.ty);
+                    }
+    
+                    if field != fields.last().unwrap() {
+                        self.add_text(",");
+                        self.add_whitespace();
+                    }
+                }
+    
+                self.add_text(")");
+            }
+            VariantData::Unit => {}
         }
     }
 }
@@ -134,7 +182,7 @@ impl ASTVisitor for ASTPrinter {
             _ => {}
         }
 
-        self.add_text(let_statement.identifier.span.literal.as_str()); // variable name in white
+        self.add_text(let_statement.pattern.span.literal.as_str()); // variable name in white
         if let Some(type_annotation) = &let_statement.type_annotation {
             self.add_type_annot(type_annotation);
             self.add_whitespace();
@@ -204,10 +252,6 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), ")"));
     }
 
-    fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
-        self.result.push_str(&format!("{}{}", Self::VARIABLE_COLOUR.fg_str(), variable_expression.identifier.span.literal));
-    }
-
     fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, _expr: &Expression) {
         self.indent += 1;
         self.add_keyword("if");
@@ -232,7 +276,7 @@ impl ASTVisitor for ASTPrinter {
             self.add_whitespace();
             self.add_text("{\n");
 
-            for statement in else_branch.body.iter() {
+            for statement in else_branch.body.statements.iter() {
                 self.visit_statement(ast, *statement);
             }
 
@@ -271,7 +315,7 @@ impl ASTVisitor for ASTPrinter {
         self.add_bool(boolean.value);
     }
 
-    fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
+    fn visit_while_expression(&mut self, ast: &mut Ast, while_statement: &WhileExpression, expr: &Expression) {
         self.indent += 1;
         self.add_keyword("while");
         self.add_whitespace();
@@ -280,7 +324,7 @@ impl ASTVisitor for ASTPrinter {
         self.visit_expression(ast, while_statement.condition);
         self.add_text(") {\n");
 
-        self.visit_body(ast, &while_statement.body);
+        self.visit_block_expression(ast, &while_statement.body, expr);
         self.indent -= 1;
         self.add_padding();
         self.add_text("}");
@@ -362,7 +406,7 @@ impl ASTVisitor for ASTPrinter {
     }
 
     fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, _expr: &Expression) {
-        self.add_text(&struct_expression.identifier.span.literal);
+        self.add_text(&struct_expression.path.span.literal);
         self.add_text(" { ");
 
         for (i, field) in struct_expression.fields.iter().enumerate() {
@@ -383,6 +427,10 @@ impl ASTVisitor for ASTPrinter {
         self.add_text(" }");
     }
 
+    fn visit_path_expression(&mut self, _ast: &mut Ast, path_expression: &PathExpression, _expr: &Expression) {
+        self.add_text(&path_expression.path.span.literal);
+    }
+
     fn visit_item_default(&mut self, ast: &mut Ast, item: ItemIndex) {
         let item = ast.query_item(item).clone();
 
@@ -399,6 +447,13 @@ impl ASTVisitor for ASTPrinter {
                 self.add_text(&identifier.span.literal);
 
                 self.visit_struct_item(ast, generics, variant_data, item.id);
+            }
+            ItemKind::Enum(identifier, generics, enum_definition) => {
+                self.add_keyword("enum");
+                self.add_whitespace();
+                self.add_text(&identifier.span.literal);
+
+                self.visit_enum_item(ast, generics, enum_definition, item.id);
             }
         }
     }
@@ -441,7 +496,7 @@ impl ASTVisitor for ASTPrinter {
         }
 
         self.add_text("{\n");
-        for statement in fx_decl.body.iter() {
+        for statement in fx_decl.body.statements.iter() {
             self.visit_statement(ast, *statement);
         }
         self.indent -= 1;
@@ -481,29 +536,36 @@ impl ASTVisitor for ASTPrinter {
             self.add_text(">");
         }
         
-        match variant_data {
-            VariantData::Struct{ fields } => {
-                self.add_text(" {\n");
-                self.indent += 1;
+        self.add_variant_data(variant_data);
+        self.add_text("\n");
+    }
 
-                for field in fields {
-                    self.add_padding();
-                    if let Some(identifier) = &field.identifier {
-                        self.add_text(&identifier.span.literal);
-                        self.add_text(": ");
-                        self.add_type_kind(&field.ty);
-                        self.result.push_str(&format!(",\n"));
-                    } else {
-                        // Tuple struct field
-                        self.add_type_kind(&field.ty);
-                        self.result.push_str(&format!(",\n"));
-                    }
+    fn visit_enum_item(&mut self, _ast: &mut Ast, generics: &Generics, enum_definition: &EnumDefinition, _item_id: ItemIndex) {
+        if !generics.params.is_empty() {
+            self.add_text("<");
+
+            for (i, param) in generics.params.iter().enumerate() {
+                self.add_text(&param.identifier.span.literal);
+                if i < generics.params.len() - 1 {
+                    self.add_text(", ");
                 }
-
-                self.indent -= 1;
-                self.add_padding();
-                self.add_text("}\n");
             }
+
+            self.add_text(">");
         }
+
+        self.add_text(" {\n");
+        self.indent += 1;
+
+        for variant in &enum_definition.variants {
+            self.add_padding();
+            self.add_text(&variant.identifier.span.literal);
+            self.add_variant_data(&variant.data);
+            self.add_text(",\n");
+        }
+
+        self.indent -= 1;
+        self.add_padding();
+        self.add_text("}\n");
     }
 }

@@ -60,6 +60,7 @@ pub enum TokenKind {
     Mutable,
     Const,
     Struct,
+    Enum,
 
     // separators
     LeftParen,
@@ -70,6 +71,7 @@ pub enum TokenKind {
     CloseBracket,
     Comma,
     Colon,
+    DoubleColon,
     Arrow,
     SemiColon,
     DoubleQuote,
@@ -164,6 +166,7 @@ impl Display for TokenKind {
             TokenKind::Mutable => write!(f, "Mutable"),
             TokenKind::Const => write!(f, "Const"),
             TokenKind::Struct => write!(f, "Struct"),
+            TokenKind::Enum => write!(f, "Enum"),
 
             // separators
             TokenKind::LeftParen => write!(f, "("),
@@ -174,6 +177,7 @@ impl Display for TokenKind {
             TokenKind::CloseBracket => write!(f, "]"),
             TokenKind::Comma => write!(f, "Comma"),
             TokenKind::Colon => write!(f, "Colon"),
+            TokenKind::DoubleColon => write!(f, "DoubleColon"),
             TokenKind::Arrow => write!(f, "Arrow"),
             TokenKind::SemiColon => write!(f, "Semicolon"),
             TokenKind::DoubleQuote => write!(f, "\""),

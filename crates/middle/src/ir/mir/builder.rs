@@ -10,7 +10,7 @@ use snowflake_common::{
 };
 
 use crate::ir::{
-    hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, HIR}, 
+    hir::{HIRExprKind, HIRExpression, HIRStatement, HIRStmtKind, QualifiedPath, HIR}, 
     mir::{basic_block::{BasicBlock, BasicBlockIdx}, AssertMessage, BasicBlocks, BinOp, Constant, Function, FunctionIdx, Global, GlobalIdx, Instruction, InstructionIdx, InstructionKind, ObjectKind, PhiNode, TerminatorKind, Type, Value, MIR}
 };
 
@@ -54,7 +54,7 @@ impl MIRBuilder {
                     });
                     
                     let global = Global {
-                        name: variable.name.clone(),
+                        name: variable.name.tokens.last().unwrap().span.literal.clone(),
                         ty: variable.ty.clone().into(),
                         initializer,
                         is_constant: true,
@@ -107,7 +107,12 @@ impl MIRBuilder {
 
         // Resolving every call
         for (instruct_idx, fx_idx, fx_called) in calls_to_resolve {
-            let mir_fx_idx = fx_map[&fx_idx];
+            let mir_fx_idx = fx_map.get(&fx_idx).copied()
+                .unwrap_or_else(|| {
+                    let fx_name = &global_scope.functions.get(fx_idx).name;
+                    bug_report!("Function '{}' (idx {:?}) not found in fx_map. Available functions: {:?}", 
+                        fx_name, fx_idx, fx_map.keys().collect::<Vec<_>>())
+                });
             let instruction = self.mir.functions[fx_called].instructions.get_mut(instruct_idx);
 
             match &mut instruction.kind {
@@ -238,6 +243,15 @@ impl FunctionBuilder {
                             TextSpan::default(),
                         ),
                     ))
+                }
+                Type::Unit => {
+                    // TODO: check if this is appropriate
+                    Value::Constant(Constant::Void)
+                }
+                Type::Enum { .. } => {
+                    tracing::warn!("Function '{}' with enum return type lacks explicit return statement, adding default void return", 
+                                 self.function.name);
+                    Value::Constant(Constant::Void)
                 }
             };
             bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: return_value });
@@ -449,38 +463,6 @@ impl FunctionBuilder {
 
                 let _bb = bb_builder.terminate(basic_blocks, TerminatorKind::Return { value });
             }
-            HIRStmtKind::Loop { body } => {
-                // Each loop will undergo the following steps:
-                // 1. An entry block will be created
-                // 2. The loop body will be constructed; consists of more than one bb
-                // 3. Terminate the last block of the body by jumping (Goto) to the entry block
-                //     - Only done if last block isn't already terminated
-                //     - This is done to prevent the overide of `break` or `return` statements
-                // 4. An exit block will be created
-                // 5. Update all blocks that should know the exit block of the loop
-                let _predecessor = bb_builder.terminate_and(basic_blocks, &mut self.function, TerminatorKind::Goto);
-                let loop_entry_bb = bb_builder.current;
-                self.push_loop(loop_entry_bb);
-
-                for statement in body.iter() {
-                    self.build_statement(basic_blocks, bb_builder, global_scope, statement);
-                }
-
-                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
-                    bb_builder.terminate(basic_blocks, TerminatorKind::Goto(loop_entry_bb));
-
-                    if !self.is_sealed(bb_builder.current) {
-                        self.seal_block(basic_blocks, bb_builder.current, global_scope);
-                    }
-                }
-
-                // Seal the loop entry block after the loop body is built
-                self.seal_block(basic_blocks, loop_entry_bb, global_scope);
-
-                let exit_block = bb_builder.new_bb(basic_blocks, &mut self.function);
-                self.pop_loop_and_update(basic_blocks, exit_block);
-                self.seal_block(basic_blocks, exit_block, global_scope);
-            }
             HIRStmtKind::Item { item_id: _ } => {
                 // In the future, this could handle local function definitions, etc.
             }
@@ -498,8 +480,12 @@ impl FunctionBuilder {
             HIRExprKind::Var { var_idx } => {
                 if let Some(global) = self.globals.iter().find(|g| g.variable_index == *var_idx && g.is_constant) {
                     global.initializer.clone().unwrap_or(Value::Constant(Constant::Void))
+                } else if let Some(param_idx) = self.function.params.iter().position(|p| *p == *var_idx) {
+                    Value::ParamRef(param_idx)
                 } else {
-                    let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope).unwrap();
+                    let var_name = &global_scope.variables.get(*var_idx).name;
+                    let instruct_ref = self.latest_variable_def(basic_blocks, *var_idx, bb_builder.current, global_scope)
+                        .unwrap_or_else(|| bug_report!("Variable '{}' (idx {:?}) has no definition in current scope (function: {})", var_name, var_idx, self.function.name));
                     Value::InstructionRef(instruct_ref)
                 }
             }
@@ -642,12 +628,34 @@ impl FunctionBuilder {
                 );
                 Value::InstructionRef(instruct_ref)
             }
-            HIRExprKind::Struct { fields, tail_expr: _ } => {
+            HIRExprKind::Struct { fields, path, .. } => {
                 let mut field_values = Vec::new();
+                
+                // Prepend the discriminant as the first field for enums
+                let is_enum_variant = if let QualifiedPath::ResolvedEnumVariant(_enum_idx, discriminant) = path {
+                    let discriminant_value = Value::Constant(Constant::Usize(*discriminant));
+                    field_values.push(discriminant_value);
+                    true
+                } else {
+                    false
+                };
+                
                 for field in fields {
                     let field_value = self.build_expr(basic_blocks, bb_builder, global_scope, &field.expr);
                     field_values.push(field_value);
                 }
+
+                // Building an Object type with discriminant + variant fields
+                let ty = if is_enum_variant {
+                    // Get the field types from the original expression
+                    let mut field_types = vec![Box::new(Type::Usize)]; // discriminant
+                    for field in fields {
+                        field_types.push(Box::new(Type::from(field.expr.ty.clone())));
+                    }
+                    Type::Object(field_types)
+                } else {
+                    Type::from(expr.ty.clone())
+                };
 
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
@@ -657,7 +665,7 @@ impl FunctionBuilder {
                             kind: ObjectKind::Struct,
                             fields: field_values
                         },
-                        Type::from(expr.ty.clone()),
+                        ty,
                         expr.span.clone(),
                     ),
                 );
@@ -878,6 +886,40 @@ impl FunctionBuilder {
                 self.calls_to_resolve.push((instruct_idx, *fx_idx));
                 Value::InstructionRef(instruct_idx)
             }
+            HIRExprKind::Loop { body } => {
+                // Each loop will undergo the following steps:
+                // 1. An entry block will be created
+                // 2. The loop body will be constructed; consists of more than one bb
+                // 3. Terminate the last block of the body by jumping (Goto) to the entry block
+                //     - Only done if last block isn't already terminated
+                //     - This is done to prevent the overide of `break` or `return` statements
+                // 4. An exit block will be created
+                // 5. Update all blocks that should know the exit block of the loop
+                let _predecessor = bb_builder.terminate_and(basic_blocks, &mut self.function, TerminatorKind::Goto);
+                let loop_entry_bb = bb_builder.current;
+                self.push_loop(loop_entry_bb);
+
+                for statement in body.iter() {
+                    self.build_statement(basic_blocks, bb_builder, global_scope, statement);
+                }
+
+                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                    bb_builder.terminate(basic_blocks, TerminatorKind::Goto(loop_entry_bb));
+
+                    if !self.is_sealed(bb_builder.current) {
+                        self.seal_block(basic_blocks, bb_builder.current, global_scope);
+                    }
+                }
+
+                // Seal the loop entry block after the loop body is built
+                self.seal_block(basic_blocks, loop_entry_bb, global_scope);
+
+                let exit_block = bb_builder.new_bb(basic_blocks, &mut self.function);
+                self.pop_loop_and_update(basic_blocks, exit_block);
+                self.seal_block(basic_blocks, exit_block, global_scope);
+
+                Value::Constant(Constant::Void)
+            }
             HIRExprKind::Break => {
                 // Current block terminated with an unresolved terminator (for breaks in loops)
                 // maybe problematic?
@@ -896,6 +938,7 @@ impl FunctionBuilder {
                     panic!("Continue statement outside of loop");
                 }
             }
+            HIRExprKind::Path(_) => todo!(),
         }
     }
 

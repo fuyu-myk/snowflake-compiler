@@ -1,8 +1,8 @@
-use std::{fmt::{Display, Formatter}, ops::Deref};
+use std::fmt::{Display, Formatter};
 
 use crate::compilation_unit::{VariableIndex};
 use snowflake_common::{bug_report, token::{Token, TokenKind}};
-use snowflake_common::{text::span::TextSpan, typings::Type, idx, Idx, IndexVec};
+use snowflake_common::{text::span::TextSpan, typings::TypeKind, idx, Idx, IndexVec};
 use visitor::ASTVisitor;
 use printer::ASTPrinter;
 
@@ -64,9 +64,6 @@ impl Ast {
             ExpressionKind::Assignment(assign_expr) => {
                 assign_expr.variable_index = variable_index;
             }
-            ExpressionKind::Variable(var_expr) => {
-                var_expr.variable_index = variable_index;
-            }
             _ => unreachable!("Unable to set variable of non-variable expression"),
         }
     }
@@ -89,15 +86,25 @@ impl Ast {
         let expr = self.query_expression_mut(expr_id);
         match &mut expr.kind {
             ExpressionKind::Call(call_expr) => {
-                call_expr.fx_idx = fx_idx;
+                call_expr.idx_ref = fx_idx;
             }
             _ => unreachable!("Unable to set function of non-call expression"),
         }
     }
 
-    pub fn set_type(&mut self, expr_id: ExprIndex, ty: Type) {
+    pub fn set_type(&mut self, expr_id: ExprIndex, ty: TypeKind) {
         let expr = &mut self.expressions[expr_id];
         expr.ty = ty;
+    }
+
+    pub fn set_resolved_variable(&mut self, expr_id: ExprIndex, var_idx: VariableIndex) {
+        let expr = &mut self.expressions[expr_id];
+        match &mut expr.kind {
+            ExpressionKind::Path(path_expr) => {
+                path_expr.resolved_variable = Some(var_idx);
+            }
+            _ => unreachable!("Unable to set resolved variable for non-path expression"),
+        }
     }
 
     // Statement
@@ -120,12 +127,19 @@ impl Ast {
     }
 
     pub fn let_statement(
-        &mut self, ast: &Ast, identifier: Token, initialiser: ExprIndex, type_annotation: Option<StaticTypeAnnotation>
+        &mut self, 
+        ast: &Ast, 
+        mut pattern: Pattern, 
+        initialiser: ExprIndex, 
+        type_annotation: Option<StaticTypeAnnotation>
     ) -> &Statement {
         let mut spans = Vec::new();
+        let expr = self.query_expression(initialiser).clone();
         
-        spans.push(identifier.span.clone());
-        spans.push(self.query_expression(initialiser).span(ast));
+        spans.push(pattern.span.clone());
+        spans.push(expr.span(ast));
+
+        let kind = LetStatementKind::Init(Box::new(expr));
         
         if let Some(ref annotation) = type_annotation {
             spans.extend(annotation.collect_spans());
@@ -134,23 +148,27 @@ impl Ast {
         let span_refs: Vec<&TextSpan> = spans.iter().collect();
         let span = TextSpan::combine_refs(&span_refs);
 
-        let pattern = Pattern {
-            id: StmtIndex::new(0), // Will be set after statement creation
-            kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
-            span: identifier.span.clone(),
-            token: identifier.clone(),
-        };
-
-        self.statement_from_kind(
+        let statement = Statement::new(
             StatementKind::Let(LetStatement { 
-                identifier: identifier.clone(), 
-                pattern,
+                kind, 
+                pattern: pattern.clone(),
                 initialiser, 
                 type_annotation, 
                 variable_index: VariableIndex::new(0) 
             }),
-            span,
-        )
+            StmtIndex::new(0),
+            span
+        );
+        
+        let statement_id = self.statements.push(statement);
+        self.statements[statement_id].id = statement_id;
+        pattern.id = statement_id;
+        
+        if let StatementKind::Let(let_stmt) = &mut self.statements[statement_id].kind {
+            let_stmt.pattern.id = statement_id;
+        }
+        
+        &self.statements[statement_id]
     }
 
     // Pattern
@@ -196,54 +214,6 @@ impl Ast {
         }
     }
 
-    // Update let_statement to accept a Pattern and set its ID
-    pub fn let_statement_with_pattern(
-        &mut self, 
-        ast: &Ast, 
-        mut pattern: Pattern, 
-        initialiser: ExprIndex, 
-        type_annotation: Option<StaticTypeAnnotation>
-    ) -> &Statement {
-        let mut spans = Vec::new();
-        
-        spans.push(pattern.span.clone());
-        spans.push(self.query_expression(initialiser).span(ast));
-        
-        if let Some(ref annotation) = type_annotation {
-            spans.extend(annotation.collect_spans());
-        }
-        
-        let span_refs: Vec<&TextSpan> = spans.iter().collect();
-        let span = TextSpan::combine_refs(&span_refs);
-
-        let identifier = match &pattern.kind {
-            PatternKind::Identifier(_, token) => token.clone(),
-            _ => pattern.token.clone()
-        };
-
-        let statement = Statement::new(
-            StatementKind::Let(LetStatement { 
-                identifier, 
-                pattern: pattern.clone(),
-                initialiser, 
-                type_annotation, 
-                variable_index: VariableIndex::new(0) 
-            }),
-            StmtIndex::new(0),
-            span
-        );
-        
-        let statement_id = self.statements.push(statement);
-        self.statements[statement_id].id = statement_id;
-        pattern.id = statement_id;
-        
-        if let StatementKind::Let(let_stmt) = &mut self.statements[statement_id].kind {
-            let_stmt.pattern.id = statement_id;
-        }
-        
-        &self.statements[statement_id]
-    }
-
     pub fn const_statement(
         &mut self, 
         ast: &Ast, 
@@ -273,16 +243,16 @@ impl Ast {
     }
 
     pub fn if_expression(
-        &mut self, if_keyword: Token, condition: ExprIndex, then_branch: Body, else_statement: Option<ElseBranch>
+        &mut self, if_keyword: Token, condition: ExprIndex, then_branch: BlockExpression, else_statement: Option<ElseBranch>
     ) -> &Expression {
         let mut span_refs = vec![&if_keyword.span];
         let condition_span = self.query_expression(condition).span(self);
         span_refs.push(&condition_span);
-        let then_span = then_branch.span(self);
+        let then_span = then_branch.span.clone();
         span_refs.push(&then_span);
         
         let else_spans: Vec<TextSpan> = if let Some(ref else_branch) = else_statement {
-            let else_span = else_branch.body.span(self);
+            let else_span = else_branch.body.span.clone();
             vec![else_branch.else_keyword.span.clone(), else_span]
         } else {
             vec![]
@@ -310,19 +280,7 @@ impl Ast {
         span_refs.push(&right_brace.span);
         
         let span = TextSpan::combine_refs(&span_refs);
-        self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace }), span)
-    }
-
-    pub fn while_statement(&mut self, ast: &Ast, while_keyword: Token, condition: ExprIndex, body: Body) -> &Statement {
-        let condition_span = self.query_expression(condition).span(ast);
-        let body_span = body.span(ast);
-        let span_refs = vec![&while_keyword.span, &condition_span, &body_span];
-        let span = TextSpan::combine_refs(&span_refs);
-        
-        self.statement_from_kind(
-            StatementKind::While(WhileStatement { while_keyword, condition, body }),
-            span
-        )
+        self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace, span: span.clone() }), span)
     }
 
     pub fn return_statement(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExprIndex>) -> &Statement {
@@ -348,7 +306,7 @@ impl Ast {
 
     // Expression
     pub fn expression_from_kind(&mut self, kind: ExpressionKind, span: TextSpan) -> &Expression {
-        let expression = Expression::new(kind, ExprIndex::new(0), Type::Unresolved, span);
+        let expression = Expression::new(kind, ExprIndex::new(0), TypeKind::Unresolved, span);
         let expr_id = self.expressions.push(expression);
 
         self.expressions[expr_id].id = expr_id;
@@ -414,11 +372,6 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Parenthesised(ParenExpression { left_paren, expression, right_paren }), span)
     }
 
-    pub fn variable_expression(&mut self, identifier: Token) -> &Expression {
-        let span = identifier.span.clone();
-        self.expression_from_kind(ExpressionKind::Variable(VarExpression { identifier, variable_index: VariableIndex::new(0) }), span)
-    }
-
     pub fn assignment_expression(&mut self, left_hand_side: ExprIndex, equals: Token, expression: ExprIndex) -> &Expression {
         let lhs_span = self.query_expression(left_hand_side).span(self);
         let expr_span = self.query_expression(expression).span(self);
@@ -436,7 +389,7 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Boolean(BoolExpression { value, token }), span)
     }
 
-    pub fn call_expression(&mut self, callee: Token, left_paren: Token, arguments: Vec<ExprIndex>, right_paren: Token) -> &Expression {
+    pub fn call_expression(&mut self, callee: Path, left_paren: Token, arguments: Vec<ExprIndex>, right_paren: Token) -> &Expression {
         let mut span_refs = vec![&callee.span, &left_paren.span];
         
         let arg_spans: Vec<TextSpan> = arguments.iter()
@@ -451,7 +404,19 @@ impl Ast {
         let span = TextSpan::combine_refs(&span_refs);
         
         self.expression_from_kind(
-            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, fx_idx: ItemIndex::unreachable() }),
+            ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, idx_ref: ItemIndex::unreachable() }),
+            span
+        )
+    }
+
+    pub fn while_expression(&mut self, ast: &Ast, while_keyword: Token, condition: ExprIndex, body: BlockExpression) -> &Expression {
+        let condition_span = self.query_expression(condition).span(ast);
+        let body_span = body.span.clone();
+        let span_refs = vec![&while_keyword.span, &condition_span, &body_span];
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(
+            ExpressionKind::While(WhileExpression { while_keyword, condition, body }),
             span
         )
     }
@@ -548,7 +513,7 @@ impl Ast {
 
     pub fn struct_expression(
         &mut self,
-        identifier: Token,
+        path: Path,
         fields: Vec<ExprField>,
         rest_token: Option<Token>,
         left_brace: Token,
@@ -565,7 +530,7 @@ impl Ast {
             StructRest::None
         };
 
-        let mut all_spans = vec![identifier.span.clone(), left_brace.span.clone()];
+        let mut all_spans = vec![path.span.clone(), left_brace.span.clone()];
         for field_idx in fields.iter() {
             if field_idx.is_shorthand {
                 all_spans.push(field_idx.identifier.span.clone());
@@ -582,8 +547,25 @@ impl Ast {
         all_spans.push(right_brace.span.clone());
 
         self.expression_from_kind(
-            ExpressionKind::Struct(StructExpression { identifier: identifier.clone(), fields, rest }),
+            ExpressionKind::Struct(StructExpression { path, fields, rest }),
             TextSpan::combine(all_spans)
+        )
+    }
+
+    pub fn path_expression(
+        &mut self,
+        segments: Vec<PathSegment>,
+        tokens: Vec<Token>,
+    ) -> &Expression {
+        let path = Path {
+            span: TextSpan::combine(tokens.iter().map(|t| t.span.clone()).collect()),
+            segments,
+            tokens,
+        };
+
+        self.expression_from_kind(
+            ExpressionKind::Path(PathExpression { resolved_variable: None, path: path.clone() }), 
+            path.span,
         )
     }
 
@@ -613,6 +595,18 @@ impl Ast {
         &self.items[id]
     }
 
+    pub fn enum_item(
+        &mut self,
+        identifier: Token,
+        generics: Generics,
+        definition: Vec<Variant>,
+    ) -> &Item {
+        let all_spans = vec![identifier.span.clone(), generics.span.clone()];
+        let definition = EnumDefinition { variants: definition };
+
+        self.item_from_kind(ItemKind::Enum(identifier, generics, definition), TextSpan::combine(all_spans))
+    }
+
     pub fn struct_item(
         &mut self,
         identifier: Token,
@@ -638,7 +632,7 @@ impl Ast {
 
     pub fn constant_item(
         &mut self,
-        identifier: Token,
+        identifier: Pattern,
         generics: Generics,
         type_annotation: StaticTypeAnnotation,
         expr: Option<Box<ExprIndex>>,
@@ -666,7 +660,7 @@ impl Ast {
         fx_keyword: Token,
         identifier: Token,
         generics: Generics,
-        body: Body,
+        body: BlockExpression,
         return_type: Option<FxReturnType>,
         index: ItemIndex
     ) -> &Item {
@@ -674,7 +668,7 @@ impl Ast {
             fx_keyword.span.clone(),
             identifier.span.clone(),
             generics.span.clone(),
-            body.span(self),
+            body.span.clone(),
         ];
         
         if let Some(ref rt) = return_type {
@@ -697,6 +691,7 @@ impl Ast {
     pub fn visualise(&mut self) -> () {
         let mut printer = ASTPrinter::new();
         self.visit(&mut printer);
+        println!("=== AST Visualisation ===");
         println!("{}", printer.result);
     }
 }
@@ -724,11 +719,12 @@ pub enum ItemKind {
     Function(FxDeclaration),
     Const(Box<ConstantItem>),
     Struct(Token, Generics, VariantData),
+    Enum(Token, Generics, EnumDefinition),
 }
 
 #[derive(Debug, Clone)]
 pub struct ConstantItem {
-    pub identifier: Token,
+    pub identifier: Pattern,
     pub generics: Generics,
     pub type_annotation: StaticTypeAnnotation,
     pub expr: Option<Box<ExprIndex>>,
@@ -738,11 +734,11 @@ pub struct ConstantItem {
 pub struct FxReturnType {
     pub arrow: Token,
     pub type_tokens: Vec<Token>,
-    pub ty: TypeKind,
+    pub ty: AstType,
 }
 
 impl FxReturnType {
-    pub fn new(arrow: Token, type_tokens: Vec<Token>, ty: TypeKind) -> Self {
+    pub fn new(arrow: Token, type_tokens: Vec<Token>, ty: AstType) -> Self {
         Self { arrow, type_tokens, ty }
     }
 }
@@ -752,7 +748,7 @@ pub struct FxDeclaration {
     pub fx_keyword: Token,
     pub identifier: Token,
     pub generics: Generics,
-    pub body: Body,
+    pub body: BlockExpression,
     pub return_type: Option<FxReturnType>,
     pub index: ItemIndex,
 }
@@ -786,7 +782,7 @@ impl Generics {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericParam {
     pub idx: VariableIndex,
     pub identifier: Token,
@@ -800,15 +796,15 @@ impl GenericParam {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
     Const {
-        ty: Box<TypeKind>,
+        ty: Box<AstType>,
         span: TextSpan,
         expr: Box<Expression>,
     },
     Type {
-        ty: Box<TypeKind>,
+        ty: Box<AstType>,
         span: TextSpan,
     }
 }
@@ -817,17 +813,30 @@ pub enum GenericParamKind {
 pub enum VariantData {
     Struct {
         fields: Vec<FieldDefinition>,
-    }
+    },
+    Tuple(Vec<FieldDefinition>),
+    Unit,
 }
 
 #[derive(Debug, Clone)]
+pub struct EnumDefinition {
+    pub variants: Vec<Variant>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Variant {
+    pub identifier: Token,
+    pub data: VariantData,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldDefinition {
     pub identifier: Option<Token>,
-    pub ty: Box<TypeKind>,
+    pub ty: Box<AstType>,
 }
 
 impl FieldDefinition {
-    pub fn new(identifier: Option<Token>, ty: Box<TypeKind>) -> Self {
+    pub fn new(identifier: Option<Token>, ty: Box<AstType>) -> Self {
         Self { identifier, ty }
     }
 }
@@ -836,59 +845,9 @@ impl FieldDefinition {
 pub enum StatementKind {
     Expression(ExprIndex),
     Let(LetStatement),
-    While(WhileStatement),
     Return(ReturnStatement),
     Const(ConstStatement),
     Item(ItemIndex),
-}
-
-#[derive(Debug, Clone)]
-pub struct Body {
-    pub open_brace: Token,
-    pub statements: Vec<StmtIndex>,
-    pub close_brace: Token,
-}
-
-impl Body {
-    pub fn new(open_brace: Token, statements: Vec<StmtIndex>, close_brace: Token) -> Self {
-        Self { open_brace, statements, close_brace }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &StmtIndex> {
-        self.statements.iter()
-    }
-
-    pub fn span(&self, ast: &Ast) -> TextSpan {
-        TextSpan::combine(
-            self.statements.iter().map(|statement| ast.query_statement(*statement).span(ast)
-            ).collect::<Vec<TextSpan>>()
-        )
-    }
-
-    pub fn last_statement_type(&self, ast: &Ast) -> Option<Type> {
-        match self.statements.last() {
-            Some(statement) => {
-                let statement = ast.query_statement(*statement);
-                match &statement.kind {
-                    StatementKind::Expression(expr_id) => Some(ast.query_expression(*expr_id).ty.clone()),
-                    _ => None,
-                }
-            }
-            None => None,
-        }
-    }
-
-    pub fn type_or_void(&self, ast: &Ast) -> Type {
-        self.last_statement_type(ast).unwrap_or(Type::Void)
-    }
-}
-
-impl Deref for Body {
-    type Target = Vec<StmtIndex>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.statements
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -900,11 +859,11 @@ pub struct ReturnStatement {
 #[derive(Debug, Clone)]
 pub struct StaticTypeAnnotation {
     pub colon: Token,
-    pub type_kind: TypeKind,
+    pub type_kind: AstType,
 }
 
-#[derive(Debug, Clone)]
-pub enum TypeKind {
+#[derive(Debug, Clone, PartialEq)]
+pub enum AstType {
     /// Simple types like `int`, `float`, etc.
     Simple {
         type_name: Token,
@@ -912,7 +871,7 @@ pub enum TypeKind {
     /// Array types like `[int; 5]` or `[[int; 3]; 2]`
     Array {
         open_bracket: Token,
-        element_type: Box<TypeKind>,
+        element_type: Box<AstType>,
         semicolon: Token,
         length: Token,
         close_bracket: Token,
@@ -921,36 +880,38 @@ pub enum TypeKind {
     // TODO
     Slice {
         open_bracket: Token,
-        element_type: Box<TypeKind>,
+        element_type: Box<AstType>,
         close_bracket: Token,
     },
     /// Tuple types like `(int, string)`
     Tuple {
         open_paren: Token,
-        element_types: Vec<Box<TypeKind>>,
+        element_types: Vec<Box<AstType>>,
         close_paren: Token,
-    }
+    },
+    /// Path types like `std::path::Path`
+    Path(Option<Box<QualifiedPath>>, Path),
 }
 
 impl StaticTypeAnnotation {
     pub fn new_simple(colon: Token, type_name: Token) -> Self {
         Self { 
             colon, 
-            type_kind: TypeKind::Simple { type_name }
+            type_kind: AstType::Simple { type_name }
         }
     }
 
     pub fn new_array(
         colon: Token,
         open_bracket: Token,
-        element_type: TypeKind,
+        element_type: AstType,
         semicolon: Token,
         length: Token,
         close_bracket: Token
     ) -> Self {
         Self {
             colon,
-            type_kind: TypeKind::Array {
+            type_kind: AstType::Array {
                 open_bracket,
                 element_type: Box::new(element_type),
                 semicolon,
@@ -963,12 +924,12 @@ impl StaticTypeAnnotation {
     pub fn new_slice(
         colon: Token,
         open_bracket: Token,
-        element_type: TypeKind,
+        element_type: AstType,
         close_bracket: Token
     ) -> Self {
         Self {
             colon,
-            type_kind: TypeKind::Slice {
+            type_kind: AstType::Slice {
                 open_bracket,
                 element_type: Box::new(element_type),
                 close_bracket,
@@ -979,12 +940,12 @@ impl StaticTypeAnnotation {
     pub fn new_tuple(
         colon: Token,
         open_paren: Token,
-        element_types: Vec<TypeKind>,
+        element_types: Vec<AstType>,
         close_paren: Token
     ) -> Self {
         Self {
             colon,
-            type_kind: TypeKind::Tuple {
+            type_kind: AstType::Tuple {
                 open_paren,
                 element_types: element_types.into_iter().map(Box::new).collect(),
                 close_paren,
@@ -1000,48 +961,59 @@ impl StaticTypeAnnotation {
     }
 
     /// Collect spans from `TypeKind`
-    fn collect_type_kind_spans(&self, type_kind: &TypeKind, spans: &mut Vec<TextSpan>) {
+    fn collect_type_kind_spans(&self, type_kind: &AstType, spans: &mut Vec<TextSpan>) {
         match type_kind {
-            TypeKind::Simple { type_name } => {
+            AstType::Simple { type_name } => {
                 spans.push(type_name.span.clone());
             }
-            TypeKind::Array { open_bracket, element_type, semicolon, length, close_bracket } => {
+            AstType::Array { open_bracket, element_type, semicolon, length, close_bracket } => {
                 spans.push(open_bracket.span.clone());
                 self.collect_type_kind_spans(element_type, spans);
                 spans.push(semicolon.span.clone());
                 spans.push(length.span.clone());
                 spans.push(close_bracket.span.clone());
             }
-            TypeKind::Slice { open_bracket, element_type, close_bracket } => {
+            AstType::Slice { open_bracket, element_type, close_bracket } => {
                 spans.push(open_bracket.span.clone());
                 self.collect_type_kind_spans(element_type, spans);
                 spans.push(close_bracket.span.clone());
             }
-            TypeKind::Tuple { open_paren, element_types, close_paren } => {
+            AstType::Tuple { open_paren, element_types, close_paren } => {
                 spans.push(open_paren.span.clone());
                 for elem_type in element_types {
                     self.collect_type_kind_spans(elem_type, spans);
                 }
                 spans.push(close_paren.span.clone());
             }
+            AstType::Path(_, path) => {
+                spans.push(path.span.clone());
+            }
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct WhileStatement {
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileExpression {
     pub while_keyword: Token,
     pub condition: ExprIndex,
-    pub body: Body,
+    pub body: BlockExpression,
 }
 
 #[derive(Debug, Clone)]
+/// `let <pattern>:<type_annotation> = <ExprIndex>;`
 pub struct LetStatement {
-    pub identifier: Token,
+    pub kind: LetStatementKind,
     pub pattern: Pattern,
     pub initialiser: ExprIndex,
     pub type_annotation: Option<StaticTypeAnnotation>,
     pub variable_index: VariableIndex,
+}
+
+#[derive(Debug, Clone)]
+pub enum LetStatementKind {
+    Declaration,
+    Init(Box<Expression>),
+    // InitElse(Box<Expression>, Box<BlockExpression>), // TODO: future impl
 }
 
 #[derive(Debug, Clone)]
@@ -1068,7 +1040,7 @@ impl Statement {
         match &self.kind {
             StatementKind::Expression(expr_id) => ast.query_expression(*expr_id).span(ast),
             StatementKind::Let(let_statement) => {
-                let mut spans = vec![let_statement.identifier.span.clone()];
+                let mut spans = vec![let_statement.pattern.span.clone()];
                 if let Some(type_annotation) = &let_statement.type_annotation {
                     spans.push(type_annotation.colon.span.clone());
                     spans.extend(type_annotation.collect_spans());
@@ -1081,13 +1053,6 @@ impl Statement {
                 spans.push(const_statement.type_annotation.colon.span.clone());
                 spans.extend(const_statement.type_annotation.collect_spans());
 
-                TextSpan::combine(spans)
-            }
-            StatementKind::While(while_statement) => {
-                let mut spans = vec![while_statement.while_keyword.span.clone()];
-                spans.push(ast.query_expression(while_statement.condition).span(ast));
-                spans.push(while_statement.body.span(ast));
-                
                 TextSpan::combine(spans)
             }
             StatementKind::Return(return_statement) => {
@@ -1115,9 +1080,139 @@ pub struct Pattern {
 pub enum PatternKind {
     Wildcard, // TODO: future impl
     Identifier(BindingMode, Token),
+    Struct(Option<Box<QualifiedPath>>, Path, Vec<PatternField>),
+    TupleStruct(Option<Box<QualifiedPath>>, Path, Vec<Box<Pattern>>),
     Tuple(Vec<Box<Pattern>>),
     Expression(Box<Expression>),
     Err,
+}
+
+#[derive(Debug, Clone)]
+pub struct PatternField {
+    pub identifier: Token,
+    pub pattern: Box<Pattern>,
+    pub is_shorthand: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualifiedPath {
+    pub path_span: TextSpan,
+    pub ty: Box<AstType>,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct Path {
+    pub span: TextSpan,
+    pub segments: Vec<PathSegment>,
+    pub tokens: Vec<Token>,
+}
+
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare only the identifier literals
+        if self.segments.len() != other.segments.len() {
+            return false;
+        }
+        
+        self.segments.iter().zip(other.segments.iter()).all(|(a, b)| {
+            a.identifier.span.literal == b.identifier.span.literal
+        })
+    }
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (i, segment) in self.segments.iter().enumerate() {
+            write!(f, "{}", segment.identifier.span.literal)?;
+            if i < self.segments.len() - 1 {
+                write!(f, "::")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathSegment {
+    pub identifier: Token,
+    pub arguments: Option<Box<GenericArguments>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericArguments {
+    AngleBrackets(AngleBracketedArguments),
+    Parentheses(ParenthesizedArguments),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AngleBracketedArguments {
+    pub span: TextSpan,
+    pub args: Vec<AngleBracketedArg>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AngleBracketedArg {
+    Arg(GenericArguments),
+    Constraint(ItemConstraint),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemConstraint {
+    pub identifier: Token,
+    pub args: Option<GenericArguments>,
+    pub kind: ItemConstraintKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemConstraintKind {
+    Equality {
+        term: Term,
+    },
+    TraitBound {
+        bounds: GenericBounds,
+    }
+}
+
+pub type GenericBounds = Vec<GenericBound>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenericBound {
+    TraitBound(FullTraitRef),
+    LifetimeBound(Token),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FullTraitRef {
+    pub generic_params: Vec<GenericParam>,
+    pub trait_ref: TraitRef,
+    pub span: TextSpan,
+    pub parens: Parens,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitRef {
+    pub path: Path,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Parens {
+    Yes,
+    No,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Term {
+    Type(Box<AstType>),
+    Constant(Box<Expression>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParenthesizedArguments {
+    pub span: TextSpan,
+    pub inputs: Vec<Box<AstType>>,
+    pub inputs_spans: TextSpan,
+    pub output: Option<Box<AstType>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1129,7 +1224,7 @@ pub enum Mutability {
     Immutable,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionKind {
     Number(NumberExpression),
     Float(FloatExpression),
@@ -1139,12 +1234,12 @@ pub enum ExpressionKind {
     CompoundBinary(CompoundBinaryExpression),
     Unary(UnaryExpression),
     Parenthesised(ParenExpression),
-    Variable(VarExpression),
     Assignment(AssignExpression),
     Boolean(BoolExpression),
     Call(CallExpression),
     If(IfExpression),
     Block(BlockExpression),
+    While(WhileExpression),
     Break(BreakExpression),
     Continue(ContinueExpression),
     Array(ArrayExpression),
@@ -1152,6 +1247,7 @@ pub enum ExpressionKind {
     Tuple(TupleExpression),
     FieldExpression(FieldExpression),
     Struct(StructExpression),
+    Path(PathExpression),
     Error(TextSpan),
 }
 
@@ -1165,59 +1261,65 @@ impl ExpressionKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PathExpression {
+    pub resolved_variable: Option<VariableIndex>,
+    pub path: Path,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructExpression {
-    pub identifier: Token,
+    pub path: Path,
     pub fields: Vec<ExprField>,
     pub rest: StructRest,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExprField {
     pub identifier: Token,
     pub expr: Expression,
     pub is_shorthand: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StructRest {
     Rest(TextSpan), // ..
     None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldExpression {
     pub object: ExprIndex,
     pub field: FieldName,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldName {
     pub period: Token,
     pub idx_no: ExprIndex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TupleExpression {
     pub open_paren: Token,
     pub elements: Vec<ExprIndex>,
     pub close_paren: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IndexExpression {
     pub object: ExprIndex,
     pub index: ArrayIndex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ArrayIndex {
     pub open_square_bracket: Token,
     pub idx_no: ExprIndex,
     pub close_square_bracket: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ArrayExpression {
     pub type_decl: Token,
     pub open_square_bracket: Token,
@@ -1226,24 +1328,29 @@ pub struct ArrayExpression {
     pub close_square_bracket: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BreakExpression {
     pub break_keyword: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ContinueExpression {
     pub continue_keyword: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BlockExpression {
     pub left_brace: Token,
     pub statements: Vec<StmtIndex>,
     pub right_brace: Token,
+    pub span: TextSpan,
 }
 
 impl BlockExpression {
+    pub fn new(left_brace: Token, statements: Vec<StmtIndex>, right_brace: Token, span: TextSpan) -> Self {
+        Self { left_brace, statements, right_brace, span }
+    }
+
     pub fn returning_expression(&self, ast: &Ast) -> Option<ExprIndex> {
         if let Some(last_statement) = self.statements.last() {
             let statement = ast.query_statement(*last_statement);
@@ -1254,35 +1361,63 @@ impl BlockExpression {
         }
         None
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &StmtIndex> {
+        self.statements.iter()
+    }
+
+    pub fn span(&self, ast: &Ast) -> TextSpan {
+        TextSpan::combine(
+            self.statements.iter().map(|statement| ast.query_statement(*statement).span(ast)
+            ).collect::<Vec<TextSpan>>()
+        )
+    }
+
+    pub fn last_statement_type(&self, ast: &Ast) -> Option<TypeKind> {
+        match self.statements.last() {
+            Some(statement) => {
+                let statement = ast.query_statement(*statement);
+                match &statement.kind {
+                    StatementKind::Expression(expr_id) => Some(ast.query_expression(*expr_id).ty.clone()),
+                    _ => None,
+                }
+            }
+            None => None,
+        }
+    }
+
+    pub fn type_or_void(&self, ast: &Ast) -> TypeKind {
+        self.last_statement_type(ast).unwrap_or(TypeKind::Void)
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ElseBranch {
     pub else_keyword: Token,
-    pub body: Body,
+    pub body: BlockExpression,
 }
 
 impl ElseBranch {
-    pub fn new(else_keyword: Token, body: Body) -> Self {
+    pub fn new(else_keyword: Token, body: BlockExpression) -> Self {
         ElseBranch { else_keyword, body }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct IfExpression {
     pub if_keyword: Token,
     pub condition: ExprIndex,
-    pub then_branch: Body,
+    pub then_branch: BlockExpression,
     pub else_branch: Option<ElseBranch>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallExpression {
-    pub callee: Token,
+    pub callee: Path,
     pub left_paren: Token,
     pub arguments: Vec<ExprIndex>,
     pub right_paren: Token,
-    pub fx_idx: ItemIndex,
+    pub idx_ref: ItemIndex,
 }
 
 impl CallExpression {
@@ -1291,13 +1426,13 @@ impl CallExpression {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BoolExpression {
     pub value: bool,
     pub token: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssignExpression {
     pub lhs: ExprIndex,
     pub equals: Token,
@@ -1305,7 +1440,7 @@ pub struct AssignExpression {
     pub variable_index: VariableIndex,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum UnaryOpKind {
     Negation, // unary minus
     BitwiseNot, // ~
@@ -1320,7 +1455,7 @@ impl Display for UnaryOpKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnaryOp {
     pub kind: UnaryOpKind,
     pub token: Token,
@@ -1332,25 +1467,13 @@ impl UnaryOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpression {
     pub operator: UnaryOp,
     pub operand: ExprIndex,
 }
 
-#[derive(Debug, Clone)]
-pub struct VarExpression {
-    pub identifier: Token,
-    pub variable_index: VariableIndex,
-}
-
-impl VarExpression {
-    pub fn identifier(&self) -> &str {
-        &self.identifier.span.literal
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum BinaryOpKind {
     // arithmentic
     Plus,
@@ -1406,7 +1529,7 @@ pub enum BinaryOpAssociativity {
     Right,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BinaryOp {
     pub kind: BinaryOpKind,
     pub token: Token,
@@ -1456,7 +1579,7 @@ impl BinaryOp {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum AssignmentOpKind {
     PlusAs,      // +=
     MinusAs,     // -=
@@ -1470,7 +1593,7 @@ pub enum AssignmentOpKind {
     ShiftRightAs,  // >>=
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpression {
     pub left: ExprIndex, // stored in heap instead of stack
     pub operator: BinaryOp,
@@ -1478,7 +1601,7 @@ pub struct BinaryExpression {
     pub from_compound: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompoundBinaryExpression {
     pub left: ExprIndex,
     pub operator: AssignmentOpKind,
@@ -1486,47 +1609,47 @@ pub struct CompoundBinaryExpression {
     pub right: ExprIndex,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NumberExpression {
     pub token: Token,
     pub number: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FloatExpression {
     pub token: Token,
     pub number: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UsizeExpression {
     pub token: Token,
     pub number: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StringExpression {
     pub token: Token,
     pub string: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParenExpression {
     pub left_paren: Token,
     pub expression: ExprIndex,
     pub right_paren: Token,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub id: ExprIndex,
-    pub ty: Type,
+    pub ty: TypeKind,
     pub span: TextSpan,
 }
 
 impl Expression {
-    pub fn new(kind: ExpressionKind, id: ExprIndex, ty: Type, span: TextSpan) -> Self {
+    pub fn new(kind: ExpressionKind, id: ExprIndex, ty: TypeKind, span: TextSpan) -> Self {
         Expression { kind, id, ty, span }
     }
 
@@ -1562,7 +1685,6 @@ impl Expression {
 
                 TextSpan::combine(vec![open_paren, expression, close_paren])
             },
-            ExpressionKind::Variable(expr) => expr.identifier.span.clone(),
             ExpressionKind::Assignment(expr) => {
                 let lhs = ast.query_expression(expr.lhs).span(ast);
                 let equals = expr.equals.span.clone();
@@ -1586,24 +1708,31 @@ impl Expression {
             ExpressionKind::If(expr) => {
                 let if_span = expr.if_keyword.span.clone();
                 let condition = ast.query_expression(expr.condition).span(ast);
-                let then_branch = expr.then_branch.span(ast);
+                let then_branch = expr.then_branch.span.clone();
                 let mut spans = vec![if_span, condition, then_branch];
 
                 if let Some(else_branch) = &expr.else_branch {
                     let else_span = else_branch.else_keyword.span.clone();
                     spans.push(else_span);
-                    spans.push(else_branch.body.span(ast));
+                    spans.push(else_branch.body.span.clone());
                 }
 
                 TextSpan::combine(spans)
             },
-            ExpressionKind::Block(block_statement) => {
-                let mut spans = vec![block_statement.left_brace.span.clone()];
-                for statement in &block_statement.statements {
+            ExpressionKind::While(expr) => {
+                let while_span = expr.while_keyword.span.clone();
+                let condition = ast.query_expression(expr.condition).span(ast);
+                let body = expr.body.span.clone();
+                
+                TextSpan::combine(vec![while_span, condition, body])
+            }
+            ExpressionKind::Block(block_expression) => {
+                let mut spans = vec![block_expression.left_brace.span.clone()];
+                for statement in &block_expression.statements {
                     spans.push(ast.query_statement(*statement).span(ast));
                 }
 
-                spans.push(block_statement.right_brace.span.clone());
+                spans.push(block_expression.right_brace.span.clone());
                 TextSpan::combine(spans)
             },
             ExpressionKind::Break(break_expression) => break_expression.break_keyword.span.clone(),
@@ -1668,6 +1797,7 @@ impl Expression {
 
                 TextSpan::combine(spans)
             },
+            ExpressionKind::Path(path_expression) => path_expression.path.span.clone(),
             ExpressionKind::Error(span) => span.clone(),
         }
     }

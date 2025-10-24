@@ -34,6 +34,8 @@ mod tests {
         TupleIndex,
         Struct,
         StructExpression,
+        Enum,
+        Variant(String),
         Constant,
     }
 
@@ -145,7 +147,7 @@ mod tests {
             self.visit_expression(ast, assignment_expression.expression);
         }
 
-        fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
+        fn visit_while_expression(&mut self, ast: &mut Ast, while_statement: &WhileExpression) {
             self.actual.push(TestASTNode::While);
             self.visit_expression(ast, while_statement.condition);
             self.visit_body(ast, &while_statement.body);
@@ -216,6 +218,17 @@ mod tests {
 
         fn visit_struct_item(&mut self, _ast: &mut Ast, _generics: &Generics, _variant_data: &VariantData, _item_id: ItemIndex) {
             self.actual.push(TestASTNode::Struct);
+        }
+
+        fn visit_enum_item(&mut self, _ast: &mut Ast, _generics: &Generics, enum_definition: &EnumDefinition, _item_id: ItemIndex) {
+            self.actual.push(TestASTNode::Enum);
+            for variant in &enum_definition.variants {
+                self.actual.push(TestASTNode::Variant(variant.identifier.span.literal.clone()));
+            }
+        }
+
+        fn visit_path_expression(&mut self, _ast: &mut Ast, path_expression: &PathExpression, _expr: &Expression) {
+            self.actual.push(TestASTNode::Variable(path_expression.path.span.literal.clone()));
         }
     }
 

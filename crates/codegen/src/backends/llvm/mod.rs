@@ -887,6 +887,7 @@ impl<'ctx> LLVMBackend<'ctx> {
                 }
                 Some(self.context.struct_type(&llvm_elem_types, false).into())
             }
+            Type::Unit => None,
             Type::Void => None,
         }
     }

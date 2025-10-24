@@ -1,6 +1,4 @@
-use snowflake_common::Idx;
-
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, Body, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, Expression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, LetStatement, NumberExpression, ParenExpression, ReturnStatement, Statement, StructExpression, TupleExpression, FieldExpression, UnaryExpression, UnaryOpKind, VarExpression, VariantData, WhileStatement}, compilation_unit::{GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, EnumDefinition, Expression, FieldExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, LetStatement, NumberExpression, ParenExpression, PathExpression, ReturnStatement, Statement, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, VariantData, WhileExpression}, compilation_unit::{GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 use std::{collections::HashMap};
 
@@ -200,19 +198,6 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         }));
     }
 
-    fn visit_body(&mut self, ast: &mut Ast, body: &Body) {
-        self.push_frame();
-
-        for statement in body.iter() {
-            if self.returned || self.loop_break || self.loop_continue {
-                break;
-            }
-            self.visit_statement(ast, *statement);
-        }
-
-        self.pop_frame();
-    }
-
     fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, _expr: &Expression) {
         self.push_frame();
         self.visit_expression(ast, if_statement.condition);
@@ -248,15 +233,6 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.visit_expression(ast, parenthesised_expression.expression);
     }
 
-    fn visit_variable_expression(&mut self, _ast: &mut Ast, variable_expression: &VarExpression, _expr: &Expression) {
-        let identifier = &variable_expression.identifier.span.literal;
-        self.last_value = Some(
-            self.frames.get(&variable_expression.variable_index)
-            .expect(format!("Variable {} '{}' not found", variable_expression.variable_index.as_index(), identifier)
-            .as_str())
-            .clone());
-    }
-
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {
         self.visit_expression(ast, assignment_expression.expression);
         self.frames.update(assignment_expression.variable_index, self.last_value.clone().unwrap());
@@ -266,12 +242,12 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.last_value = Some(Value::Boolean(boolean.value));
     }
 
-    fn visit_while_statement(&mut self, ast: &mut Ast, while_statement: &WhileStatement) {
+    fn visit_while_expression(&mut self, ast: &mut Ast, while_statement: &WhileExpression, expr: &Expression) {
         self.push_frame();
         self.visit_expression(ast, while_statement.condition);
 
         while self.expect_last_value().expect_boolean() && !self.returned && !self.loop_break {
-            self.visit_body(ast, &while_statement.body);
+            self.visit_block_expression(ast, &while_statement.body, expr);
             if self.returned || self.loop_break {
                 break;
             }
@@ -305,7 +281,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             self.frames.insert(*parameter, argument.clone());
         }
 
-        for statement in &*function.body {
+        for statement in &*function.body.statements {
             if self.returned {
                 break;
             }
@@ -316,7 +292,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         self.returned = false;
     }
 
-    fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &super::BlockExpression, _expr: &Expression) {
+    fn visit_block_expression(&mut self, ast: &mut Ast, block_statement: &BlockExpression, _expr: &Expression) {
         self.push_frame();
 
         for statement in &block_statement.statements {
@@ -443,6 +419,14 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_struct_expression(&mut self, _ast: &mut Ast, _struct_expression: &StructExpression, _expr: &Expression) {
         // No evaluation needed for struct expressions
+    }
+
+    fn visit_enum_item(&mut self, _ast: &mut Ast, _generics: &Generics, _enum_definition: &EnumDefinition, _item_id: ItemIndex) {
+        // No evaluation needed for enum items
+    }
+
+    fn visit_path_expression(&mut self, _ast: &mut Ast, _path_expression: &PathExpression, _expr: &Expression) {
+        // No evaluation needed for path expressions
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

@@ -109,29 +109,62 @@ pub enum Type {
     Bool,
     Array(Box<Type>, usize),
     Object(Vec<Box<Type>>),
+    /// Tagged union representation: (discriminant_type, variant_payloads)
+    /// Discriminant is an integer tag, and variant_payloads contains the types
+    /// for each variant (empty vec for unit variants)
+    Enum {
+        discriminant: Box<Type>,
+        variants: Vec<Vec<Box<Type>>>,
+    },
+    Unit,
     Void,
 }
 
-impl From<snowflake_common::typings::Type> for Type {
-    fn from(value: snowflake_common::typings::Type) -> Self {
+impl From<snowflake_common::typings::TypeKind> for Type {
+    fn from(value: snowflake_common::typings::TypeKind) -> Self {
         match value {
-            snowflake_common::typings::Type::Int => Self::Int,
-            snowflake_common::typings::Type::Float => Self::Float,
-            snowflake_common::typings::Type::String => Self::String,
-            snowflake_common::typings::Type::Bool => Self::Bool,
-            snowflake_common::typings::Type::Void => Self::Void,
-            snowflake_common::typings::Type::Usize => Self::Usize,
-            snowflake_common::typings::Type::Array(elements, size) => {
+            snowflake_common::typings::TypeKind::Int => Self::Int,
+            snowflake_common::typings::TypeKind::Float => Self::Float,
+            snowflake_common::typings::TypeKind::String => Self::String,
+            snowflake_common::typings::TypeKind::Bool => Self::Bool,
+            snowflake_common::typings::TypeKind::Void => Self::Void,
+            snowflake_common::typings::TypeKind::Usize => Self::Usize,
+            snowflake_common::typings::TypeKind::Array(elements, size) => {
                 Self::Array(Box::new(Type::from(*elements)), size)
             }
-            snowflake_common::typings::Type::Object(object_type) => {
+            snowflake_common::typings::TypeKind::Object(object_type) => {
                 Self::Object(object_type.fields.iter().map(|f| Box::new(Type::from(f.ty.as_ref().clone()))).collect())
             }
-            snowflake_common::typings::Type::ObjectUnresolved(_) => {
+            snowflake_common::typings::TypeKind::Unit => Self::Unit,
+            snowflake_common::typings::TypeKind::ObjectUnresolved(_) => {
                 bug_report!("Unresolved struct type should have been resolved before MIR conversion")
             }
-            snowflake_common::typings::Type::Unresolved | snowflake_common::typings::Type::Error => {
+            snowflake_common::typings::TypeKind::Unresolved | snowflake_common::typings::TypeKind::Error => {
                 bug_report!("Unresolved or error type")
+            }
+            snowflake_common::typings::TypeKind::Path(_, _) => {
+                bug_report!("Path type should have been resolved before MIR conversion")
+            }
+            snowflake_common::typings::TypeKind::Enum { enum_name: _, variant_name } => {
+                // Enums represented as a tagged union with:
+                // - discriminant (Usize for the tag)
+                // - empty variants placeholder (to be filled by builder with actual variant info)
+                match variant_name {
+                    Some(_) => {
+                        // Variants resolved in builder
+                        Self::Enum {
+                            discriminant: Box::new(Self::Usize),
+                            variants: vec![],
+                        }
+                    }
+                    None => {
+                        // Just the enum type without specific variant
+                        Self::Enum {
+                            discriminant: Box::new(Self::Usize),
+                            variants: vec![],
+                        }
+                    }
+                }
             }
         }
     }
@@ -635,7 +668,7 @@ impl AssertKind {
             Value::ParamRef(param_idx) => {
                 if let Some(param_var_idx) = function.params.get(*param_idx) {
                     let var = global_scope.variables.get(*param_var_idx);
-                    format!("parameter '{}'", var.name)
+                    format!("parameter '{}'", var.name.tokens.last().unwrap().span.literal)
                 } else {
                     format!("parameter #{}", param_idx)
                 }
@@ -751,7 +784,7 @@ impl AssertKind {
             Value::ParamRef(param_idx) => {
                 if let Some(param_var_idx) = function.params.get(*param_idx) {
                     let var = global_scope.variables.get(*param_var_idx);
-                    format!("parameter '{}'", var.name)
+                    format!("parameter '{}'", var.name.tokens.last().unwrap().span.literal)
                 } else {
                     format!("parameter #{}", param_idx)
                 }

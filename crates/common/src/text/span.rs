@@ -18,6 +18,14 @@ impl TextSpan {
         }
     }
 
+    pub fn default_with_name(name: &str) -> Self {
+        Self {
+            start: 0,
+            end: 0,
+            literal: name.to_string(),
+        }
+    }
+
     pub fn length(&self) -> usize {
         self.end - self.start
     }

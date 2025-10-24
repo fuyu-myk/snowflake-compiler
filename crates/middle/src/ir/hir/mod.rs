@@ -7,7 +7,7 @@ use std::{collections::HashMap, hash::Hash};
 use snowflake_front::{
     ast::{BinaryOpKind, ItemIndex, UnaryOpKind}, compilation_unit::VariableIndex
 };
-use snowflake_common::{text::span::TextSpan, token::Token, typings::Type};
+use snowflake_common::{text::span::TextSpan, token::Token, typings::TypeKind};
 
 mod builder;
 mod writer;
@@ -110,7 +110,6 @@ pub enum HIRStmtKind {
         init_expr: Option<HIRExpression>,
     },
     Return { expr: HIRExpression },
-    Loop { body: Vec<HIRStatement> },
     Item { item_id: HIRItemId },
 }
 
@@ -125,7 +124,7 @@ pub struct ScopeId(usize);
 #[derive(Debug, Clone)]
 pub struct HIRExpression {
     pub kind: HIRExprKind,
-    pub ty: Type,
+    pub ty: TypeKind,
     pub id: HIRNodeId,
     pub span: TextSpan,
 }
@@ -138,10 +137,12 @@ pub enum HIRExprKind {
     String(String),
     Bool(bool),
     Unit,
-    Var { var_idx: VariableIndex },
+    Var {
+        var_idx: VariableIndex,
+    },
     Array {
         elements: Vec<HIRExpression>,
-        element_type: Type,
+        element_type: TypeKind,
         alloc_type: AllocType,
     },
     Index {
@@ -152,13 +153,14 @@ pub enum HIRExprKind {
     },
     Tuple {
         elements: Vec<HIRExpression>,
-        element_types: Vec<Box<Type>>,
+        element_types: Vec<Box<TypeKind>>,
     },
     Field {
         object: Box<HIRExpression>,
         field: Box<HIRExpression>,
     },
     Struct {
+        path: QualifiedPath,
         fields: Vec<HIRExprField>,
         tail_expr: HIRStructTailExpr,
     },
@@ -184,8 +186,20 @@ pub enum HIRExprKind {
         body: Box<Block>,
         scope_id: ScopeId,
     },
+    Loop { body: Vec<HIRStatement> },
     Break,
     Continue,
+    Path(QualifiedPath),
+}
+
+#[derive(Debug, Clone)]
+pub enum QualifiedPath {
+    /// Resolved to a variable (for variable references)
+    ResolvedVariable(VariableIndex),
+    /// Resolved to a struct/type (for struct constructors)
+    ResolvedType(ItemIndex),
+    /// Resolved to an enum variant (enum_idx, variant_discriminant)
+    ResolvedEnumVariant(ItemIndex, usize),
 }
 
 #[derive(Debug, Clone)]

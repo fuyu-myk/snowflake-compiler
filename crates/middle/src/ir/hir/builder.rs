@@ -1,13 +1,13 @@
 use std::{cell::Cell, collections::HashMap};
 
-use snowflake_common::{bug_report, diagnostics::DiagnosticsReportCell, typings::ObjectKind, Idx};
+use snowflake_common::{bug_report, diagnostics::DiagnosticsReportCell, token::{Token, TokenKind}, typings::ObjectKind, Idx};
 use snowflake_front::{
-    ast::{Ast, ExprIndex, ExpressionKind, ItemIndex, ItemKind, StatementKind, StmtIndex, StructRest},
+    ast::{Ast, ExprIndex, ExpressionKind, ItemIndex, ItemKind, Path, PathSegment, Pattern, PatternKind, StatementKind, StmtIndex, StructRest, VariantData},
     compilation_unit::{GlobalScope, VariableIndex}
 };
-use snowflake_common::{text::span::TextSpan, typings::Type};
+use snowflake_common::{text::span::TextSpan, typings::TypeKind};
 
-use crate::ir::hir::{AllocType, HIRContext, HIRExprField, HIRExprKind, HIRExpression, HIRItemId, HIRNodeId, HIRStatement, HIRStmtKind, HIRStructTailExpr, ScopeId, HIR, Block};
+use crate::ir::hir::{AllocType, Block, HIRContext, HIRExprField, HIRExprKind, HIRExpression, HIRItemId, HIRNodeId, HIRStatement, HIRStmtKind, HIRStructTailExpr, QualifiedPath, ScopeId, HIR};
 
 
 struct Ctx {
@@ -63,10 +63,26 @@ impl HIRBuilder {
     }
 
     /// Method to create a HIRExpression with proper ID and span
-    fn create_expression(&mut self, kind: HIRExprKind, ty: Type, span: TextSpan) -> HIRExpression {
+    fn create_expression(&mut self, kind: HIRExprKind, ty: TypeKind, span: TextSpan) -> HIRExpression {
         let id = self.next_node_id();
         self.hir.source_map.insert(id, span.clone());
         HIRExpression { kind, ty, id, span }
+    }
+
+    fn path_from_pattern_identifier(&self, pattern: &Pattern) -> Path {
+        match &pattern.kind {
+            PatternKind::Identifier(_, token) => {
+                Path {
+                    span: token.span.clone(),
+                    segments: vec![PathSegment {
+                        identifier: token.clone(),
+                        arguments: None,
+                    }],
+                    tokens: vec![token.clone()],
+                }
+            }
+            _ => todo!("Unsupported pattern kind {:?} for path extraction", pattern.kind),
+        }
     }
 
     pub fn build(mut self, ast: &Ast, global_scope: &mut GlobalScope) -> HIR {
@@ -93,8 +109,8 @@ impl HIRBuilder {
                         None
                     };
 
-                    let const_name = &const_decl.identifier.span.literal;
-                    let var_idx = global_scope.lookup_global_variable_by_name(const_name)
+                    let const_name = self.path_from_pattern_identifier(&const_decl.identifier);
+                    let var_idx = global_scope.lookup_global_variable_by_path(&const_name)
                         .expect("Const variable should be declared during resolution phase");
 
                     let const_stmt = HIRStatement {
@@ -124,6 +140,20 @@ impl HIRBuilder {
                     };
 
                     self.hir.top_statements.insert(struct_idx, vec![struct_stmt]);
+                }
+                ItemKind::Enum(name, generics, _) => {
+                    let enum_name = &name.span.literal;
+                    let enum_idx = global_scope.lookup_enum(enum_name)
+                        .expect("Enum should be declared during resolution phase");
+                    let span = TextSpan::combine_two(&name.span, &generics.span);
+
+                    let enum_stmt = HIRStatement {
+                        kind: HIRStmtKind::Item { item_id: HIRItemId { from: enum_idx } },
+                        id: self.next_node_id(),
+                        span,
+                    };
+
+                    self.hir.top_statements.insert(enum_idx, vec![enum_stmt]);
                 }
             }
         }
@@ -156,53 +186,6 @@ impl HIRBuilder {
                     is_mutable 
                 }
             }
-            StatementKind::While(while_statement) => {
-                let condition = self.build_expression(while_statement.condition, ast, global_scope, ctx, false);
-                let mut body_ctx = Ctx::with_capacity(while_statement.body.len() + 1);
-
-                let while_span = TextSpan::combine_refs(&[&while_statement.while_keyword.span, &condition.span]);
-                
-                let false_expr = self.create_expression(HIRExprKind::Bool(false), Type::Bool, while_span.clone());
-                let condition_false = self.create_expression(
-                    HIRExprKind::Binary {
-                        operator: snowflake_front::ast::BinaryOpKind::Equals,
-                        left: Box::new(condition.clone()),
-                        right: Box::new(false_expr),
-                    },
-                    Type::Bool,
-                    while_span.clone(),
-                );
-
-                let break_expr = self.create_expression(HIRExprKind::Break, Type::Void, while_span.clone());
-                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr }, while_span.clone());
-                
-                let then_block = self.create_expression(HIRExprKind::Block {
-                    body: Box::new(Block {
-                        statements: vec![Box::new(break_stmt)],
-                        span: while_span.clone(),
-                    }),
-                    scope_id: self.current_scope_id(),
-                }, Type::Void, while_span.clone());
-                
-                let condition_check_expr = self.create_expression(
-                    HIRExprKind::If {
-                        condition: Box::new(condition_false),
-                        then_block: Box::new(then_block),
-                        else_block: None,
-                    },
-                    Type::Void,
-                    while_span.clone(),
-                );
-
-                let condition_check = self.create_statement(HIRStmtKind::Expression { expr: condition_check_expr }, while_span.clone());
-                body_ctx.statements.push(condition_check);
-
-                for stmt_id in while_statement.body.iter() {
-                    self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false);
-                }
-
-                HIRStmtKind::Loop { body: body_ctx.statements }
-            }
             StatementKind::Const(const_statement) => {
                 let expr = self.build_expression(const_statement.expr, ast, global_scope, ctx, true);
                 
@@ -216,8 +199,8 @@ impl HIRBuilder {
                     .map(|expr_id| self.build_expression(expr_id, ast, global_scope, ctx, true))
                     .unwrap_or_else(|| {
                         match return_statement.return_value {
-                            Some(value) => self.create_expression(HIRExprKind::Unit, Type::Void, ast.query_expression(value).span.clone()),
-                            None => self.create_expression(HIRExprKind::Unit, Type::Void, return_statement.return_keyword.span.clone()),
+                            Some(value) => self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast.query_expression(value).span.clone()),
+                            None => self.create_expression(HIRExprKind::Unit, TypeKind::Void, return_statement.return_keyword.span.clone()),
                         }
                     });
 
@@ -233,11 +216,14 @@ impl HIRBuilder {
                     ItemKind::Function(_) => {
                         // Placeholder
                         HIRStmtKind::Expression { 
-                            expr: self.create_expression(HIRExprKind::Unit, Type::Void, ast_item.span.clone()) 
+                            expr: self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast_item.span.clone()) 
                         }
                     }
                     ItemKind::Const(_) => {
                         HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                    }
+                    ItemKind::Enum(..) => {
+                        todo!("Enum items not yet supported in HIR")
                     }
                 }
             }
@@ -276,7 +262,6 @@ impl HIRBuilder {
             ExpressionKind::Parenthesised(paren_expr) => {
                 self.build_expression(paren_expr.expression, ast, global_scope, ctx, temp_needed).kind
             },
-            ExpressionKind::Variable(var_expr) => HIRExprKind::Var { var_idx: var_expr.variable_index },
             ExpressionKind::Assignment(assign_expr) => {
                 let value_expr = self.build_expression(assign_expr.expression, ast, global_scope, ctx, true);
                 let target_expr = self.build_expression(assign_expr.lhs, ast, global_scope, ctx, true);
@@ -352,13 +337,145 @@ impl HIRBuilder {
                 block_expr
             },
             ExpressionKind::Call(call_expr) => {
-                let args = call_expr.arguments.iter()
+                let args: Vec<HIRExpression> = call_expr.arguments.iter()
                     .map(|expr_id| self.build_expression(*expr_id, ast, global_scope, ctx, true))
                     .collect();
 
+                // Check if this is a tuple struct/enum variant constructor or a function call
+                if call_expr.idx_ref == ItemIndex::unreachable() && (matches!(expr.ty, TypeKind::Object(_)) || matches!(expr.ty, TypeKind::Enum { .. })) {
+                    // Tuple struct or enum variant constructor
+                    let path_len = call_expr.callee.segments.len();
+                    let variant_name = call_expr.callee.segments.last().unwrap().identifier.span.literal.clone();
+                    
+                    // Try struct first, then enum variant
+                    let item_result = if let Some(struct_idx) = global_scope.lookup_struct(&variant_name) {
+                        Some((struct_idx, None)) // (index, variant_discriminant)
+                    } else if path_len >= 2 {
+                        // Check for enum variant
+                        let enum_name = &call_expr.callee.segments[path_len - 2].identifier.span.literal;
+                        if let Some((enum_idx, variant)) = global_scope.lookup_enum_variant(enum_name, &variant_name) {
+                            Some((enum_idx, Some(variant.discriminant)))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    
+                    let (item_idx, variant_discriminant) = item_result
+                        .expect("Tuple struct/enum variant should be resolved during semantic analysis");
+                    let struct_item = ast.query_item(item_idx);
 
-                HIRExprKind::Call { fx_idx: call_expr.fx_idx, args: args }
+                    let field_spans = match &struct_item.kind {
+                        ItemKind::Struct(_, _, struct_def) => {
+                            match struct_def {
+                                VariantData::Tuple(fields) => {
+                                    fields.iter().map(|f| {
+                                        if f.identifier.is_some() {
+                                            f.identifier.as_ref().unwrap().span.clone()
+                                        } else {
+                                            TextSpan::default()
+                                        }
+                                    }).collect::<Vec<_>>()
+                                }
+                                _ => bug_report!("Expected tuple struct definition for tuple struct constructor"),
+                            }
+                        }
+                        ItemKind::Enum(_, _, enum_def) => {
+                            let variant = enum_def.variants.iter()
+                                .find(|v| v.identifier.span.literal == variant_name)
+                                .expect("Enum variant should exist");
+                            
+                            match &variant.data {
+                                VariantData::Tuple(fields) => {
+                                    fields.iter().map(|f| {
+                                        if f.identifier.is_some() {
+                                            f.identifier.as_ref().unwrap().span.clone()
+                                        } else {
+                                            TextSpan::default()
+                                        }
+                                    }).collect::<Vec<_>>()
+                                }
+                                _ => bug_report!("Expected tuple variant for enum variant constructor"),
+                            }
+                        }
+                        _ => bug_report!("Expected struct or enum item for constructor"),
+                    };
+
+                    let fields = args.into_iter().enumerate().map(|(idx, arg)| {
+                        HIRExprField {
+                            identifier: Token::new(
+                                TokenKind::Identifier,
+                                field_spans.get(idx).cloned().unwrap_or_else(TextSpan::default)
+                            ),
+                            expr: arg,
+                            is_shorthand: false,
+                        }
+                    }).collect::<Vec<_>>();
+                    
+                    let path = if let Some(discriminant) = variant_discriminant {
+                        QualifiedPath::ResolvedEnumVariant(item_idx, discriminant)
+                    } else {
+                        QualifiedPath::ResolvedType(item_idx)
+                    };
+                    
+                    HIRExprKind::Struct {
+                        path,
+                        fields,
+                        tail_expr: HIRStructTailExpr::None,
+                    }
+                } else {
+                    // Function call
+                    HIRExprKind::Call { fx_idx: call_expr.idx_ref, args }
+                }
             },
+            ExpressionKind::While(while_statement) => {
+                let condition = self.build_expression(while_statement.condition, ast, global_scope, ctx, false);
+                let mut body_ctx = Ctx::with_capacity(while_statement.body.statements.len() + 1);
+
+                let while_span = TextSpan::combine_refs(&[&while_statement.while_keyword.span, &condition.span]);
+                
+                let false_expr = self.create_expression(HIRExprKind::Bool(false), TypeKind::Bool, while_span.clone());
+                let condition_false = self.create_expression(
+                    HIRExprKind::Binary {
+                        operator: snowflake_front::ast::BinaryOpKind::Equals,
+                        left: Box::new(condition.clone()),
+                        right: Box::new(false_expr),
+                    },
+                    TypeKind::Bool,
+                    while_span.clone(),
+                );
+
+                let break_expr = self.create_expression(HIRExprKind::Break, TypeKind::Void, while_span.clone());
+                let break_stmt = self.create_statement(HIRStmtKind::Expression { expr: break_expr }, while_span.clone());
+                
+                let then_block = self.create_expression(HIRExprKind::Block {
+                    body: Box::new(Block {
+                        statements: vec![Box::new(break_stmt)],
+                        span: while_span.clone(),
+                    }),
+                    scope_id: self.current_scope_id(),
+                }, TypeKind::Void, while_span.clone());
+                
+                let condition_check_expr = self.create_expression(
+                    HIRExprKind::If {
+                        condition: Box::new(condition_false),
+                        then_block: Box::new(then_block),
+                        else_block: None,
+                    },
+                    TypeKind::Void,
+                    while_span.clone(),
+                );
+
+                let condition_check = self.create_statement(HIRStmtKind::Expression { expr: condition_check_expr }, while_span.clone());
+                body_ctx.statements.push(condition_check);
+
+                for stmt_id in while_statement.body.iter() {
+                    self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false);
+                }
+
+                HIRExprKind::Loop { body: body_ctx.statements }
+            }
             ExpressionKind::Break(_) => HIRExprKind::Break,
             ExpressionKind::Continue(_) => HIRExprKind::Continue,
             ExpressionKind::Array(array_expr) => {
@@ -369,7 +486,7 @@ impl HIRBuilder {
                 let element_type = if let Some(first_elem) = elements.first() {
                     first_elem.ty.clone()
                 } else {
-                    Type::from_token(&array_expr.type_decl)
+                    TypeKind::from_token(&array_expr.type_decl)
                 };
 
                 HIRExprKind::Array {
@@ -385,18 +502,18 @@ impl HIRBuilder {
                 
                 // Get the length from the current object type (not the object kind)
                 let len = match &object.ty {
-                    Type::Array(_, len) => *len,
+                    TypeKind::Array(_, len) => *len,
                     _ => bug_report!("Indexing non-array type"),
                 };
 
                 // Get the element type from the current object type
                 let element_type = match &object.ty {
-                    Type::Array(element_type, _) => *element_type.clone(),
-                    _ => Type::Error,
+                    TypeKind::Array(element_type, _) => *element_type.clone(),
+                    _ => TypeKind::Error,
                 };
 
                 let span_clone = expr.span.clone();
-                let length_expr = self.create_expression(HIRExprKind::Usize(len), Type::Usize, span_clone);
+                let length_expr = self.create_expression(HIRExprKind::Usize(len), TypeKind::Usize, span_clone);
 
                 // Create a new index operation for each dimension
                 object = self.create_expression(
@@ -430,10 +547,28 @@ impl HIRBuilder {
             },
             ExpressionKind::FieldExpression(tuple_index_expr) => {
                 let mut object = self.build_expression(tuple_index_expr.object, ast, global_scope, ctx, true);
-                let mut field = self.build_expression(tuple_index_expr.field.idx_no, ast, global_scope, ctx, true);
+                
+                // Build field expr or extract field name
+                let is_struct_or_enum = match &object.ty {
+                    TypeKind::Object(object_type) => matches!(object_type.kind, ObjectKind::Struct(_)),
+                    TypeKind::Enum { variant_name: Some(_), .. } => true,
+                    _ => false,
+                };
+
+                let mut field = if !is_struct_or_enum {
+                    // Build field expr for tuples
+                    self.build_expression(tuple_index_expr.field.idx_no, ast, global_scope, ctx, true)
+                } else {
+                    // Temp field expr for structs and enums (resolved below)
+                    self.create_expression(
+                        HIRExprKind::Usize(0),
+                        TypeKind::Usize,
+                        TextSpan::default()
+                    )
+                };
 
                 let element_type = match &object.ty {
-                    Type::Object(object_type) => {
+                    TypeKind::Object(object_type) => {
                         match &object_type.kind {
                             ObjectKind::Tuple => {
                                 let idx = match &field.kind {
@@ -447,7 +582,7 @@ impl HIRBuilder {
                                     _ => bug_report!("Tuple index is not a constant usize or number"),
                                 };
                                 if idx >= object_type.fields.len() {
-                                    Type::Error
+                                    TypeKind::Error
                                 } else {
                                     object_type.fields[idx].ty.as_ref().clone()
                                 }
@@ -455,8 +590,8 @@ impl HIRBuilder {
                             ObjectKind::Struct(_struct_idx) => {
                                 let field_ast_expr = ast.query_expression(tuple_index_expr.field.idx_no);
                                 let field_name = match &field_ast_expr.kind {
-                                    ExpressionKind::Variable(var_expr) => {
-                                        var_expr.identifier.span.literal.clone()
+                                    ExpressionKind::Path(path_expr) => {
+                                        path_expr.path.tokens.last().unwrap().span.literal.clone()
                                     }
                                     _ => {
                                         bug_report!("Expected variable expression for struct field name, got {:?}", field_ast_expr.kind);
@@ -473,18 +608,60 @@ impl HIRBuilder {
                                     // Convert the field name to a constant index
                                     field = self.create_expression(
                                         HIRExprKind::Usize(field_index),
-                                        Type::Usize,
+                                        TypeKind::Usize,
                                         field_ast_expr.span.clone()
                                     );
                                     field_def.ty.as_ref().clone()
                                 } else {
-                                    Type::Error
+                                    TypeKind::Error
                                 }
                             }
                         }
                     },
+                    TypeKind::Enum { enum_name, variant_name: Some(variant_name) } => {
+                        let field_ast_expr = ast.query_expression(tuple_index_expr.field.idx_no);
+                        let field_name = match &field_ast_expr.kind {
+                            ExpressionKind::Path(path_expr) => {
+                                path_expr.path.tokens.last().unwrap().span.literal.clone()
+                            }
+                            _ => {
+                                bug_report!("Expected variable expression for enum field name, got {:?}", field_ast_expr.kind);
+                            }
+                        };
+
+                        // Get field information
+                        if let Some(enum_idx) = global_scope.lookup_enum(enum_name) {
+                            let enum_def = global_scope.get_enum(enum_idx);
+                            if let Some(variant) = enum_def.variants.iter().find(|v| &v.name == variant_name) {
+                                match &variant.data {
+                                    VariantData::Struct { fields } => {
+                                        if let Some((field_index, _field_def)) = fields.iter().enumerate().find(|(_, f)| {
+                                            f.identifier.as_ref().map(|id| &id.span.literal) == Some(&field_name)
+                                        }) {
+                                            // Convert the field name to a constant index
+                                            // For enum variants, add 1 to account for the discriminant at index 0
+                                            field = self.create_expression(
+                                                HIRExprKind::Usize(field_index + 1),
+                                                TypeKind::Usize,
+                                                field_ast_expr.span.clone()
+                                            );
+                                            // Type is already set in the AST expression
+                                            expr.ty.clone()
+                                        } else {
+                                            TypeKind::Error
+                                        }
+                                    }
+                                    _ => TypeKind::Error
+                                }
+                            } else {
+                                TypeKind::Error
+                            }
+                        } else {
+                            TypeKind::Error
+                        }
+                    },
                     _ => {
-                        Type::Error
+                        TypeKind::Error
                     },
                 };
 
@@ -501,7 +678,26 @@ impl HIRBuilder {
                 return object;
             },
             ExpressionKind::Struct(struct_expr) => {
+                let path_len = struct_expr.path.segments.len();
+                let struct_name = struct_expr.path.segments.last()
+                    .expect("Struct path should have at least one segment")
+                    .identifier.span.literal.clone();
+                
+                let path = if let Some(struct_idx) = global_scope.lookup_struct(&struct_name) {
+                    QualifiedPath::ResolvedType(struct_idx)
+                } else if path_len >= 2 {
+                    let enum_name = &struct_expr.path.segments[path_len - 2].identifier.span.literal;
+                    if let Some((enum_idx, variant)) = global_scope.lookup_enum_variant(enum_name, &struct_name) {
+                        QualifiedPath::ResolvedEnumVariant(enum_idx, variant.discriminant)
+                    } else {
+                        panic!("Struct/enum variant '{}' should be resolved during semantic analysis", struct_name);
+                    }
+                } else {
+                    panic!("Struct '{}' should be resolved during semantic analysis", struct_name);
+                };
+
                 HIRExprKind::Struct {
+                    path,
                     fields: struct_expr.fields.iter().map(|field| {
                         let field_expr = self.build_expression(field.expr.id, ast, global_scope, ctx, true);
                         HIRExprField {
@@ -516,20 +712,68 @@ impl HIRBuilder {
                     },
                 }
             },
+            ExpressionKind::Path(path_expr) => {
+                if let Some(var_idx) = path_expr.resolved_variable {
+                    HIRExprKind::Var { var_idx }
+                } else {
+                    // Path didn't resolve to a variable during semantic analysis
+                    // Check if it's a unit struct or enum variant
+                    let path_len = path_expr.path.segments.len();
+                    let identifier = path_expr.path.segments.last().unwrap().identifier.span.literal.clone();
+                    
+                    let path = if let Some(struct_idx) = global_scope.lookup_struct(&identifier) {
+                        Some(QualifiedPath::ResolvedType(struct_idx))
+                    } else if path_len >= 2 {
+                        let enum_name = &path_expr.path.segments[path_len - 2].identifier.span.literal;
+                        if let Some((enum_idx, variant)) = global_scope.lookup_enum_variant(enum_name, &identifier) {
+                            Some(QualifiedPath::ResolvedEnumVariant(enum_idx, variant.discriminant))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    
+                    if let Some(resolved_path) = path {
+                        HIRExprKind::Struct {
+                            path: resolved_path,
+                            fields: vec![],
+                            tail_expr: HIRStructTailExpr::None,
+                        }
+                    } else {
+                        bug_report!("Path expression '{}' could not be resolved to a variable, unit struct, or enum variant during semantic analysis", identifier);
+                    }
+                }
+            },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),
         };
 
         self.create_expression(kind, expr.ty.clone(), expr.span.clone())
     }
 
-    fn declare_next_temp_var(&self, global_scope: &mut GlobalScope, ty: Type) -> VariableIndex {
+    fn declare_next_temp_var(&self, global_scope: &mut GlobalScope, ty: TypeKind) -> VariableIndex {
         global_scope.declare_variable(&self.next_temp_var(), ty, false, false)
     }
 
-    fn next_temp_var(&self) -> String {
+    fn next_temp_var(&self) -> Path {
         let temp_var_idx = self.temp_var_count.get();
         self.temp_var_count.set(temp_var_idx + 1);
 
-        format!("%{}", temp_var_idx)
+        let temp_var_name = format!("%{}", temp_var_idx);
+
+        Path {
+            span: TextSpan::default(),
+            segments: vec![PathSegment {
+                identifier: Token {
+                    span: TextSpan::default_with_name(&temp_var_name),
+                    kind: TokenKind::Identifier,
+                },
+                arguments: None,
+            }],
+            tokens: vec![Token {
+                span: TextSpan::default_with_name(&temp_var_name),
+                kind: TokenKind::Identifier,
+            }]
+        }
     }
 }

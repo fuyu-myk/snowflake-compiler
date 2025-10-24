@@ -7,7 +7,7 @@ pub mod printer;
 
 use crate::text::span::{TextSpan};
 use crate::token::{Token, TokenKind};
-use crate::typings::{ObjectKind, Type};
+use crate::typings::{ObjectKind, TypeKind};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -92,7 +92,7 @@ impl DiagnosticsReport {
         );
     }
 
-    pub fn report_uncallable_expression(&mut self, callee_span: &TextSpan, callee_type: &Type) {
+    pub fn report_uncallable_expression(&mut self, callee_span: &TextSpan, callee_type: &TypeKind) {
         self.report_error(
             format!("calling non-callable expression"),
             format!("Unable to call non-callable expression of type `{}`", callee_type),
@@ -121,11 +121,11 @@ impl DiagnosticsReport {
         );
     }
 
-    pub fn report_type_mismatch(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
-        if matches!(expected, Type::Array(_, _)) {
+    pub fn report_type_mismatch(&mut self, expected: &TypeKind, actual: &TypeKind, span: &TextSpan) {
+        if matches!(expected, TypeKind::Array(_, _)) {
             self.report_array_error(expected, actual, span);
             return;
-        } else if matches!(expected, Type::Object(obj) if matches!(obj.kind, ObjectKind::Tuple)) {
+        } else if matches!(expected, TypeKind::Object(obj) if matches!(obj.kind, ObjectKind::Tuple)) {
             self.report_tuple_error(expected, actual, span);
             return;
         } else {
@@ -185,8 +185,8 @@ impl DiagnosticsReport {
         );
     }
 
-    pub fn report_array_error(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
-        if let (Type::Array(expected_type, expected_size), Type::Array(actual_type, actual_size)) = (expected, actual) {
+    pub fn report_array_error(&mut self, expected: &TypeKind, actual: &TypeKind, span: &TextSpan) {
+        if let (TypeKind::Array(expected_type, expected_size), TypeKind::Array(actual_type, actual_size)) = (expected, actual) {
             if !actual_type.is_assignable_to(expected_type) {
                 self.report_error(
                     format!("mismatched types"),
@@ -211,8 +211,8 @@ impl DiagnosticsReport {
         }
     }
 
-    pub fn report_tuple_error(&mut self, expected: &Type, actual: &Type, span: &TextSpan) {
-        if let (Type::Object(expected_obj), Type::Object(actual_obj)) = (expected, actual) {
+    pub fn report_tuple_error(&mut self, expected: &TypeKind, actual: &TypeKind, span: &TextSpan) {
+        if let (TypeKind::Object(expected_obj), TypeKind::Object(actual_obj)) = (expected, actual) {
             if matches!(expected_obj.kind, ObjectKind::Tuple) && 
                matches!(actual_obj.kind, ObjectKind::Tuple) {
                 if expected_obj.fields.len() != actual_obj.fields.len() {
@@ -266,7 +266,7 @@ impl DiagnosticsReport {
         );
     }
     
-    pub fn report_cannot_index_type(&mut self, ty: &Type, span: &TextSpan) {
+    pub fn report_cannot_index_type(&mut self, ty: &TypeKind, span: &TextSpan) {
         self.report_error(
             format!("inappropriate index operation"),
             format!("Cannot index type `{}`", ty),
@@ -274,9 +274,9 @@ impl DiagnosticsReport {
         );
     }
 
-    pub fn report_no_fields_to_access(&mut self, ty: &Type, tuple_span: &TextSpan, index_span: &TextSpan) {
+    pub fn report_no_fields_to_access(&mut self, ty: &TypeKind, tuple_span: &TextSpan, index_span: &TextSpan) {
         match ty {
-            Type::Array(ty, size) => {
+            TypeKind::Array(ty, size) => {
                 self.report_tuple_unknown_field(index_span, format!("[{}; {}]", ty, size));
             }
             _ => {
@@ -289,7 +289,7 @@ impl DiagnosticsReport {
         }
     }
 
-    pub fn report_index_type_mismatch(&mut self, expected: Type, actual: &Type, span: &TextSpan) {
+    pub fn report_index_type_mismatch(&mut self, expected: TypeKind, actual: &TypeKind, span: &TextSpan) {
         self.report_error(
             format!("index type mismatch"),
             format!("Cannot be indexed by `{}` (slice indices are of type `{}`)", actual, expected),
@@ -390,6 +390,38 @@ impl DiagnosticsReport {
             format!("invalid field kind"),
             format!("Expected field name, found `{}`", invalid_field),
             span.clone()
+        );
+    }
+
+    pub fn report_enum_in_function(&mut self, identifier: &Token) {
+        self.report_error(
+            format!("enum declared inside function"),
+            format!("Enum `{}` cannot be declared inside a function", identifier.span.literal),
+            identifier.span.clone()
+        );
+    }
+
+    pub fn report_enum_already_declared(&mut self, name: String, span: &TextSpan) {
+        self.report_error(
+            format!("multiple enum declarations"),
+            format!("Enum `{}` already declared", name),
+            span.clone()
+        );
+    }
+
+    pub fn report_undeclared_item(&mut self, name: &str, span: &TextSpan) {
+        self.report_error(
+            format!("undeclared item"),
+            format!("Could not find item `{}` in this scope", name),
+            span.clone()
+        );
+    }
+
+    pub fn report_invalid_path(&mut self, path: &TextSpan) {
+        self.report_error(
+            format!("invalid path"),
+            format!("Path `{}` is invalid", path.literal),
+            path.clone()
         );
     }
 
