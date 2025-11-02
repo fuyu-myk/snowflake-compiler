@@ -27,6 +27,7 @@ pub struct LLVMBackend<'ctx> {
     locations: HashMap<LocationIdx, PointerValue<'ctx>>,
     basic_blocks: HashMap<BasicBlockIdx, BasicBlock<'ctx>>,
     last_stored_values: HashMap<(BasicBlockIdx, LocationIdx), BasicValueEnum<'ctx>>,
+    phi_nodes: HashMap<(BasicBlockIdx, LocationIdx), inkwell::values::PhiValue<'ctx>>,
     current_basic_block: Option<BasicBlockIdx>,
 }
 
@@ -34,6 +35,24 @@ impl<'ctx> LLVMBackend<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
+        
+        // Set target triple to match the host platform
+        let triple_str = if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+            "arm64-apple-darwin"
+        } else if cfg!(all(target_arch = "x86_64", target_os = "macos")) {
+            "x86_64-apple-darwin"
+        } else if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+            "x86_64-unknown-linux-gnu"
+        } else if cfg!(all(target_arch = "x86_64", target_os = "windows")) {
+            "x86_64-pc-windows-msvc"
+        } else {
+            // Fallback - let LLVM figure it out
+            ""
+        };
+        
+        if !triple_str.is_empty() {
+            module.set_triple(&inkwell::targets::TargetTriple::create(triple_str));
+        }
         
         Self {
             context,
@@ -43,6 +62,7 @@ impl<'ctx> LLVMBackend<'ctx> {
             locations: HashMap::new(),
             basic_blocks: HashMap::new(),
             last_stored_values: HashMap::new(),
+            phi_nodes: HashMap::new(),
             current_basic_block: None,
         }
     }
@@ -136,7 +156,42 @@ impl<'ctx> LLVMBackend<'ctx> {
             }
         }
 
-        // Process all instructions in order
+        // First pass: Create all basic blocks and phi nodes (without incoming values)
+        for &bb_idx in &function.basic_blocks {
+            let basic_block = self.basic_blocks[&bb_idx];
+            self.builder.position_at_end(basic_block);
+            self.current_basic_block = Some(bb_idx);
+            
+            let bb = &lir.basic_blocks[bb_idx];
+            
+            // Create all phi nodes
+            for instruction in &bb.instructions {
+                if let InstructionKind::Phi { target, .. } = &instruction.kind {
+                    let target_location = &lir.locations[*target];
+                    if !matches!(target_location.ty, Type::Void | Type::Unit) {
+                        if let Some(phi_type) = self.lir_type_to_llvm(&target_location.ty) {
+                            let phi = self.builder.build_phi(phi_type, &format!("phi_{}", target.index))?;
+                            self.phi_nodes.insert((bb_idx, *target), phi);
+                        }
+                    }
+                }
+            }
+            
+            // Create stores for all the phi nodes
+            for instruction in &bb.instructions {
+                if let InstructionKind::Phi { target, .. } = &instruction.kind {
+                    let target_location = &lir.locations[*target];
+                    if !matches!(target_location.ty, Type::Void | Type::Unit) {
+                        if let Some(phi) = self.phi_nodes.get(&(bb_idx, *target)) {
+                            let phi_value = phi.as_basic_value();
+                            self.store_to_location(*target, phi_value, lir)?;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Second pass: Process all non-phi instructions and terminators
         for &bb_idx in &function.basic_blocks {
             let basic_block = self.basic_blocks[&bb_idx];
             self.builder.position_at_end(basic_block);
@@ -145,11 +200,24 @@ impl<'ctx> LLVMBackend<'ctx> {
             let bb = &lir.basic_blocks[bb_idx];
             
             for instruction in &bb.instructions {
-                self.compile_instruction(instruction, lir)?;
+                if !matches!(instruction.kind, InstructionKind::Phi { .. }) {
+                    self.compile_instruction(instruction, lir)?;
+                }
             }
             
             if let Some(ref terminator) = bb.terminator {
                 self.compile_terminator(terminator, lir)?;
+            }
+        }
+        
+        // Third pass: Populate all phi nodes with their incoming values
+        for &bb_idx in &function.basic_blocks {
+            let bb = &lir.basic_blocks[bb_idx];
+            
+            for instruction in &bb.instructions {
+                if let InstructionKind::Phi { target, operands } = &instruction.kind {
+                    self.populate_phi_node(bb_idx, *target, operands, lir)?;
+                }
             }
         }
 
@@ -351,6 +419,29 @@ impl<'ctx> LLVMBackend<'ctx> {
 
                 self.store_to_location(*target, result, lir)?;
             }
+            InstructionKind::Neg { target, operand } => {
+                let val = self.compile_operand(operand, lir)?;
+                
+                let result: BasicValueEnum = if val.is_int_value() {
+                    self.builder.build_int_neg(val.into_int_value(), "neg")?.into()
+                } else {
+                    self.builder.build_float_neg(val.into_float_value(), "fneg")?.into()
+                };
+                
+                self.store_to_location(*target, result, lir)?;
+            }
+            InstructionKind::Not { target, operand } => {
+                let val = self.compile_operand(operand, lir)?;
+                
+                let result: BasicValueEnum = if val.is_int_value() {
+                    self.builder.build_not(val.into_int_value(), "not")?.into()
+                } else {
+                    // For bool types (which are i1 in LLVM), we can also use xor with true
+                    self.builder.build_not(val.into_int_value(), "not")?.into()
+                };
+                
+                self.store_to_location(*target, result, lir)?;
+            }
             InstructionKind::Move { target, source } => {
                 match &source.ty {
                     Type::Array { .. } => {
@@ -359,6 +450,13 @@ impl<'ctx> LLVMBackend<'ctx> {
                             OperandKind::Location(src_loc_idx) => {
                                 if let Some(src_alloca) = self.locations.get(src_loc_idx) {
                                     self.locations.insert(*target, *src_alloca);
+
+                                    if let Some(&src_value) = self.current_basic_block.and_then(|bb| 
+                                        self.last_stored_values.get(&(bb, *src_loc_idx))) {
+                                        if let Some(current_bb) = self.current_basic_block {
+                                            self.last_stored_values.insert((current_bb, *target), src_value);
+                                        }
+                                    }
                                 } else {
                                     return Err(anyhow::anyhow!("Source array location not found"));
                                 }
@@ -635,20 +733,10 @@ impl<'ctx> LLVMBackend<'ctx> {
                 // Store the value at the computed address
                 self.builder.build_store(element_ptr, value_val)?;
             }
-            InstructionKind::Phi { target, operands } => {
-                // Handle phi nodes by using the first operand (the initial/entry value)
-                if let Some((_, first_operand)) = operands.first() {
-                    let value = self.compile_operand(first_operand, lir)?;
-                    self.store_to_location(*target, value, lir)?;
-                } else {
-                    let target_location = &lir.locations[*target];
-                    let default_value = match target_location.ty {
-                        Type::Int32 => self.context.i32_type().const_int(0, false).into(),
-                        Type::Bool => self.context.bool_type().const_int(0, false).into(),
-                        _ => self.context.i32_type().const_int(0, false).into(),
-                    };
-                    self.store_to_location(*target, default_value, lir)?;
-                }
+            InstructionKind::Phi { .. } => {
+                // Phi nodes are handled separately in a two-pass approach
+                // This case should not be reached during normal compilation
+                return Ok(());
             }
             InstructionKind::Nop => {
                 // No operation - do nothing
@@ -661,13 +749,58 @@ impl<'ctx> LLVMBackend<'ctx> {
         Ok(())
     }
 
+    fn populate_phi_node(
+        &mut self,
+        bb_idx: BasicBlockIdx,
+        target: LocationIdx,
+        operands: &[(BasicBlockIdx, Operand)],
+        lir: &LIR,
+    ) -> Result<()> {
+        let phi = if let Some(&phi) = self.phi_nodes.get(&(bb_idx, target)) {
+            phi
+        } else {
+            return Ok(());
+        };
+        
+        // Add incoming values from each predecessor
+        for (pred_bb_idx, operand) in operands {
+            let value = if let OperandKind::Location(loc_idx) = &operand.kind {
+                // Using the last stored value from the predecessor block
+                if let Some(&stored_value) = self.last_stored_values.get(&(*pred_bb_idx, *loc_idx)) {
+                    stored_value
+                } else {
+                    // Fall back to loading from the location
+                    let pred_bb = self.basic_blocks[pred_bb_idx];
+                    
+                    if let Some(terminator_instr) = pred_bb.get_terminator() {
+                        self.builder.position_before(&terminator_instr);
+                    } else {
+                        self.builder.position_at_end(pred_bb);
+                    }
+                    
+                    self.compile_operand(operand, lir)?
+                }
+            } else {
+                self.compile_operand(operand, lir)?
+            };
+            let pred_bb = self.basic_blocks[pred_bb_idx];
+            phi.add_incoming(&[(&value, pred_bb)]);
+        }
+        
+        Ok(())
+    }
+
     fn compile_terminator(&mut self, terminator: &Terminator, lir: &LIR) -> Result<()> {
         match terminator {
             Terminator::Return { value } => {
                 match value {
                     Some(operand) => {
-                        let val = self.compile_operand(operand, lir)?;
-                        self.builder.build_return(Some(&val))?;
+                        if matches!(operand.ty, Type::Void | Type::Unit) {
+                            self.builder.build_return(None)?;
+                        } else {
+                            let val = self.compile_operand(operand, lir)?;
+                            self.builder.build_return(Some(&val))?;
+                        }
                     }
                     None => {
                         self.builder.build_return(None)?;
@@ -768,7 +901,14 @@ impl<'ctx> LLVMBackend<'ctx> {
             OperandKind::Location(loc_idx) => {
                 if let Some(alloca) = self.locations.get(loc_idx) {
                     let location = &lir.locations[*loc_idx];
-                    let llvm_type = self.lir_type_to_llvm(&location.ty).unwrap();
+                    
+                    if matches!(location.ty, Type::Void | Type::Unit) {
+                        // Dummy value
+                        return Ok(self.context.i32_type().const_int(0, false).into());
+                    }
+                    
+                    let llvm_type = self.lir_type_to_llvm(&location.ty)
+                        .ok_or_else(|| anyhow::anyhow!("Cannot compile operand with type {:?}", location.ty))?;
                     let loaded = self.builder.build_load(llvm_type, *alloca, "load_loc")?;
                     Ok(loaded)
                 } else {
