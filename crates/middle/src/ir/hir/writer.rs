@@ -63,6 +63,11 @@ impl <W> HIRWriter<W> where W: Write {
         match &statement.kind {
             HIRStmtKind::Expression { expr } => {
                 Self::write_expression(writer, expr, global_scope, indent)?;
+                write!(writer, ";")?;
+                writeln!(writer)?;
+            }
+            HIRStmtKind::TailExpression { expr } => {
+                Self::write_expression(writer, expr, global_scope, indent)?;
                 writeln!(writer)?;
             }
             HIRStmtKind::Declaration { var_idx, init_expr, is_mutable } => {
@@ -102,12 +107,6 @@ impl <W> HIRWriter<W> where W: Write {
                 }
 
                 Self::write_expression(writer, value, global_scope, indent)?;
-                writeln!(writer)?;
-            }
-            HIRStmtKind::Return { expr } => {
-                write!(writer, "return ")?;
-                Self::write_expression(writer, expr, global_scope, indent)?;
-
                 writeln!(writer)?;
             }
             HIRStmtKind::Item { item_id } => {
@@ -244,6 +243,10 @@ impl <W> HIRWriter<W> where W: Write {
 
                 write!(writer, ")")?;
             }
+            HIRExprKind::Return { expr } => {
+                write!(writer, "return ")?;
+                Self::write_expression(writer, expr, global_scope, indent)?;
+            }
             HIRExprKind::Loop { body } => {
                 writeln!(writer, "loop {{ ")?;
                 for statement in body {
@@ -341,6 +344,9 @@ impl <W> HIRWriter<W> where W: Write {
                 ItemKind::Enum(..) => {
                     writeln!(writer, "// Enum item referenced incorrectly as struct")?;
                 }
+                ItemKind::Impl(_) => {
+                    writeln!(writer, "// Impl block")?;
+                }
             }
         } else if let Some(enum_info) = global_scope.enums.indexed_iter()
             .find(|(idx, _)| *idx == item.from)
@@ -416,6 +422,9 @@ impl <W> HIRWriter<W> where W: Write {
             AstType::Path(_, path) => {
                 let type_name = path.segments.last().unwrap().identifier.span.literal.clone();
                 write!(writer, "{}", type_name)?;
+            }
+            AstType::ImplTrait(_, _) => {
+                write!(writer, "impl Trait")?;
             }
         }
         Ok(())

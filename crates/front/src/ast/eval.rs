@@ -1,4 +1,4 @@
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, EnumDefinition, Expression, FieldExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, LetStatement, NumberExpression, ParenExpression, PathExpression, ReturnStatement, Statement, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, VariantData, WhileExpression}, compilation_unit::{GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, EnumDefinition, Expression, FieldExpression, FxDeclaration, Generics, IfExpression, Impl, IndexExpression, ItemIndex, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, PathExpression, ReturnExpression, Statement, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, VariantData, WhileExpression}, compilation_unit::{GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 use std::{collections::HashMap};
 
@@ -305,8 +305,8 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
     fn visit_fx_decl(&mut self, _ast: &mut Ast, _fx_expr: &FxDeclaration, _item_id: ItemIndex) {
     }
 
-    fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
-        if let Some(expr) = &return_statement.return_value {
+    fn visit_return_expression(&mut self, ast: &mut Ast, return_expression: &ReturnExpression, _expr: &Expression) {
+        if let Some(expr) = &return_expression.return_value {
             self.visit_expression(ast, *expr);
             self.last_value = Some(self.expect_last_value().clone());
         } else {
@@ -427,6 +427,14 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_path_expression(&mut self, _ast: &mut Ast, _path_expression: &PathExpression, _expr: &Expression) {
         // No evaluation needed for path expressions
+    }
+
+    fn visit_impl_item(&mut self, _ast: &mut Ast, _impl_item: &Impl) {
+        // No evaluation needed for impl items
+    }
+
+    fn visit_method_call_expression(&mut self, _ast: &mut Ast, _method_call: &MethodCallExpression, _expr: &Expression) {
+        // No evaluation needed for method calls
     }
 
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {

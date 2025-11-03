@@ -61,6 +61,10 @@ pub enum TokenKind {
     Const,
     Struct,
     Enum,
+    Impl,
+    Match,
+    SelfValue, // `self` parameter
+    SelfType, // `Self` type
 
     // separators
     LeftParen,
@@ -167,6 +171,10 @@ impl Display for TokenKind {
             TokenKind::Const => write!(f, "Const"),
             TokenKind::Struct => write!(f, "Struct"),
             TokenKind::Enum => write!(f, "Enum"),
+            TokenKind::Impl => write!(f, "Impl"),
+            TokenKind::Match => write!(f, "Match"),
+            TokenKind::SelfValue => write!(f, "SelfValue"),
+            TokenKind::SelfType => write!(f, "SelfType"),
 
             // separators
             TokenKind::LeftParen => write!(f, "("),

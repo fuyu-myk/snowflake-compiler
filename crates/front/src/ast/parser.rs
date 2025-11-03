@@ -1,7 +1,7 @@
-use crate::ast::{AssignmentOpKind, Ast, AstType, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, BlockExpression, ElseBranch, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, Mutability, Path, PathSegment, Pattern, PatternKind, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, UnaryOp, UnaryOpKind, Variant, VariantData};
+use crate::ast::{AssignmentOpKind, AssociatedItem, Ast, AstType, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, BlockExpression, ElseBranch, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, ItemIndex, ItemKind, Mutability, Path, PathSegment, Pattern, PatternKind, SelfParam, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, UnaryOp, UnaryOpKind, Variant, VariantData};
 use snowflake_common::text::span::TextSpan;
 use snowflake_common::token::{Token, TokenKind};
-use snowflake_common::Idx;
+use snowflake_common::{bug_report, Idx};
 use crate::compilation_unit::{GlobalScope};
 use snowflake_common::diagnostics::DiagnosticsReportCell;
 use snowflake_common::typings::TypeKind;
@@ -69,7 +69,7 @@ impl <'a> Parser<'a> {
         }
     }
 
-    pub fn next_item(&mut self) -> Option<&Item> {
+    pub fn next_item(&mut self) -> Option<&Item<ItemKind>> {
         if self.is_at_end() {
             return None;
         }
@@ -84,13 +84,27 @@ impl <'a> Parser<'a> {
         self.current().kind == TokenKind::Eof
     }
 
+    fn current(&self) -> &Token {
+        self.peek(0)
+    }
+
     fn parse_statement(&mut self) -> StmtIndex {
         let statement = match self.current().kind {
-            TokenKind::Let => self.parse_let_statement().id,
-            TokenKind::Const => self.parse_const_statement().id,
-            TokenKind::Return => self.parse_return_statement().id,
+            TokenKind::Let => {
+                let stmt = self.parse_let_statement().id;
+                self.consume_and_check(TokenKind::SemiColon);
+                return stmt;
+            }
+            TokenKind::Const => {
+                let stmt = self.parse_const_statement().id;
+                self.consume_and_check(TokenKind::SemiColon);
+                return stmt;
+            }
             TokenKind::Function => {
-                let item = self.parse_fx_item();
+                let item = match self.parse_fx_item(false) {
+                    Ok(fx_item) => fx_item,
+                    Err(_) => bug_report!("Expected function item, got associated item"),
+                };
                 let item_id = item.id;
                 let span = item.span.clone();
                 self.ast.statement_from_kind(StatementKind::Item(item_id), span).id
@@ -101,19 +115,41 @@ impl <'a> Parser<'a> {
                 let span = item.span.clone();
                 self.ast.statement_from_kind(StatementKind::Item(item_id), span).id
             }
-            _ => self.parse_expression_statement().id,
+            _ => {
+                let expr = self.parse_expression();
+                let has_semicolon = self.current().kind == TokenKind::SemiColon;
+
+                if has_semicolon {
+                    self.consume();
+                    self.ast.statement_from_kind(
+                        StatementKind::SemiExpression(expr),
+                        self.ast.query_expression(expr).span(&self.ast),
+                    ).id
+                } else {
+                    self.ast.statement_from_kind(
+                        StatementKind::Expression(expr),
+                        self.ast.query_expression(expr).span(&self.ast),
+                    ).id
+                }
+            }
         };
 
-        self.consume_if(TokenKind::SemiColon);
         statement
     }
 
-    fn parse_item(&mut self) -> Result<&Item, ()> {
+    fn parse_item(&mut self) -> Result<&Item<ItemKind>, ()> {
         return match &self.current().kind {
-            TokenKind::Function => Ok(self.parse_fx_item()),
-            TokenKind::Const => Ok(self.parse_const_item()),
+            TokenKind::Function => match self.parse_fx_item(false) {
+                Ok(fx_item) => Ok(fx_item),
+                Err(_) => bug_report!("Expected function item, got associated item"),
+            },
+            TokenKind::Const => match self.parse_const_item(false) {
+                Ok(const_item) => Ok(const_item),
+                Err(_) => bug_report!("Expected constant item, got associated item"),
+            }
             TokenKind::Struct => Ok(self.parse_struct_item()),
             TokenKind::Enum => Ok(self.parse_enum_item()),
+            TokenKind::Impl => Ok(self.parse_impl_item()),
             _ => {
                 Err(self.diagnostics_report.borrow_mut().report_expected_item(self.current()))
             }
@@ -127,6 +163,10 @@ impl <'a> Parser<'a> {
 
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
             body.push(self.parse_statement());
+
+            if self.current().kind == TokenKind::CloseBrace {
+                break;
+            }
         }
 
         for statement in body.iter() {
@@ -142,7 +182,7 @@ impl <'a> Parser<'a> {
         BlockExpression::new(open_brace, body, close_brace, span)
     }
 
-    fn parse_fx_item(&mut self) -> &Item {
+    fn parse_fx_item(&mut self, is_associated: bool) -> Result<&Item<ItemKind>, &AssociatedItem> {
         let mut spans = vec![];
 
         // fx keyword & identifier
@@ -150,33 +190,18 @@ impl <'a> Parser<'a> {
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
         
         // parse params (optional)
-        let generics = self.parse_optional_param_list();
+        let (generics, self_param) = self.parse_optional_param_list();
+
+        let return_type = self.parse_optional_return_type();
 
         // parse body
-        let return_type = self.parse_optional_return_type();
-        let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
-        spans.push(open_brace.span.clone());
-        let mut body = Vec::new();
-        
         self.function_depth += 1;
 
-        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
-            body.push(self.parse_statement());
-        }
-
-        for statement in body.iter() {
-            let stmt_span = self.ast.query_statement(*statement).span(self.ast).clone();
-            spans.push(stmt_span);
-        }
+        let body = self.parse_body();
+        spans.push(body.span.clone());
 
         self.function_depth -= 1;
-        
-        let close_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
-        spans.push(close_brace.span.clone());
 
-        let span = TextSpan::combine(spans);
-
-        let body = BlockExpression::new(open_brace, body.clone(), close_brace, span);
         let resolved_return_type = return_type.clone().map(
             |return_type| {
                 match &return_type.ty {
@@ -186,22 +211,31 @@ impl <'a> Parser<'a> {
             }
         ).unwrap_or(TypeKind::Void);
 
-        let fx_idx_result = self.global_scope.create_function(
-            identifier.span.literal.clone(),
-            body.clone(),
-            generics.get_param_indices(),
-            resolved_return_type,
-        );
+        let fx_idx = if is_associated {
+            // Placeholder, will be registered during resolution phase
+            ItemIndex::unreachable()
+        } else {
+            let fx_idx_result = self.global_scope.create_function(
+                identifier.span.literal.clone(),
+                body.clone(),
+                generics.get_param_indices(),
+                resolved_return_type,
+            );
 
-        let fx_idx = match fx_idx_result {
-            Ok(created_fx_idx) => created_fx_idx,
-            Err(existing_fx_idx) => {
-                self.diagnostics_report.borrow_mut().report_function_already_declared(&identifier);
-                existing_fx_idx
+            match fx_idx_result {
+                Ok(created_fx_idx) => created_fx_idx,
+                Err(existing_fx_idx) => {
+                    self.diagnostics_report.borrow_mut().report_function_already_declared(&identifier);
+                    existing_fx_idx
+                }
             }
         };
 
-        self.ast.func_item(fx_keyword, identifier, generics, body, return_type, fx_idx)
+        if is_associated {
+            return Err(self.ast.assoc_func_item(fx_keyword, identifier, generics, self_param, body, return_type, fx_idx))
+        }
+
+        Ok(self.ast.func_item(fx_keyword, identifier, generics, self_param, body, return_type, fx_idx))
     }
 
     fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
@@ -265,26 +299,55 @@ impl <'a> Parser<'a> {
                     AstType::Tuple { open_paren, element_types, close_paren },
                 ));
             } else {
-                let type_name = vec![self.consume_and_check(TokenKind::Identifier).clone()];
+                // Accept either Identifier or SelfType for type names
+                let type_token = if self.current().kind == TokenKind::SelfType {
+                    self.consume_and_check(TokenKind::SelfType).clone()
+                } else {
+                    self.consume_and_check(TokenKind::Identifier).clone()
+                };
+                let type_name = vec![type_token.clone()];
 
-                if let Some(type_token) = type_name.first() {
-                    let type_kind = AstType::Simple { type_name: type_token.clone() };
-                    return Some(FxReturnType::new(arrow, type_name, type_kind));
-                }
+                let type_kind = AstType::Simple { type_name: type_token };
+                return Some(FxReturnType::new(arrow, type_name, type_kind));
             }
         }
 
         return None;
     }
 
-    fn parse_optional_param_list(&mut self) -> Generics {
+    fn parse_optional_param_list(&mut self) -> (Generics, Option<SelfParam>) {
         if self.current().kind != TokenKind::LeftParen {
-            return Generics::empty(TextSpan::default());
+            return (Generics::empty(TextSpan::default()), None);
         }
 
         let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
         let mut generic_params = Vec::new();
         let mut all_spans = vec![left_paren.span.clone()];
+        let mut self_param = None;
+        
+        // Check for self parameter first
+        if self.current().kind == TokenKind::Mutable && self.peek(1).kind == TokenKind::SelfValue {
+            self.consume_and_check(TokenKind::Mutable);
+            let self_token = self.consume_and_check(TokenKind::SelfValue).clone();
+            self_param = Some(SelfParam {
+                mutability: Mutability::Mutable,
+                token: self_token,
+            });
+            
+            if self.current().kind == TokenKind::Comma {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        } else if self.current().kind == TokenKind::SelfValue {
+            let self_token = self.consume_and_check(TokenKind::SelfValue).clone();
+            self_param = Some(SelfParam {
+                mutability: Mutability::Immutable,
+                token: self_token,
+            });
+            
+            if self.current().kind == TokenKind::Comma {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        }
         
         while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
             let identifier = self.consume_and_check(TokenKind::Identifier).clone();
@@ -340,10 +403,10 @@ impl <'a> Parser<'a> {
             TextSpan::combine(all_spans)
         };
         
-        Generics::new(generic_params, combined_span)
+        (Generics::new(generic_params, combined_span), self_param)
     }
 
-    fn parse_const_item(&mut self) -> &Item {
+    fn parse_const_item(&mut self, is_associated: bool) -> Result<&Item<ItemKind>, &AssociatedItem> {
         self.consume_and_check(TokenKind::Const);
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
         let type_annotation = self.parse_optional_type_annotation();
@@ -356,31 +419,34 @@ impl <'a> Parser<'a> {
         let expr = self.parse_expression();
         self.consume_and_check(TokenKind::SemiColon);
 
-        self.ast.constant_item(
-            Pattern {
-                id: StmtIndex::new(0),
-                kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
-                span: identifier.span.clone(),
-                token: identifier.clone(),
-            },
-            Generics::empty(identifier.span.clone()),
-            type_annotation.unwrap_or(
-                StaticTypeAnnotation::new_simple(
-                    Token {
-                        kind: TokenKind::Colon,
-                        span: TextSpan::default(),
-                    },
-                    Token {
-                        kind: TokenKind::Identifier,
-                        span: TextSpan::default(),
-                    }
-                )
-            ),
-            Some(Box::new(expr))
-        )
+        let ident = Pattern {
+            id: StmtIndex::new(0),
+            kind: PatternKind::Identifier(BindingMode(Mutability::Immutable), identifier.clone()),
+            span: identifier.span.clone(),
+            token: identifier.clone(),
+        };
+
+        let type_annot = type_annotation.unwrap_or(
+            StaticTypeAnnotation::new_simple(
+                Token {
+                    kind: TokenKind::Colon,
+                    span: TextSpan::default(),
+                },
+                Token {
+                    kind: TokenKind::Identifier,
+                    span: TextSpan::default(),
+                }
+            )
+        );
+
+        if is_associated {
+            return Err(self.ast.assoc_constant_item(ident, Generics::empty(identifier.span.clone()), type_annot, Some(Box::new(expr))));
+        }
+
+        Ok(self.ast.constant_item(ident, Generics::empty(identifier.span.clone()), type_annot, Some(Box::new(expr))))
     }
 
-    fn parse_struct_item(&mut self) -> &Item {
+    fn parse_struct_item(&mut self) -> &Item<ItemKind> {
         self.consume_and_check(TokenKind::Struct);
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
 
@@ -515,7 +581,7 @@ impl <'a> Parser<'a> {
         VariantData::Tuple(field_defs)
     }
 
-    fn parse_enum_item(&mut self) -> &Item {
+    fn parse_enum_item(&mut self) -> &Item<ItemKind> {
         self.consume_and_check(TokenKind::Enum);
         let identifier = self.consume_and_check(TokenKind::Identifier).clone();
 
@@ -572,18 +638,67 @@ impl <'a> Parser<'a> {
         variants
     }
 
-    fn parse_return_statement(&mut self) -> &Statement {
-        let return_keyword = self.consume_and_check(TokenKind::Return).clone();
-        
-        let expression = if self.current().kind == TokenKind::SemiColon || 
-                           self.current().kind == TokenKind::CloseBrace ||
-                           self.is_at_end() {
-            None
+    fn parse_impl_item(&mut self) -> &Item<ItemKind> {
+        let mut generic_after_impl = false;
+        let mut generic_after_type_name = false;
+
+        self.consume_and_check(TokenKind::Impl);
+
+        let generics_impl = if self.current().kind == TokenKind::LessThan {
+            generic_after_impl = true;
+            self.parse_generic_params()
         } else {
-            Some(self.parse_expression())
+            Generics::new(Vec::new(), TextSpan::default())
         };
 
-        self.ast.return_statement(&self.ast.clone(), return_keyword, expression)
+        let type_name = self.consume_and_check(TokenKind::Identifier).clone();
+
+        let generics = if generic_after_impl {
+            generic_after_type_name = true;
+            self.parse_generic_params()
+        } else {
+            Generics::new(Vec::new(), TextSpan::default())
+        };
+
+        if (generic_after_impl && !generic_after_type_name) || (!generic_after_impl && generic_after_type_name) {
+            let generics_span = if generic_after_impl {
+                generics_impl.span
+            } else {
+                generics.span.clone()
+            };
+
+            self.diagnostics_report.borrow_mut().report_missing_impl_generics(
+                generic_after_impl,
+                generic_after_type_name,
+                &generics_span,
+                &type_name.span.literal,
+            );
+        }
+
+        let type_path = self.parse_path(type_name.clone());
+        self.consume_and_check(TokenKind::OpenBrace);
+        let mut items = Vec::new();
+
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            let item = if self.current().kind == TokenKind::Function {
+                self.parse_fx_item(true)
+            } else if self.current().kind == TokenKind::Const {
+                self.parse_const_item(true)
+            } else {
+                self.diagnostics_report.borrow_mut().report_expected_item(self.current());
+                break;
+            };
+
+            let item_unwrapped = match item {
+                Ok(_) => bug_report!("Expected associated item, got non-associated item"),
+                Err(assoc_item) => assoc_item,
+            };
+
+            items.push(item_unwrapped.clone());
+        }
+
+        self.consume_and_check(TokenKind::CloseBrace);
+        self.ast.impl_item(type_path, generics, items)
     }
 
     fn parse_let_statement(&mut self) -> &Statement {
@@ -730,11 +845,6 @@ impl <'a> Parser<'a> {
         }
     }
 
-    fn parse_expression_statement(&mut self) -> &Statement {
-        let expr = self.parse_expression();
-        self.ast.expression_statement(&self.ast.clone(), expr)
-    }
-
     fn parse_condition_expression(&mut self) -> ExprIndex {
         self.parse_expression_in_context(false)
     }
@@ -758,10 +868,6 @@ impl <'a> Parser<'a> {
         }
         
         left_expr
-    }
-
-    fn parse_assignment_expression(&mut self) -> ExprIndex {
-        self.parse_assignment_expression_in_context(true)
     }
 
     fn parse_binary_expression(&mut self, allow_struct_expr: bool) -> ExprIndex {
@@ -859,10 +965,38 @@ impl <'a> Parser<'a> {
                     expr = self.ast.index_expression(expr, open_bracket, index, close_bracket).id;
                 }
                 TokenKind::Period => {
-                    // Field access
                     let period = self.consume().clone();
-                    let index = self.parse_index_expression();
-                    expr = self.ast.field_expression(expr, period, index).id;
+                    
+                    // Check if this is a method call (identifier followed by '(')
+                    if self.current().kind == TokenKind::Identifier && 
+                       self.peek(1).kind == TokenKind::LeftParen {
+                        let method_name = self.consume_and_check(TokenKind::Identifier).clone();
+                        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+                        
+                        let mut arguments = Vec::new();
+                        
+                        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+                            arguments.push(self.parse_expression());
+                            if self.current().kind == TokenKind::Comma {
+                                self.consume_and_check(TokenKind::Comma);
+                            }
+                        }
+                        
+                        let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+                        
+                        expr = self.ast.method_call_expression(
+                            expr, 
+                            period,
+                            method_name, 
+                            left_paren, 
+                            arguments, 
+                            right_paren
+                        ).id;
+                    } else {
+                        // Field access
+                        let index = self.parse_primary_expression();
+                        expr = self.ast.field_expression(expr, period, index).id;
+                    }
                 }
                 _ => break,
             }
@@ -872,27 +1006,7 @@ impl <'a> Parser<'a> {
     }
 
     fn parse_index_expression(&mut self) -> ExprIndex {
-        let token = self.current().clone();
-        
-        match token.kind {
-            TokenKind::Usize(value) => {
-                self.consume();
-                self.ast.usize_expression(token, value).id
-            },
-            TokenKind::Number(value) => {
-                self.consume();
-                self.ast.number_expression(token, value).id
-            },
-            TokenKind::Identifier => {
-                self.parse_primary_expression()
-            },
-            TokenKind::LeftParen => {
-                self.parse_primary_expression()
-            },
-            _ => {
-                self.parse_assignment_expression()
-            }
-        }
+        self.parse_expression()
     }
 
     fn parse_unary_operator(&mut self) -> Option<UnaryOp> {
@@ -960,6 +1074,10 @@ impl <'a> Parser<'a> {
 
         while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
             statements.push(self.parse_statement());
+
+            if self.current().kind == TokenKind::CloseBrace {
+                break;
+            }
         }
 
         let right_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
@@ -1007,8 +1125,16 @@ impl <'a> Parser<'a> {
         return self.ast.call_expression(identifier, left_paren, arguments, right_paren).id;
     }
 
-    fn current(&self) -> &Token {
-        self.peek(0)
+    fn parse_return_expression(&mut self, return_keyword: Token) -> &Expression {
+        let expression = if self.current().kind == TokenKind::SemiColon || 
+                           self.current().kind == TokenKind::CloseBrace ||
+                           self.is_at_end() {
+            None
+        } else {
+            Some(self.parse_expression())
+        };
+
+        self.ast.return_expression(&self.ast.clone(), return_keyword, expression)
     }
 
     fn parse_struct_expression(&mut self, path: Path) -> ExprIndex {
@@ -1114,7 +1240,7 @@ impl <'a> Parser<'a> {
                     self.ast.parenthesised_expression(left_paren, first_expr, right_paren)
                 }
             },
-            TokenKind::Identifier => {
+            TokenKind::Identifier | TokenKind::SelfType | TokenKind::SelfValue => {
                 let identifier = token.clone();
                 let path = self.parse_path(identifier);
 
@@ -1126,6 +1252,7 @@ impl <'a> Parser<'a> {
 
                 self.ast.path_expression(path.segments, path.tokens)
             },
+            TokenKind::Return => self.parse_return_expression(token.clone()),
             TokenKind::True | TokenKind::False => {
                 let value = token.kind == TokenKind::True;
                 self.ast.boolean_expression(token.clone(), value)

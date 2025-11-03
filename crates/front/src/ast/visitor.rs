@@ -3,7 +3,7 @@
  */
 
 use crate::ast::{
-    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, ExprIndex, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, Generics, IfExpression, IndexExpression, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, PathExpression, ReturnStatement, Statement, StatementKind, StmtIndex, StringExpression, StructExpression, TupleExpression, UnaryExpression, VariantData, WhileExpression};
+    ArrayExpression, AssignExpression, Ast, BinaryExpression, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, ExprIndex, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, Generics, IfExpression, Impl, IndexExpression, ItemIndex, ItemKind, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, PathExpression, ReturnExpression, Statement, StatementKind, StmtIndex, StringExpression, StructExpression, TupleExpression, UnaryExpression, VariantData, WhileExpression};
 use snowflake_common::text::span::TextSpan;
 
 
@@ -19,14 +19,14 @@ pub trait ASTVisitor {
             StatementKind::Expression(expr) => {
                 self.visit_expression(ast, *expr);
             }
+            StatementKind::SemiExpression(expr) => {
+                self.visit_expression(ast, *expr);
+            }
             StatementKind::Let(expr) => {
                 self.visit_let_statement(ast, &expr, &statement);
             }
             StatementKind::Const(const_stmt) => {
                 self.visit_const_statement(ast, &const_stmt, &statement);
-            }
-            StatementKind::Return(statement) => {
-                self.visit_return_statement(ast, &statement);
             }
             StatementKind::Item(item_id) => {
                 self.visit_item(ast, *item_id);
@@ -54,6 +54,9 @@ pub trait ASTVisitor {
             ItemKind::Enum(_, generics, enum_definition) => {
                 self.visit_enum_item(ast, generics, enum_definition, item.id);
             }
+            ItemKind::Impl(impl_item) => {
+                self.visit_impl_item(ast, impl_item);
+            }
         }
     }
 
@@ -63,13 +66,9 @@ pub trait ASTVisitor {
 
     fn visit_enum_item(&mut self, ast: &mut Ast, generics: &Generics, enum_definition: &EnumDefinition, item_id: ItemIndex);
 
-    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex);
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl);
 
-    fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
-        if let Some(expr) = &return_statement.return_value {
-            self.visit_expression(ast, *expr);
-        }
-    }
+    fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex);
 
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement);
 
@@ -118,6 +117,9 @@ pub trait ASTVisitor {
             ExpressionKind::Call(expr) => {
                 self.visit_call_expression(ast, &expr, &expression);
             }
+            ExpressionKind::Return(expr) => {
+                self.visit_return_expression(ast, &expr, &expression);
+            }
             ExpressionKind::If(expr) => {
                 self.visit_if_expression(ast, &expr, &expression);
             }
@@ -151,11 +153,16 @@ pub trait ASTVisitor {
             ExpressionKind::Path(path_expression) => {
                 self.visit_path_expression(ast, &path_expression, &expression);
             }
+            ExpressionKind::MethodCall(expr) => {
+                self.visit_method_call_expression(ast, &expr, &expression);
+            }
             ExpressionKind::Error(span) => {
                 self.visit_error(ast, &span);
             }
         }
     }
+
+    fn visit_method_call_expression(&mut self, ast: &mut Ast, method_call: &MethodCallExpression, expr: &Expression);
 
     fn visit_path_expression(&mut self, ast: &mut Ast, path_expression: &PathExpression, expr: &Expression);
 
@@ -202,6 +209,12 @@ pub trait ASTVisitor {
             for statement in else_branch.body.iter() {
                 self.visit_statement(ast, *statement);
             }
+        }
+    }
+
+    fn visit_return_expression(&mut self, ast: &mut Ast, return_expression: &ReturnExpression, _expr: &Expression) {
+        if let Some(expr) = &return_expression.return_value {
+            self.visit_expression(ast, *expr);
         }
     }
 

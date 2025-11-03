@@ -12,15 +12,25 @@ use crate::ir::hir::{AllocType, Block, HIRContext, HIRExprField, HIRExprKind, HI
 
 struct Ctx {
     statements: Vec<HIRStatement>,
+    current_fx_idx: Option<ItemIndex>,
 }
 
 impl Ctx {
     fn new() -> Self {
-        Self { statements: vec![] }
+        Self { statements: vec![], current_fx_idx: None }
     }
 
     fn with_capacity(capacity: usize) -> Self {
-        Self { statements: Vec::with_capacity(capacity) }
+        Self { statements: Vec::with_capacity(capacity), current_fx_idx: None }
+    }
+    
+    fn with_function(current_fx_idx: ItemIndex) -> Self {
+        Self { statements: vec![], current_fx_idx: Some(current_fx_idx) }
+    }
+    
+    /// Create a new context with the same function context as the parent
+    fn new_child(&self) -> Self {
+        Self { statements: vec![], current_fx_idx: self.current_fx_idx }
     }
 }
 
@@ -84,6 +94,19 @@ impl HIRBuilder {
             _ => todo!("Unsupported pattern kind {:?} for path extraction", pattern.kind),
         }
     }
+    
+    /// Look up a struct by name, checks local scope first if in a function
+    fn lookup_struct_with_context(&self, struct_name: &str, global_scope: &GlobalScope, ctx: &Ctx) -> Option<ItemIndex> {
+        if let Some(fx_idx) = ctx.current_fx_idx {
+            let function = global_scope.functions.get(fx_idx);
+            let scoped_name = format!("{}::{}", function.name, struct_name);
+            if let Some(struct_idx) = global_scope.lookup_struct(&scoped_name) {
+                return Some(struct_idx);
+            }
+        }
+        
+        global_scope.lookup_struct(struct_name)
+    }
 
     pub fn build(mut self, ast: &Ast, global_scope: &mut GlobalScope) -> HIR {
         for item in ast.items.iter() {
@@ -93,9 +116,11 @@ impl HIRBuilder {
             
             match &item.kind {
                 ItemKind::Function(fx_decl) => {
-                    let mut ctx = Ctx::new();
-                    for stmt_id in fx_decl.body.iter() {
-                        self.build_statement(*stmt_id, ast, global_scope, &mut ctx, false);
+                    let mut ctx = Ctx::with_function(fx_decl.index);
+                    let statement_count = fx_decl.body.statements.len();
+                    for (idx, stmt_id) in fx_decl.body.statements.iter().enumerate() {
+                        let is_last = idx == statement_count - 1;
+                        self.build_statement(*stmt_id, ast, global_scope, &mut ctx, false, is_last);
                     }
                     self.hir.functions.insert(fx_decl.index, ctx.statements);
                 }
@@ -139,7 +164,42 @@ impl HIRBuilder {
                         span,
                     };
 
-                    self.hir.top_statements.insert(struct_idx, vec![struct_stmt]);
+                    self.hir.top_statements.entry(struct_idx)
+                        .or_insert_with(Vec::new)
+                        .push(struct_stmt);
+                }
+                ItemKind::Impl(impl_item) => {
+                    let type_name = match &*impl_item.self_type {
+                        snowflake_front::ast::AstType::Simple { type_name } => {
+                            type_name.span.literal.clone()
+                        }
+                        snowflake_front::ast::AstType::Path(_, path) => {
+                            path.segments.last().unwrap().identifier.span.literal.clone()
+                        }
+                        _ => continue, // Skip complex types
+                    };
+                    
+                    for assoc_item in &impl_item.items {
+                        if let snowflake_front::ast::AssociatedItemKind::Function(fx_decl) = &assoc_item.kind {
+                            let method_name = fx_decl.identifier.span.literal.clone();
+                            
+                            // Look up the actual function by path
+                            let path = format!("{}::{}", type_name, method_name);
+                            let fx_idx = global_scope.functions.indexed_iter()
+                                .find(|(_, fx)| fx.name == path)
+                                .map(|(idx, _)| idx);
+                            
+                            if let Some(fx_idx) = fx_idx {
+                                let mut ctx = Ctx::with_function(fx_idx);
+                                let statement_count = fx_decl.body.statements.len();
+                                for (idx, stmt_id) in fx_decl.body.statements.iter().enumerate() {
+                                    let is_last = idx == statement_count - 1;
+                                    self.build_statement(*stmt_id, ast, global_scope, &mut ctx, false, is_last);
+                                }
+                                self.hir.functions.insert(fx_idx, ctx.statements);
+                            }
+                        }
+                    }
                 }
                 ItemKind::Enum(name, generics, _) => {
                     let enum_name = &name.span.literal;
@@ -153,7 +213,9 @@ impl HIRBuilder {
                         span,
                     };
 
-                    self.hir.top_statements.insert(enum_idx, vec![enum_stmt]);
+                    self.hir.top_statements.entry(enum_idx)
+                        .or_insert_with(Vec::new)
+                        .push(enum_stmt);
                 }
             }
         }
@@ -161,13 +223,22 @@ impl HIRBuilder {
         self.hir
     }
 
-    fn build_statement(&mut self, stmt_id: StmtIndex, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, _temp_needed: bool) {
+    fn build_statement(&mut self, stmt_id: StmtIndex, ast: &Ast, global_scope: &mut GlobalScope, ctx: &mut Ctx, _temp_needed: bool, is_last: bool) {
         let statement = ast.query_statement(stmt_id);
         let span = statement.span.clone();
         let kind = match &statement.kind {
-            StatementKind::Expression(expr) => {
+            StatementKind::SemiExpression(expr) => {
                 let expr = self.build_expression(*expr, ast, global_scope, ctx, false);
                 HIRStmtKind::Expression { expr }
+            }
+            StatementKind::Expression(expr) => {
+                let expr = self.build_expression(*expr, ast, global_scope, ctx, false);
+                // Only treat as tail expression if it's the last statement
+                if is_last {
+                    HIRStmtKind::TailExpression { expr }
+                } else {
+                    HIRStmtKind::Expression { expr }
+                }
             }
             StatementKind::Let(let_statement) => {
                 let expr = self.build_expression(let_statement.initialiser, ast, global_scope, ctx, true);
@@ -194,18 +265,6 @@ impl HIRBuilder {
                     init_expr: Some(expr),
                 }
             }
-            StatementKind::Return(return_statement) => {
-                let expr = return_statement.return_value.as_ref().copied()
-                    .map(|expr_id| self.build_expression(expr_id, ast, global_scope, ctx, true))
-                    .unwrap_or_else(|| {
-                        match return_statement.return_value {
-                            Some(value) => self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast.query_expression(value).span.clone()),
-                            None => self.create_expression(HIRExprKind::Unit, TypeKind::Void, return_statement.return_keyword.span.clone()),
-                        }
-                    });
-
-                HIRStmtKind::Return { expr }
-            }
             StatementKind::Item(item_id) => {
                 let ast_item = ast.query_item(*item_id);
 
@@ -220,6 +279,10 @@ impl HIRBuilder {
                         }
                     }
                     ItemKind::Const(_) => {
+                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                    }
+                    ItemKind::Impl(_) => {
+                        // Placeholder for impl blocks
                         HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
                     }
                     ItemKind::Enum(..) => {
@@ -283,16 +346,20 @@ impl HIRBuilder {
             },
             ExpressionKind::If(if_expr) => {
                 let condition = self.build_expression(if_expr.condition, ast, global_scope, ctx, false);
-                let mut then_ctx = Ctx::new();
+                let mut then_ctx = ctx.new_child();
 
-                for stmt_id in &if_expr.then_branch.statements {
-                    self.build_statement(*stmt_id, ast, global_scope, &mut then_ctx, false);
+                let then_count = if_expr.then_branch.statements.len();
+                for (idx, stmt_id) in if_expr.then_branch.statements.iter().enumerate() {
+                    let is_last = idx == then_count - 1;
+                    self.build_statement(*stmt_id, ast, global_scope, &mut then_ctx, false, is_last);
                 }
 
-                let mut else_ctx = Ctx::new();
+                let mut else_ctx = ctx.new_child();
                 if let Some(else_branch) = &if_expr.else_branch {
-                    for stmt_id in else_branch.body.iter() {
-                        self.build_statement(*stmt_id, ast, global_scope, &mut else_ctx, false);
+                    let else_count = else_branch.body.statements.len();
+                    for (idx, stmt_id) in else_branch.body.statements.iter().enumerate() {
+                        let is_last = idx == else_count - 1;
+                        self.build_statement(*stmt_id, ast, global_scope, &mut else_ctx, false, is_last);
                     }
                 }
                 let current_scope = self.current_scope_id();
@@ -323,9 +390,11 @@ impl HIRBuilder {
                 }
             },
             ExpressionKind::Block(block_expr) => {
-                let mut block_ctx = Ctx::new();
-                for stmt_id in block_expr.statements.iter() {
-                    self.build_statement(*stmt_id, ast, global_scope, &mut block_ctx, false);
+                let mut block_ctx = ctx.new_child();
+                let block_count = block_expr.statements.len();
+                for (idx, stmt_id) in block_expr.statements.iter().enumerate() {
+                    let is_last = idx == block_count - 1;
+                    self.build_statement(*stmt_id, ast, global_scope, &mut block_ctx, false, is_last);
                 }
                 let block_expr = HIRExprKind::Block {
                     body: Box::new(crate::ir::hir::Block {
@@ -364,9 +433,15 @@ impl HIRBuilder {
                     
                     let (item_idx, variant_discriminant) = item_result
                         .expect("Tuple struct/enum variant should be resolved during semantic analysis");
-                    let struct_item = ast.query_item(item_idx);
+                    
+                    let item = if variant_discriminant.is_some() {
+                        let enum_info = global_scope.enums.get(item_idx);
+                        ast.query_item(enum_info.id)
+                    } else {
+                        global_scope.structs.get(item_idx)
+                    };
 
-                    let field_spans = match &struct_item.kind {
+                    let field_spans = match &item.kind {
                         ItemKind::Struct(_, _, struct_def) => {
                             match struct_def {
                                 VariantData::Tuple(fields) => {
@@ -429,9 +504,22 @@ impl HIRBuilder {
                     HIRExprKind::Call { fx_idx: call_expr.idx_ref, args }
                 }
             },
+            ExpressionKind::Return(ret_expr) => {
+                let expr = ret_expr.return_value.as_ref().copied()
+                    .map(|expr_id| self.build_expression(expr_id, ast, global_scope, ctx, true))
+                    .unwrap_or_else(|| {
+                        match ret_expr.return_value {
+                            Some(value) => self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast.query_expression(value).span.clone()),
+                            None => self.create_expression(HIRExprKind::Unit, TypeKind::Void, ret_expr.return_keyword.span.clone()),
+                        }
+                    });
+
+                HIRExprKind::Return { expr: Box::new(expr) }
+            }
             ExpressionKind::While(while_statement) => {
                 let condition = self.build_expression(while_statement.condition, ast, global_scope, ctx, false);
-                let mut body_ctx = Ctx::with_capacity(while_statement.body.statements.len() + 1);
+                let mut body_ctx = ctx.new_child();
+                body_ctx.statements.reserve(while_statement.body.statements.len() + 1);
 
                 let while_span = TextSpan::combine_refs(&[&while_statement.while_keyword.span, &condition.span]);
                 
@@ -470,8 +558,10 @@ impl HIRBuilder {
                 let condition_check = self.create_statement(HIRStmtKind::Expression { expr: condition_check_expr }, while_span.clone());
                 body_ctx.statements.push(condition_check);
 
-                for stmt_id in while_statement.body.iter() {
-                    self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false);
+                let while_body_count = while_statement.body.statements.len();
+                for (idx, stmt_id) in while_statement.body.statements.iter().enumerate() {
+                    let is_last = idx == while_body_count - 1;
+                    self.build_statement(*stmt_id, ast, global_scope, &mut body_ctx, false, is_last);
                 }
 
                 HIRExprKind::Loop { body: body_ctx.statements }
@@ -589,31 +679,54 @@ impl HIRBuilder {
                             },
                             ObjectKind::Struct(_struct_idx) => {
                                 let field_ast_expr = ast.query_expression(tuple_index_expr.field.idx_no);
-                                let field_name = match &field_ast_expr.kind {
+                                match &field_ast_expr.kind {
                                     ExpressionKind::Path(path_expr) => {
-                                        path_expr.path.tokens.last().unwrap().span.literal.clone()
+                                        // Named field access
+                                        let field_name = path_expr.path.tokens.last().unwrap().span.literal.clone();
+                                        
+                                        if let Some((field_index, field_def)) = object_type.fields.iter().enumerate().find(|(_, f)| {
+                                            if let Some(name) = &f.name {
+                                                name == &field_name
+                                            } else {
+                                                false
+                                            }
+                                        }) {
+                                            // Convert the field name to a constant index
+                                            field = self.create_expression(
+                                                HIRExprKind::Usize(field_index),
+                                                TypeKind::Usize,
+                                                field_ast_expr.span.clone()
+                                            );
+                                            field_def.ty.as_ref().clone()
+                                        } else {
+                                            TypeKind::Error
+                                        }
+                                    }
+                                    ExpressionKind::Number(num_expr) => {
+                                        // Numeric field access for tuple structs
+                                        let idx = num_expr.number as usize;
+                                        if idx >= object_type.fields.len() {
+                                            TypeKind::Error
+                                        } else {
+                                            field = self.create_expression(
+                                                HIRExprKind::Usize(idx),
+                                                TypeKind::Usize,
+                                                field_ast_expr.span.clone()
+                                            );
+                                            object_type.fields[idx].ty.as_ref().clone()
+                                        }
+                                    }
+                                    ExpressionKind::Usize(usize_expr) => {
+                                        let idx = usize_expr.number;
+                                        if idx >= object_type.fields.len() {
+                                            TypeKind::Error
+                                        } else {
+                                            object_type.fields[idx].ty.as_ref().clone()
+                                        }
                                     }
                                     _ => {
-                                        bug_report!("Expected variable expression for struct field name, got {:?}", field_ast_expr.kind);
+                                        bug_report!("Expected variable or numeric expression for struct field access, got {:?}", field_ast_expr.kind);
                                     }
-                                };
-
-                                if let Some((field_index, field_def)) = object_type.fields.iter().enumerate().find(|(_, f)| {
-                                    if let Some(name) = &f.name {
-                                        name == &field_name
-                                    } else {
-                                        false
-                                    }
-                                }) {
-                                    // Convert the field name to a constant index
-                                    field = self.create_expression(
-                                        HIRExprKind::Usize(field_index),
-                                        TypeKind::Usize,
-                                        field_ast_expr.span.clone()
-                                    );
-                                    field_def.ty.as_ref().clone()
-                                } else {
-                                    TypeKind::Error
                                 }
                             }
                         }
@@ -683,7 +796,7 @@ impl HIRBuilder {
                     .expect("Struct path should have at least one segment")
                     .identifier.span.literal.clone();
                 
-                let path = if let Some(struct_idx) = global_scope.lookup_struct(&struct_name) {
+                let path = if let Some(struct_idx) = self.lookup_struct_with_context(&struct_name, global_scope, ctx) {
                     QualifiedPath::ResolvedType(struct_idx)
                 } else if path_len >= 2 {
                     let enum_name = &struct_expr.path.segments[path_len - 2].identifier.span.literal;
@@ -721,7 +834,7 @@ impl HIRBuilder {
                     let path_len = path_expr.path.segments.len();
                     let identifier = path_expr.path.segments.last().unwrap().identifier.span.literal.clone();
                     
-                    let path = if let Some(struct_idx) = global_scope.lookup_struct(&identifier) {
+                    let path = if let Some(struct_idx) = self.lookup_struct_with_context(&identifier, global_scope, ctx) {
                         Some(QualifiedPath::ResolvedType(struct_idx))
                     } else if path_len >= 2 {
                         let enum_name = &path_expr.path.segments[path_len - 2].identifier.span.literal;
@@ -743,6 +856,21 @@ impl HIRBuilder {
                     } else {
                         bug_report!("Path expression '{}' could not be resolved to a variable, unit struct, or enum variant during semantic analysis", identifier);
                     }
+                }
+            },
+            ExpressionKind::MethodCall(method_call) => {
+                // Desugar method call to regular function call
+                // receiver.method(args) => method(receiver, args)
+                let receiver = self.build_expression(method_call.receiver, ast, global_scope, ctx, true);
+                
+                let mut args = vec![receiver];
+                for arg_id in &method_call.arguments {
+                    args.push(self.build_expression(*arg_id, ast, global_scope, ctx, true));
+                }
+                
+                HIRExprKind::Call {
+                    fx_idx: method_call.resolved_fx,
+                    args,
                 }
             },
             ExpressionKind::Error(_) => bug_report!("Error expression in HIR builder"),

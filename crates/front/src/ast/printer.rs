@@ -140,9 +140,9 @@ impl ASTPrinter {
                     }
                 }
     
-                self.add_text(")");
+                self.add_text(");");
             }
-            VariantData::Unit => {}
+            VariantData::Unit => self.add_text(";"),
         }
     }
 }
@@ -154,6 +154,7 @@ impl ASTVisitor for ASTPrinter {
             return;
         }
         self.visit_item_default(ast, item);
+        self.add_newline();
     }
 
     fn visit_statement(&mut self, ast: &mut Ast, statement: StmtIndex) {
@@ -165,6 +166,10 @@ impl ASTVisitor for ASTPrinter {
         
         self.is_visiting_top_level = was_top_level;
 
+        match &ast.query_statement(statement).kind {
+            StatementKind::SemiExpression(_) => self.add_text(";"),
+            _ => {}
+        }
         self.result.push_str(&format!("{}\n", Fg(Reset)));
     }
 
@@ -334,10 +339,10 @@ impl ASTVisitor for ASTPrinter {
         self.result.push_str(&format!("{}{}", Self::TEXT_COLOUR.fg_str(), span.literal));
     }
 
-    fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
+    fn visit_return_expression(&mut self, ast: &mut Ast, return_expression: &ReturnExpression, _expr: &Expression) {
         self.add_keyword("return");
-        
-        if let Some(expression) = &return_statement.return_value {
+
+        if let Some(expression) = &return_expression.return_value {
             self.add_whitespace();
             self.visit_expression(ast, *expression);
         }
@@ -348,6 +353,24 @@ impl ASTVisitor for ASTPrinter {
         self.add_text("(");
 
         for (i, argument) in call_expression.arguments.iter().enumerate() {
+            if i != 0 {
+                self.add_text(",");
+                self.add_whitespace();
+            }
+
+            self.visit_expression(ast, *argument);
+        }
+
+        self.add_text(")");
+    }
+
+    fn visit_method_call_expression(&mut self, ast: &mut Ast, method_call: &MethodCallExpression, _expr: &Expression) {
+        self.visit_expression(ast, method_call.receiver);
+        self.add_text(".");
+        self.add_text(&method_call.method_name.span.literal);
+        self.add_text("(");
+
+        for (i, argument) in method_call.arguments.iter().enumerate() {
             if i != 0 {
                 self.add_text(",");
                 self.add_whitespace();
@@ -454,6 +477,9 @@ impl ASTVisitor for ASTPrinter {
                 self.add_text(&identifier.span.literal);
 
                 self.visit_enum_item(ast, generics, enum_definition, item.id);
+            }
+            ItemKind::Impl(impl_block) => {
+                self.visit_impl_item(ast, impl_block);
             }
         }
     }
@@ -566,6 +592,30 @@ impl ASTVisitor for ASTPrinter {
 
         self.indent -= 1;
         self.add_padding();
+        self.add_text("}\n");
+    }
+
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl) {
+        self.add_keyword("impl");
+        self.add_whitespace();
+        self.add_type_kind(&impl_item.self_type);
+        self.add_whitespace();
+        self.add_text("{\n");
+        self.indent += 1;
+
+        for item in &impl_item.items {
+            self.add_padding();
+            match &item.kind {
+                AssociatedItemKind::Function(decl) => {
+                    self.visit_fx_decl(ast, &decl, item.id);
+                }
+                AssociatedItemKind::Const(decl) => {
+                    self.visit_constant_item(ast, &decl, item.id);
+                }
+            }
+        }
+
+        self.indent -= 1;
         self.add_text("}\n");
     }
 }

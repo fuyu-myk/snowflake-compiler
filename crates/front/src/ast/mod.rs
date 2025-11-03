@@ -21,7 +21,8 @@ idx!(ItemIndex);
 pub struct Ast {
     pub statements: IndexVec<StmtIndex, Statement>,
     pub expressions: IndexVec<ExprIndex, Expression>,
-    pub items: IndexVec<ItemIndex, Item>
+    pub items: IndexVec<ItemIndex, Item<ItemKind>>,
+    pub assoc_items: IndexVec<ItemIndex, Item<AssociatedItemKind>>,
 }
 
 impl Ast {
@@ -30,6 +31,7 @@ impl Ast {
             statements: IndexVec::new(),
             expressions: IndexVec::new(),
             items: IndexVec::new(),
+            assoc_items: IndexVec::new(),
         }
     }
 
@@ -41,7 +43,7 @@ impl Ast {
         &self.expressions[expr_id]
     }
 
-    pub fn query_item(&self, item_id: ItemIndex) -> &Item {
+    pub fn query_item(&self, item_id: ItemIndex) -> &Item<ItemKind> {
         &self.items[item_id]
     }
 
@@ -53,7 +55,7 @@ impl Ast {
         &mut self.expressions[expr_id]
     }
 
-    pub fn query_item_mut(&mut self, item_id: ItemIndex) -> &mut Item {
+    pub fn query_item_mut(&mut self, item_id: ItemIndex) -> &mut Item<ItemKind> {
         &mut self.items[item_id]
     }
 
@@ -123,7 +125,7 @@ impl Ast {
 
     pub fn expression_statement(&mut self, ast: &Ast, expr_id: ExprIndex) -> &Statement {
         let span = self.query_expression(expr_id).span(ast);
-        self.statement_from_kind(StatementKind::Expression(expr_id), span)
+        self.statement_from_kind(StatementKind::SemiExpression(expr_id), span)
     }
 
     pub fn let_statement(
@@ -283,27 +285,6 @@ impl Ast {
         self.expression_from_kind(ExpressionKind::Block(BlockExpression { left_brace, statements, right_brace, span: span.clone() }), span)
     }
 
-    pub fn return_statement(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExprIndex>) -> &Statement {
-        let mut span_refs = vec![&return_keyword.span];
-        
-        let return_value_span = if let Some(expr_id) = return_value {
-            Some(self.query_expression(expr_id).span(_ast))
-        } else {
-            None
-        };
-        
-        if let Some(ref span) = return_value_span {
-            span_refs.push(span);
-        }
-        
-        let span = TextSpan::combine_refs(&span_refs);
-        
-        self.statement_from_kind(
-            StatementKind::Return(ReturnStatement { return_keyword, return_value }),
-            span
-        )
-    }
-
     // Expression
     pub fn expression_from_kind(&mut self, kind: ExpressionKind, span: TextSpan) -> &Expression {
         let expression = Expression::new(kind, ExprIndex::new(0), TypeKind::Unresolved, span);
@@ -405,6 +386,27 @@ impl Ast {
         
         self.expression_from_kind(
             ExpressionKind::Call(CallExpression { callee, left_paren, arguments, right_paren, idx_ref: ItemIndex::unreachable() }),
+            span
+        )
+    }
+
+    pub fn return_expression(&mut self, _ast: &Ast, return_keyword: Token, return_value: Option<ExprIndex>) -> &Expression {
+        let mut span_refs = vec![&return_keyword.span];
+        
+        let return_value_span = if let Some(expr_id) = return_value {
+            Some(self.query_expression(expr_id).span(_ast))
+        } else {
+            None
+        };
+        
+        if let Some(ref span) = return_value_span {
+            span_refs.push(span);
+        }
+        
+        let span = TextSpan::combine_refs(&span_refs);
+
+        self.expression_from_kind(
+            ExpressionKind::Return(ReturnExpression { return_keyword, return_value }),
             span
         )
     }
@@ -569,21 +571,66 @@ impl Ast {
         )
     }
 
+    pub fn method_call_expression(
+        &mut self, 
+        receiver: ExprIndex, 
+        period: Token,
+        method_name: Token, 
+        left_paren: Token, 
+        arguments: Vec<ExprIndex>, 
+        right_paren: Token
+    ) -> &Expression {
+        let receiver_span = self.query_expression(receiver).span(self);
+        let mut span_refs = vec![&receiver_span, &period.span, &method_name.span, &left_paren.span];
+        
+        let arg_spans: Vec<TextSpan> = arguments.iter()
+            .map(|arg_id| self.query_expression(*arg_id).span(self))
+            .collect();
+        
+        for span in &arg_spans {
+            span_refs.push(span);
+        }
+        
+        span_refs.push(&right_paren.span);
+        let span = TextSpan::combine_refs(&span_refs);
+        
+        self.expression_from_kind(
+            ExpressionKind::MethodCall(MethodCallExpression { 
+                receiver, 
+                period,
+                method_name, 
+                left_paren, 
+                arguments, 
+                right_paren, 
+                resolved_fx: ItemIndex::unreachable() 
+            }),
+            span
+        )
+    }
+
     pub fn error_expression(&mut self, span: TextSpan) -> &Expression {
         let span_clone = span.clone();
         self.expression_from_kind(ExpressionKind::Error(span), span_clone)
     }
 
     // Item
-    pub fn item_from_kind(&mut self, kind: ItemKind, span: TextSpan) -> &Item {
+    pub fn item_from_kind(&mut self, kind: ItemKind, span: TextSpan) -> &Item<ItemKind> {
         let item = Item::new(kind, ItemIndex::new(0), span);
         let id = self.items.push(item);
         self.items[id].id = id;
 
         &self.items[id]
     }
-    
-    pub fn item_from_kind_local(&mut self, kind: ItemKind, span: TextSpan, is_local: bool) -> &Item {
+
+    pub fn item_from_assoc_kind(&mut self, kind: AssociatedItemKind, span: TextSpan) -> &Item<AssociatedItemKind> {
+        let item = Item::new(kind, ItemIndex::new(0), span);
+        let id = self.assoc_items.push(item);
+        self.assoc_items[id].id = id;
+
+        &self.assoc_items[id]
+    }
+
+    pub fn item_from_kind_local(&mut self, kind: ItemKind, span: TextSpan, is_local: bool) -> &Item<ItemKind> {
         let item = if is_local {
             Item::new_local(kind, ItemIndex::new(0), span)
         } else {
@@ -595,12 +642,28 @@ impl Ast {
         &self.items[id]
     }
 
+    pub fn impl_item(
+        &mut self,
+        type_path: Path,
+        generics: Generics,
+        items: Vec<AssociatedItem>,
+    ) -> &Item<ItemKind> {
+        let all_spans = vec![type_path.span.clone(), generics.span.clone()];
+        let definition = Impl {
+            generics,
+            self_type: Box::new(AstType::Path(None, type_path.clone())),
+            items: items.into_iter().map(Box::new).collect(),
+        };
+
+        self.item_from_kind(ItemKind::Impl(definition), TextSpan::combine(all_spans))
+    }
+
     pub fn enum_item(
         &mut self,
         identifier: Token,
         generics: Generics,
         definition: Vec<Variant>,
-    ) -> &Item {
+    ) -> &Item<ItemKind> {
         let all_spans = vec![identifier.span.clone(), generics.span.clone()];
         let definition = EnumDefinition { variants: definition };
 
@@ -612,7 +675,7 @@ impl Ast {
         identifier: Token,
         generics: Generics,
         variant_data: VariantData,
-    ) -> &Item {
+    ) -> &Item<ItemKind> {
         let all_spans = vec![identifier.span.clone(), generics.span.clone()];
 
         self.item_from_kind(ItemKind::Struct(identifier, generics, variant_data), TextSpan::combine(all_spans))
@@ -624,10 +687,35 @@ impl Ast {
         generics: Generics,
         variant_data: VariantData,
         is_local: bool,
-    ) -> &Item {
+    ) -> &Item<ItemKind> {
         let all_spans = vec![identifier.span.clone(), generics.span.clone()];
 
         self.item_from_kind_local(ItemKind::Struct(identifier, generics, variant_data), TextSpan::combine(all_spans), is_local)
+    }
+
+    pub fn assoc_constant_item(
+        &mut self,
+        identifier: Pattern,
+        generics: Generics,
+        type_annotation: StaticTypeAnnotation,
+        expr: Option<Box<ExprIndex>>,
+    ) -> &AssociatedItem {
+        let mut all_spans = vec![identifier.span.clone(), generics.span.clone()];
+
+        all_spans.extend(type_annotation.collect_spans());
+
+        if let Some(ref expr) = expr {
+            all_spans.push(self.query_expression(**expr).span(self));
+        }
+
+        let constant_item = ConstantItem {
+            identifier,
+            generics,
+            type_annotation,
+            expr,
+        };
+
+        self.item_from_assoc_kind(AssociatedItemKind::Const(Box::new(constant_item)), TextSpan::combine(all_spans))
     }
 
     pub fn constant_item(
@@ -636,7 +724,7 @@ impl Ast {
         generics: Generics,
         type_annotation: StaticTypeAnnotation,
         expr: Option<Box<ExprIndex>>,
-    ) -> &Item {
+    ) -> &Item<ItemKind> {
         let mut all_spans = vec![identifier.span.clone(), generics.span.clone()];
 
         all_spans.extend(type_annotation.collect_spans());
@@ -655,15 +743,16 @@ impl Ast {
         self.item_from_kind(ItemKind::Const(Box::new(constant_item)), TextSpan::combine(all_spans))
     }
 
-    pub fn func_item(
+    pub fn assoc_func_item(
         &mut self,
         fx_keyword: Token,
         identifier: Token,
         generics: Generics,
+        self_param: Option<SelfParam>,
         body: BlockExpression,
         return_type: Option<FxReturnType>,
         index: ItemIndex
-    ) -> &Item {
+    ) -> &Item<AssociatedItemKind> {
         let mut all_spans = vec![
             fx_keyword.span.clone(),
             identifier.span.clone(),
@@ -679,7 +768,35 @@ impl Ast {
         
         let span = TextSpan::combine(all_spans);
 
-        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, generics, body, return_type, index }), span)
+        self.item_from_assoc_kind(AssociatedItemKind::Function(Box::new(FxDeclaration { fx_keyword, identifier, generics, self_param, body, return_type, index })), span)
+    }
+
+    pub fn func_item(
+        &mut self,
+        fx_keyword: Token,
+        identifier: Token,
+        generics: Generics,
+        self_param: Option<SelfParam>,
+        body: BlockExpression,
+        return_type: Option<FxReturnType>,
+        index: ItemIndex
+    ) -> &Item<ItemKind> {
+        let mut all_spans = vec![
+            fx_keyword.span.clone(),
+            identifier.span.clone(),
+            generics.span.clone(),
+            body.span.clone(),
+        ];
+        
+        if let Some(ref rt) = return_type {
+            all_spans.push(rt.arrow.span.clone());
+            let type_spans: Vec<TextSpan> = rt.type_tokens.iter().map(|token| token.span.clone()).collect();
+            all_spans.push(TextSpan::combine(type_spans));
+        }
+        
+        let span = TextSpan::combine(all_spans);
+
+        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, generics, self_param, body, return_type, index }), span)
     }
 
     pub fn visit(&mut self, visitor: &mut dyn ASTVisitor) {
@@ -692,24 +809,27 @@ impl Ast {
         let mut printer = ASTPrinter::new();
         self.visit(&mut printer);
         println!("=== AST Visualisation ===");
-        println!("{}", printer.result);
+        print!("{}", printer.result);
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Item {
-    pub kind: ItemKind,
+pub struct Item<K = ItemKind> {
+    pub kind: K,
     pub id: ItemIndex,
     pub span: TextSpan,
     pub is_local: bool,
 }
 
-impl Item {
-    pub fn new(kind: ItemKind, id: ItemIndex, span: TextSpan) -> Self {
+/// Represents associated items, including items in `impl` definitions.
+pub type AssociatedItem = Item<AssociatedItemKind>;
+
+impl<K> Item<K> {
+    pub fn new(kind: K, id: ItemIndex, span: TextSpan) -> Self {
         Self { kind, id, span, is_local: false }
     }
-    
-    pub fn new_local(kind: ItemKind, id: ItemIndex, span: TextSpan) -> Self {
+
+    pub fn new_local(kind: K, id: ItemIndex, span: TextSpan) -> Self {
         Self { kind, id, span, is_local: true }
     }
 }
@@ -720,6 +840,13 @@ pub enum ItemKind {
     Const(Box<ConstantItem>),
     Struct(Token, Generics, VariantData),
     Enum(Token, Generics, EnumDefinition),
+    Impl(Impl),
+}
+
+#[derive(Debug, Clone)]
+pub enum AssociatedItemKind {
+    Function(Box<FxDeclaration>),
+    Const(Box<ConstantItem>),
 }
 
 #[derive(Debug, Clone)]
@@ -748,9 +875,16 @@ pub struct FxDeclaration {
     pub fx_keyword: Token,
     pub identifier: Token,
     pub generics: Generics,
+    pub self_param: Option<SelfParam>,
     pub body: BlockExpression,
     pub return_type: Option<FxReturnType>,
     pub index: ItemIndex,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfParam {
+    pub mutability: Mutability,
+    pub token: Token,
 }
 
 #[derive(Debug, Clone)]
@@ -842,18 +976,21 @@ impl FieldDefinition {
 }
 
 #[derive(Debug, Clone)]
-pub enum StatementKind {
-    Expression(ExprIndex),
-    Let(LetStatement),
-    Return(ReturnStatement),
-    Const(ConstStatement),
-    Item(ItemIndex),
+pub struct Impl {
+    pub generics: Generics,
+    pub self_type: Box<AstType>,
+    pub items: Vec<Box<AssociatedItem>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ReturnStatement {
-    pub return_keyword: Token,
-    pub return_value: Option<ExprIndex>,
+pub enum StatementKind {
+    /// Expressions used as statements (i.e., with trailing semicolon)
+    SemiExpression(ExprIndex),
+    /// Expressions without trailing semicolon
+    Expression(ExprIndex),
+    Let(LetStatement),
+    Const(ConstStatement),
+    Item(ItemIndex),
 }
 
 #[derive(Debug, Clone)]
@@ -891,6 +1028,8 @@ pub enum AstType {
     },
     /// Path types like `std::path::Path`
     Path(Option<Box<QualifiedPath>>, Path),
+    /// Impl types like `impl Trait`
+    ImplTrait(ItemIndex, GenericBounds),
 }
 
 impl StaticTypeAnnotation {
@@ -988,6 +1127,18 @@ impl StaticTypeAnnotation {
             AstType::Path(_, path) => {
                 spans.push(path.span.clone());
             }
+            AstType::ImplTrait(_, bounds) => {
+                for bound in bounds {
+                    match bound {
+                        GenericBound::TraitBound(trait_ref) => {
+                            spans.push(trait_ref.span.clone());
+                        }
+                        GenericBound::LifetimeBound(lifetime_token) => {
+                            spans.push(lifetime_token.span.clone());
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1038,6 +1189,7 @@ impl Statement {
 
     pub fn span(&self, ast: &Ast) -> TextSpan {
         match &self.kind {
+            StatementKind::SemiExpression(expr_id) => ast.query_expression(*expr_id).span(ast),
             StatementKind::Expression(expr_id) => ast.query_expression(*expr_id).span(ast),
             StatementKind::Let(let_statement) => {
                 let mut spans = vec![let_statement.pattern.span.clone()];
@@ -1052,14 +1204,6 @@ impl Statement {
                 let mut spans = vec![const_statement.identifier.span.clone()];
                 spans.push(const_statement.type_annotation.colon.span.clone());
                 spans.extend(const_statement.type_annotation.collect_spans());
-
-                TextSpan::combine(spans)
-            }
-            StatementKind::Return(return_statement) => {
-                let mut spans = vec![return_statement.return_keyword.span.clone()];
-                if let Some(return_value) = &return_statement.return_value {
-                    spans.push(ast.query_expression(*return_value).span(ast));
-                }
 
                 TextSpan::combine(spans)
             }
@@ -1218,7 +1362,7 @@ pub struct ParenthesizedArguments {
 #[derive(Debug, Clone)]
 pub struct BindingMode(pub Mutability);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Mutability {
     Mutable,
     Immutable,
@@ -1237,6 +1381,8 @@ pub enum ExpressionKind {
     Assignment(AssignExpression),
     Boolean(BoolExpression),
     Call(CallExpression),
+    Return(ReturnExpression),
+    MethodCall(MethodCallExpression),
     If(IfExpression),
     Block(BlockExpression),
     While(WhileExpression),
@@ -1355,7 +1501,7 @@ impl BlockExpression {
         if let Some(last_statement) = self.statements.last() {
             let statement = ast.query_statement(*last_statement);
 
-            if let StatementKind::Expression(expr_id) = &statement.kind {
+            if let StatementKind::SemiExpression(expr_id) = &statement.kind {
                 return Some(*expr_id);
             }
         }
@@ -1378,7 +1524,10 @@ impl BlockExpression {
             Some(statement) => {
                 let statement = ast.query_statement(*statement);
                 match &statement.kind {
-                    StatementKind::Expression(expr_id) => Some(ast.query_expression(*expr_id).ty.clone()),
+                    StatementKind::Expression(expr_id) => {
+                        let expr = ast.query_expression(*expr_id);
+                        Some(expr.ty.clone())
+                    }
                     _ => None,
                 }
             }
@@ -1388,6 +1537,34 @@ impl BlockExpression {
 
     pub fn type_or_void(&self, ast: &Ast) -> TypeKind {
         self.last_statement_type(ast).unwrap_or(TypeKind::Void)
+    }
+
+    /// Check if this block always returns (has an explicit return in all code paths)
+    pub fn always_returns(&self, ast: &Ast) -> bool {
+        if let Some(last_statement) = self.statements.last() {
+            let statement = ast.query_statement(*last_statement);
+            match statement.kind {
+                StatementKind::Expression(expr_id) | StatementKind::SemiExpression(expr_id) => {
+                    let expr = ast.query_expression(expr_id);
+                    match &expr.kind {
+                        ExpressionKind::Return(_) => true,
+                        ExpressionKind::If(if_expr) => {
+                            // If/else always returns if both branches always return
+                            if let Some(else_branch) = &if_expr.else_branch {
+                                if_expr.then_branch.always_returns(ast) && else_branch.body.always_returns(ast)
+                            } else {
+                                false
+                            }
+                        }
+                        ExpressionKind::Block(block) => block.always_returns(ast),
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
     }
 }
 
@@ -1412,6 +1589,12 @@ pub struct IfExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ReturnExpression {
+    pub return_keyword: Token,
+    pub return_value: Option<ExprIndex>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CallExpression {
     pub callee: Path,
     pub left_paren: Token,
@@ -1424,6 +1607,17 @@ impl CallExpression {
     pub fn fx_name(&self) -> &str {
         &self.callee.span.literal
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodCallExpression {
+    pub receiver: ExprIndex,
+    pub period: Token,
+    pub method_name: Token,
+    pub left_paren: Token,
+    pub arguments: Vec<ExprIndex>,
+    pub right_paren: Token,
+    pub resolved_fx: ItemIndex,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1705,6 +1899,14 @@ impl Expression {
 
                 TextSpan::combine(spans)
             },
+            ExpressionKind::Return(expr) => {
+                let mut spans = vec![expr.return_keyword.span.clone()];
+                if let Some(return_value) = &expr.return_value {
+                    spans.push(ast.query_expression(*return_value).span(ast));
+                }
+
+                TextSpan::combine(spans)
+            }
             ExpressionKind::If(expr) => {
                 let if_span = expr.if_keyword.span.clone();
                 let condition = ast.query_expression(expr.condition).span(ast);
@@ -1798,6 +2000,20 @@ impl Expression {
                 TextSpan::combine(spans)
             },
             ExpressionKind::Path(path_expression) => path_expression.path.span.clone(),
+            ExpressionKind::MethodCall(expr) => {
+                let receiver_span = ast.query_expression(expr.receiver).span(ast);
+                let period_span = expr.period.span.clone();
+                let method_span = expr.method_name.span.clone();
+                let left_paren = expr.left_paren.span.clone();
+                let right_paren = expr.right_paren.span.clone();
+                let mut spans = vec![receiver_span, period_span, method_span, left_paren, right_paren];
+
+                for arg in &expr.arguments {
+                    spans.push(ast.query_expression(*arg).span(ast));
+                }
+
+                TextSpan::combine(spans)
+            },
             ExpressionKind::Error(span) => span.clone(),
         }
     }

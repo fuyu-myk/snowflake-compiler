@@ -34,6 +34,7 @@ impl <'a> CTranspiler<'a> {
                     ItemKind::Const(_) => unreachable!(),
                     ItemKind::Struct(_, _, _) => unreachable!(),
                     ItemKind::Enum(_, _, _) => unreachable!(),
+                    ItemKind::Impl(_) => unreachable!(),
                 }).collect::<Vec<_>>()
         );
 
@@ -50,7 +51,7 @@ impl <'a> CTranspiler<'a> {
         let mut statements = vec![];
         let statement = ast.query_statement(stmt_id);
         let c_statement = match &statement.kind {
-            StatementKind::Expression(expr) => {
+            StatementKind::SemiExpression(expr) => {
                 let (expr_statements, expr) = self.transpile_expr(ast, *expr);
                 if let Some(expr_statements) = expr_statements {
                     statements.extend(expr_statements);
@@ -89,22 +90,10 @@ impl <'a> CTranspiler<'a> {
                     init: Some(init)
                 })
             }
-            StatementKind::Return(return_statement) => {
-                let return_value = return_statement.return_value.map(|expr| self.transpile_expr(ast, expr));
-                return match return_value {
-                    None => vec![CStatement::Return(CReturn { expr: None })],
-                    Some((return_value_statements, expr)) => {
-                        if let Some(return_value_statements) = return_value_statements {
-                            statements.extend(return_value_statements);
-                        }
-                        statements.push(CStatement::Return(CReturn { expr: Some(expr) }));
-                        statements
-                    }
-                };
-            }
             StatementKind::Item(_item_id) => {
                 unimplemented!("Item statements not yet supported in C transpiler")
             }
+            _ => unimplemented!("Statement kind not yet supported in C transpiler"),
         };
 
         statements.push(c_statement);
@@ -161,6 +150,7 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::If(if_expr) => self.transpile_if_expression(ast, &expr, if_expr),
             ExpressionKind::Block(block_expr) => self.transpile_block_expression(ast, &expr, block_expr),
             ExpressionKind::Call(call_expr) => self.transpile_call_expression(ast, call_expr),
+            ExpressionKind::Return(return_expr) => unimplemented!("Return expressions not yet supported in C transpiler"),
             ExpressionKind::CompoundBinary(_) => unimplemented!("CompoundBinary expressions not yet supported in C transpiler"),
             ExpressionKind::While(_) => unimplemented!("While expressions not yet supported in C transpiler"),
             ExpressionKind::Break(_) => unimplemented!("Break expressions not yet supported in C transpiler"),
@@ -170,6 +160,7 @@ impl <'a> CTranspiler<'a> {
             ExpressionKind::Tuple(_) => unimplemented!("Tuple expressions not yet supported in C transpiler"),
             ExpressionKind::FieldExpression(_) => unimplemented!("TupleIndex expressions not yet supported in C transpiler"),
             ExpressionKind::Struct(_) => unimplemented!("Struct expressions not yet supported in C transpiler"),
+            ExpressionKind::MethodCall(_) => unimplemented!("Method call expressions not yet supported in C transpiler"),
             ExpressionKind::Error(_) => panic!("Error expression"),
         }
     }
@@ -280,6 +271,7 @@ impl <'a> CTranspiler<'a> {
             ItemKind::Const(_) => unreachable!(),
             ItemKind::Struct(_, _, _) => unreachable!(),
             ItemKind::Enum(_, _, _) => unreachable!(),
+            ItemKind::Impl(_) => unreachable!(),
         }
     }
 

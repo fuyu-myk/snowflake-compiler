@@ -145,6 +145,9 @@ impl From<snowflake_common::typings::TypeKind> for Type {
             snowflake_common::typings::TypeKind::Path(_, _) => {
                 bug_report!("Path type should have been resolved before MIR conversion")
             }
+            snowflake_common::typings::TypeKind::ImplTrait { .. } => {
+                bug_report!("ImplTrait should have been resolved before MIR conversion")
+            }
             snowflake_common::typings::TypeKind::Enum { enum_name: _, variant_name } => {
                 // Enums represented as a tagged union with:
                 // - discriminant (Usize for the tag)

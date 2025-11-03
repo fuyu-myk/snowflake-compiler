@@ -84,6 +84,7 @@ impl<'mir> LIRBuilder<'mir> {
                     let mir_instruction = &mir_fx.instructions[instruct_idx];
                     
                     if let mir::InstructionKind::Phi(_) = &mir_instruction.kind {
+                        let _phi_loc = self.get_ref_location(instruct_idx);
                         phi_instructions.push((bb_idx, instruct_idx, lir_bb));
                         continue;
                     }

@@ -451,6 +451,23 @@ a += a * 2 + 3
     let x = 8usize
     ```
 
+* A block's final value will be inferred from the last expression statement without semicolons
+    * Works for anything with block expressions, i.e. function blocks, if/else blocks, while loop blocks, etc
+
+    ```snow
+    // Inference: int
+    fx foo() {
+        let a: int = 8;
+        a
+    }
+
+    // Inference: SomeStruct
+    fx bar() {
+        let a: SomeStruct = SomeStruct::new();
+        a
+    }
+    ```
+
 - [x] **Comments** [completed 05.08.2025]
 
 * Both line and block comments, in traditional C syntax
@@ -482,10 +499,31 @@ a += a * 2 + 3
 * Should always be defined in `UPPER_CASE` (though you could define it in `lower_case` as well)
 * Must have an explicit type annotation
 
-- [ ] **Implementations** [WIP]
+- [x] **Implementations** [completed 03.11.2025]
 
 * Defined throught the `impl` keyword
 * Associate functions and constants with specific data type
+* TODO: Generic parameters
+
+    ```snow
+    struct Rectangle {
+        x: int,
+        y: int,
+    }
+
+    impl Rectangle {
+        fx new(x: int, y: int) -> Self {
+            Self {
+                x,
+                y,
+            }
+        }
+
+        fx area(self) -> int {
+            self.x * self.y
+        }
+    }
+    ```
 
 - [ ] **Pattern matching** [WIP]
 

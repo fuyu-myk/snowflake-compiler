@@ -26,6 +26,9 @@ pub enum TypeKind {
         enum_name: String,
         variant_name: Option<String>,  // None for the enum type itself
     },
+    ImplTrait {
+        impl_type_name: String,
+    }, // Index of the trait and its generic parameters
     Unit, // used for `Foo = ..`
     Error,
 }
@@ -95,6 +98,7 @@ impl Display for TypeKind {
                     enum_name.clone()
                 }
             },
+            TypeKind::ImplTrait { impl_type_name } => impl_type_name.clone(),
             TypeKind::Unit => "()".to_string(),
             TypeKind::Error => "???".to_string(),
         };

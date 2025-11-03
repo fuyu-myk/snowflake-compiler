@@ -425,6 +425,46 @@ impl DiagnosticsReport {
         );
     }
 
+    pub fn report_missing_impl_generics(&mut self, generic_after_impl: bool, generic_after_type_name: bool, span: &TextSpan, type_name: &str) {
+        if generic_after_impl && !generic_after_type_name {
+            self.report_error(
+                format!("missing generics in impl block"),
+                format!("Missing generics after type name `{}` in impl block", type_name),
+                span.clone()
+            );
+        } else if !generic_after_impl && generic_after_type_name {
+            self.report_error(
+                format!("missing generics in impl block"),
+                format!("Missing generics after `impl` keyword in impl block for type `{}`", type_name),
+                span.clone()
+            );
+        }
+    }
+
+    pub fn report_inappropriate_method_call(&mut self, type_name: &str, span: &TextSpan) {
+        self.report_error(
+            format!("inappropriate method call"),
+            format!("Method calls cannot be used on type `{}`", type_name),
+            span.clone()
+        );
+    }
+
+    pub fn report_unknown_method(&mut self, method_name: &str, type_name: &str, span: &TextSpan) {
+        self.report_error(
+            format!("unknown method"),
+            format!("Type `{}` has no method named `{}`", type_name, method_name),
+            span.clone()
+        );
+    }
+
+    pub fn report_self_outside_impl(&mut self, span: &TextSpan) {
+        self.report_error(
+            format!("`Self` used outside of impl block"),
+            format!("`Self` can only be used inside an impl block"),
+            span.clone()
+        );
+    }
+
     // Warnings
     pub fn warn_non_upper_case(&mut self, variable: &str, span: &TextSpan) {
         self.report_warning(

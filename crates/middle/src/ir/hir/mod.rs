@@ -96,6 +96,7 @@ pub struct HIRStatement {
 #[derive(Debug, Clone)]
 pub enum HIRStmtKind {
     Expression { expr: HIRExpression },
+    TailExpression { expr: HIRExpression },
     Assignment {
         target: HIRExpression,  // Can be variable, index, etc.
         value: HIRExpression,
@@ -109,7 +110,6 @@ pub enum HIRStmtKind {
         var_idx: VariableIndex,
         init_expr: Option<HIRExpression>,
     },
-    Return { expr: HIRExpression },
     Item { item_id: HIRItemId },
 }
 
@@ -176,6 +176,9 @@ pub enum HIRExprKind {
     Call {
         fx_idx: ItemIndex,
         args: Vec<HIRExpression>,
+    },
+    Return {
+        expr: Box<HIRExpression>
     },
     If {
         condition: Box<HIRExpression>,

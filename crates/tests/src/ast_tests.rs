@@ -160,7 +160,7 @@ mod tests {
             }
         }
 
-        fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
+        fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnExpression) {
             self.actual.push(TestASTNode::Return);
             if let Some(expression) = &return_statement.return_value {
                 self.visit_expression(ast, *expression);

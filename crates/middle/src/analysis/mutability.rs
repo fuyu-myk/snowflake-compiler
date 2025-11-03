@@ -222,7 +222,7 @@ impl MutabilityChecker {
             HIRStmtKind::Expression{ expr } => {
                 self.check_expression(expr, global_scope, hir)
             }
-            HIRStmtKind::Return { expr } => {
+            HIRStmtKind::TailExpression { expr } => {
                 self.check_expression(expr, global_scope, hir)
             }
             HIRStmtKind::Item { item_id: _ } => {
@@ -243,6 +243,9 @@ impl MutabilityChecker {
                     self.check_expression(arg, global_scope, hir)?;
                 }
                 Ok(())
+            }
+            HIRExprKind::Return { expr } => {
+                self.check_expression(expr, global_scope, hir)
             }
             HIRExprKind::Binary { left, right, .. } => {
                 self.check_expression(left, global_scope, hir)?;

@@ -180,80 +180,106 @@ impl FunctionBuilder {
         }
 
         // Statement building logic
+        let mut tail_expression: Option<(&HIRExpression, TextSpan)> = None;
         for statement in body.iter() {
-            self.build_statement(basic_blocks, &mut bb_builder, global_scope, statement)
+            match &statement.kind {
+                HIRStmtKind::TailExpression { expr } => {
+                    tail_expression = Some((expr, statement.span.clone()));
+                    let value = self.build_expr(basic_blocks, &mut bb_builder, global_scope, expr);
+                    let ty: Type = expr.ty.clone().into();
+
+                    if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                        let instruct_idx = bb_builder.add_instruction(
+                            basic_blocks,
+                            &mut self.function,
+                            Instruction::new(InstructionKind::Value(value), ty, statement.span.clone())
+                        );
+
+                        bb_builder.terminate(basic_blocks, TerminatorKind::Return {
+                            value: Value::InstructionRef(instruct_idx)
+                        });
+                    }
+                }
+                _ => self.build_statement(basic_blocks, &mut bb_builder, global_scope, statement)
+            }
         }
 
         // Add implicit return if the current basic block isn't terminated
         if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
             // Only add implicit return for void functions
             // Non-void functions without explicit returns should get a default value return
-            let return_value = match self.function.return_type {
-                Type::Void => Value::Constant(Constant::Void),
-                Type::Int => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
-                                 self.function.name, self.function.return_type);
-                    Value::Constant(Constant::Int(0))
-                }
-                Type::Float => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0.0", 
-                                 self.function.name, self.function.return_type);
-                    Value::Constant(Constant::Float(0.0))
-                }
-                Type::String => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty string return", 
-                                 self.function.name, self.function.return_type);
-                    Value::Constant(Constant::String(String::new()))
-                }
-                Type::Bool => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return false", 
-                                 self.function.name, self.function.return_type);
-                    Value::Constant(Constant::Int(0))
-                }
-                Type::Usize => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
-                                 self.function.name, self.function.return_type);
-                    Value::Constant(Constant::Usize(0))
-                }
-                Type::Array(_, _) => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty array return", 
-                                 self.function.name, self.function.return_type);
-                    Value::InstructionRef(bb_builder.add_instruction(
-                        basic_blocks,
-                        &mut self.function,
-                        Instruction::new(
-                            InstructionKind::ArrayInit { elements: Vec::new() },
-                            Type::Array(Box::new(Type::Void), 0),
-                            TextSpan::default(),
-                        ),
-                    ))
-                }
-                Type::Object(_) => {
-                    tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty tuple return", 
-                                 self.function.name, self.function.return_type);
-                    Value::InstructionRef(bb_builder.add_instruction(
-                        basic_blocks,
-                        &mut self.function,
-                        Instruction::new(
-                            InstructionKind::Object {
-                                kind: ObjectKind::Unresolved,
-                                fields: Vec::new()
-                            },
-                            Type::Object(vec![Type::Void.into()]),
-                            TextSpan::default(),
-                        ),
-                    ))
-                }
-                Type::Unit => {
-                    // TODO: check if this is appropriate
-                    Value::Constant(Constant::Void)
-                }
-                Type::Enum { .. } => {
-                    tracing::warn!("Function '{}' with enum return type lacks explicit return statement, adding default void return", 
-                                 self.function.name);
-                    Value::Constant(Constant::Void)
+            let return_value = if tail_expression.is_some() {
+                // Should already have been handled above
+                unreachable!("Should have been terminated by a tail expression")
+            } else {
+                match self.function.return_type {
+                    Type::Void => Value::Constant(Constant::Void),
+                    Type::Int => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
+                                    self.function.name, self.function.return_type);
+                        Value::Constant(Constant::Int(0))
+                    }
+                    Type::Float => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0.0", 
+                                    self.function.name, self.function.return_type);
+                        Value::Constant(Constant::Float(0.0))
+                    }
+                    Type::String => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty string return", 
+                                    self.function.name, self.function.return_type);
+                        Value::Constant(Constant::String(String::new()))
+                    }
+                    Type::Bool => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return false", 
+                                    self.function.name, self.function.return_type);
+                        Value::Constant(Constant::Int(0))
+                    }
+                    Type::Usize => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default return 0", 
+                                    self.function.name, self.function.return_type);
+                        Value::Constant(Constant::Usize(0))
+                    }
+                    Type::Array(_, _) => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty array return", 
+                                    self.function.name, self.function.return_type);
+                        Value::InstructionRef(bb_builder.add_instruction(
+                            basic_blocks,
+                            &mut self.function,
+                            Instruction::new(
+                                InstructionKind::ArrayInit { elements: Vec::new() },
+                                Type::Array(Box::new(Type::Void), 0),
+                                TextSpan::default(),
+                            ),
+                        ))
+                    }
+                    Type::Object(_) => {
+                        tracing::warn!("Function '{}' with return type {:?} lacks explicit return statement, adding default empty tuple return", 
+                                    self.function.name, self.function.return_type);
+                        Value::InstructionRef(bb_builder.add_instruction(
+                            basic_blocks,
+                            &mut self.function,
+                            Instruction::new(
+                                InstructionKind::Object {
+                                    kind: ObjectKind::Unresolved,
+                                    fields: Vec::new()
+                                },
+                                Type::Object(vec![Type::Void.into()]),
+                                TextSpan::default(),
+                            ),
+                        ))
+                    }
+                    Type::Unit => {
+                        // TODO: check if this is appropriate
+                        Value::Constant(Constant::Void)
+                    }
+                    Type::Enum { .. } => {
+                        tracing::warn!("Function '{}' with enum return type lacks explicit return statement, adding default void return", 
+                                    self.function.name);
+                        Value::Constant(Constant::Void)
+                    }
                 }
             };
+
             bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: return_value });
         }
 
@@ -340,6 +366,18 @@ impl FunctionBuilder {
                         basic_blocks,
                         &mut self.function,
                         Instruction::new(InstructionKind::Value(value), ty, statement.span.clone())
+                    );
+                }
+            }
+            HIRStmtKind::TailExpression { expr } => {
+                let val = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
+                let ty = expr.ty.clone().into();
+                
+                if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                    bb_builder.add_instruction(
+                        basic_blocks,
+                        &mut self.function,
+                        Instruction::new(InstructionKind::Value(val), ty, statement.span.clone())
                     );
                 }
             }
@@ -451,17 +489,6 @@ impl FunctionBuilder {
                 );
 
                 self.write_variable(*var_idx, bb_builder.current, instruct_idx);
-            }
-            HIRStmtKind::Return { expr } => {
-                // Transforms the return expression to a value
-                // If current bb is terminated, create a new bb
-                // Terminate the bb with a `Return` terminator
-                let value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
-                if basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
-                    bb_builder.new_bb(basic_blocks, &mut self.function);
-                }
-
-                let _bb = bb_builder.terminate(basic_blocks, TerminatorKind::Return { value });
             }
             HIRStmtKind::Item { item_id: _ } => {
                 // In the future, this could handle local function definitions, etc.
@@ -846,15 +873,29 @@ impl FunctionBuilder {
                 for statement in body.statements.iter() {
                     match &statement.kind {
                         HIRStmtKind::Expression { expr } => {
-                            last_value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
+                            let _value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
                             let ty = expr.ty.clone().into();
                             
                             if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
                                 bb_builder.add_instruction(
                                     basic_blocks,
                                     &mut self.function,
+                                    Instruction::new(InstructionKind::Value(_value), ty, statement.span.clone())
+                                );
+                            }
+                            last_value = Value::Constant(Constant::Void);
+                        }
+                        HIRStmtKind::TailExpression { expr } => {
+                            last_value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
+                            let ty = expr.ty.clone().into();
+                            
+                            if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                                let instruct_idx = bb_builder.add_instruction(
+                                    basic_blocks,
+                                    &mut self.function,
                                     Instruction::new(InstructionKind::Value(last_value.clone()), ty, statement.span.clone())
                                 );
+                                last_value = Value::InstructionRef(instruct_idx);
                             }
                         }
                         _ => {
@@ -885,6 +926,18 @@ impl FunctionBuilder {
 
                 self.calls_to_resolve.push((instruct_idx, *fx_idx));
                 Value::InstructionRef(instruct_idx)
+            }
+            HIRExprKind::Return { expr } => {
+                // Transforms the return expression to a value
+                // If current bb is terminated, create a new bb
+                // Terminate the bb with a `Return` terminator
+                let value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
+                if basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
+                    bb_builder.new_bb(basic_blocks, &mut self.function);
+                }
+
+                let _bb = bb_builder.terminate(basic_blocks, TerminatorKind::Return { value: value.clone() });
+                value
             }
             HIRExprKind::Loop { body } => {
                 // Each loop will undergo the following steps:

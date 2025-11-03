@@ -95,6 +95,10 @@ impl <'a> Lexer<'a> {
                     "const" => TokenKind::Const,
                     "struct" => TokenKind::Struct,
                     "enum" => TokenKind::Enum,
+                    "impl" => TokenKind::Impl,
+                    "match" => TokenKind::Match,
+                    "self" => TokenKind::SelfValue,
+                    "Self" => TokenKind::SelfType,
                     _ => TokenKind::Identifier,
                 };
 

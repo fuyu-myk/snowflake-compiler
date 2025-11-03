@@ -6,3 +6,5 @@
 /target
 *.dot
 *.snow
+*.ll
+*.sh

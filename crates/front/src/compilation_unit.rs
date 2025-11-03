@@ -1,7 +1,7 @@
 use snowflake_common::{bug_report, idx, Idx, IndexVec};
 use snowflake_common::typings::{FieldType, ObjectKind, ObjectType, TypeKind};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, Ast, AstType, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, GenericParam, Generics, IfExpression, IndexExpression, Item, ItemIndex, ItemKind, LetStatement, NumberExpression, ParenExpression, Path, PathExpression, PathSegment, Pattern, PatternKind, ReturnStatement, Statement, StatementKind, StaticTypeAnnotation, StringExpression, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VariantData, WhileExpression};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, AssociatedItemKind, Ast, AstType, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, GenericParam, GenericParamKind, Generics, IfExpression, Impl, IndexExpression, Item, ItemIndex, ItemKind, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, Path, PathExpression, PathSegment, Pattern, PatternKind, ReturnExpression, Statement, StatementKind, StaticTypeAnnotation, StringExpression, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VariantData, WhileExpression};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -52,9 +52,11 @@ pub struct VariantInfo {
 pub struct GlobalScope {
     pub variables: IndexVec<VariableIndex, Variable>,
     pub functions: IndexVec<ItemIndex, Function>,
-    pub structs: IndexVec<ItemIndex, Item>,
+    pub structs: IndexVec<ItemIndex, Item<ItemKind>>,
     pub global_variables: Vec<VariableIndex>,
     pub enums: IndexVec<ItemIndex, EnumInfo>,
+    pub impls: IndexVec<ItemIndex, Impl>,
+    pub methods: HashMap<String, HashMap<String, ItemIndex>>, // type_name -> method_name -> function_index
 }
 
 impl GlobalScope {
@@ -65,6 +67,8 @@ impl GlobalScope {
             structs: IndexVec::new(),
             global_variables: Vec::new(),
             enums: IndexVec::new(),
+            impls: IndexVec::new(),
+            methods: HashMap::new(),
         } 
     }
 
@@ -122,7 +126,7 @@ impl GlobalScope {
         self.functions.indexed_iter().find(|(_, function)| function.name == identifier).map(|(idx, _)| idx)
     }
 
-    pub fn declare_struct(&mut self, item: Item) -> Result<ItemIndex, ItemIndex> {
+    pub fn declare_struct(&mut self, item: Item<ItemKind>) -> Result<ItemIndex, ItemIndex> {
         let struct_name = match &item.kind {
             crate::ast::ItemKind::Struct(name, _, _) => &name.span.literal,
             _ => panic!("Expected struct item in declare_struct"),
@@ -146,7 +150,7 @@ impl GlobalScope {
             .map(|(idx, _)| idx)
     }
 
-    pub fn get_struct(&self, struct_idx: ItemIndex) -> &Item {
+    pub fn get_struct(&self, struct_idx: ItemIndex) -> &Item<ItemKind> {
         self.structs.get(struct_idx)
     }
     
@@ -208,7 +212,7 @@ impl GlobalScope {
         }
     }
 
-    pub fn declare_enum(&mut self, name: String, item: &Item, variants: Vec<VariantInfo>) -> Result<ItemIndex, ItemIndex> {
+    pub fn declare_enum(&mut self, name: String, item: &Item<ItemKind>, variants: Vec<VariantInfo>) -> Result<ItemIndex, ItemIndex> {
         if let Some(existing_enum_idx) = self.lookup_enum(&name) {
             return Err(existing_enum_idx);
         }
@@ -241,6 +245,34 @@ impl GlobalScope {
                     .map(|variant| (enum_idx, variant))
             }
         )
+    }
+
+    /// Register a method for a type
+    pub fn register_method(&mut self, type_name: &str, method_name: &str, fx_idx: ItemIndex) {
+        self.methods
+            .entry(type_name.to_string())
+            .or_insert_with(HashMap::new)
+            .insert(method_name.to_string(), fx_idx);
+    }
+
+    /// Look up a method by type name and method name
+    pub fn lookup_method(&self, type_name: &str, method_name: &str) -> Option<ItemIndex> {
+        self.methods
+            .get(type_name)?
+            .get(method_name)
+            .copied()
+    }
+
+    pub fn lookup_type_from_method(&self, fx_idx: ItemIndex) -> Option<String> {
+        for (type_name, methods) in &self.methods {
+            for (_method_name, method_fx_idx) in methods {
+                if *method_fx_idx == fx_idx {
+                    return Some(type_name.clone());
+                }
+            }
+        }
+
+        None
     }
     
     /// Static helper for type resolution
@@ -388,7 +420,7 @@ impl ScopeStack {
         self.local_scopes.last_mut().unwrap()
     }
 
-    fn declare_local_struct(&mut self, item: Item) -> Result<ItemIndex, ItemIndex> {
+    fn declare_local_struct(&mut self, item: Item<ItemKind>) -> Result<ItemIndex, ItemIndex> {
         // For local structs, allow shadowing of global structs
         // Check if there's already a local struct with the same name in the current scope
         if let Some(current_scope) = self.local_scopes.last() {
@@ -465,6 +497,7 @@ struct Resolver {
     loop_depth: usize,
     expected_array_type: Option<TypeKind>, // Track expected array type for better error reporting
     visited_local_items: std::collections::HashSet<ItemIndex>,
+    current_impl_type: Option<String>, // Track the type being implemented for Self resolution
 }
 
 fn expect_type(diagnostics: &DiagnosticsReportCell, expected: TypeKind, actual: &TypeKind, span: &TextSpan) -> TypeKind {
@@ -491,6 +524,7 @@ impl Resolver {
             loop_depth: 0,
             expected_array_type: None,
             visited_local_items: std::collections::HashSet::new(),
+            current_impl_type: None,
         }
     }
 
@@ -662,6 +696,7 @@ impl Resolver {
                 let ty_name = path.segments.last().unwrap().identifier.span.literal.clone();
                 TypeKind::Path(None, ty_name)
             }
+            _ => bug_report!("Unsupported type annotation kind {:?}", type_annotation.type_kind),
         }
     }
 
@@ -705,6 +740,11 @@ impl Resolver {
                 let ty_name = path.segments.last().unwrap().identifier.span.literal.clone();
                 TypeKind::Path(None, ty_name)
             }
+            AstType::ImplTrait(_, _) => {
+                TypeKind::ImplTrait {
+                    impl_type_name:"Placeholder".to_string(), // TODO: Implement proper impl trait resolution
+                }
+            }
         }
     }
 
@@ -718,6 +758,23 @@ impl Resolver {
         let builtin_type = TypeKind::from_token(type_name);
         if !matches!(builtin_type, TypeKind::ObjectUnresolved(_)) {
             return builtin_type;
+        }
+
+        // Handle Self type in impl blocks
+        if type_name.span.literal == "Self" {
+            if let Some(ref impl_type) = self.current_impl_type {
+                // Recursively resolve the actual type
+                let mut self_type_token = type_name.clone();
+                self_type_token.span.literal = impl_type.clone();
+                return self.resolve_type_from_string_with_generics(&self_type_token, generic_params);
+            } else {
+                self.diagnostics.borrow_mut().report_error(
+                    "Self type used outside of impl block".to_string(),
+                    "Self type can only be used inside impl blocks".to_string(),
+                    type_name.span.clone()
+                );
+                return TypeKind::Error;
+            }
         }
 
         if generic_params.iter().any(|param| param.identifier.span.literal == type_name.span.literal) {
@@ -741,13 +798,19 @@ impl Resolver {
                         return TypeKind::struct_resolved(identifier.span.literal.clone(), field_types);
                     }
                     VariantData::Tuple(elements) => {
-                        let mut element_types = Vec::new();
+                        let mut fields = Vec::new();
                         for element in elements {
                             let elem_type = self.resolve_ast_type_with_generics(&element.ty, &struct_generics.params);
-                            element_types.push(elem_type);
+                            fields.push(FieldType {
+                                ty: Box::new(elem_type),
+                                name: None,
+                            });
                         }
 
-                        return TypeKind::tuple(element_types);
+                        return TypeKind::Object(ObjectType {
+                            fields,
+                            kind: ObjectKind::Struct(identifier.span.literal.clone()),
+                        });
                     }
                     VariantData::Unit => {
                         return TypeKind::Unit;
@@ -1038,25 +1101,72 @@ impl ASTVisitor for Resolver {
 
         self.scopes.enter_fx_scope(fx_idx);
 
-        let function = self.scopes.global_scope.functions.get(fx_idx);
-        
-        for parameter in function.parameters.clone() {
-            let unresolved_token = {
-                let param_var = self.scopes.global_scope.variables.get(parameter);
-                if let TypeKind::ObjectUnresolved(ref token) = param_var.ty {
-                    Some(token.clone())
-                } else {
-                    None
-                }
-            };
-            
-            if let Some(token) = unresolved_token {
-                let resolved_type = self.resolve_type_from_string(&token);
-                let param_var = self.scopes.global_scope.variables.get_mut(parameter);
-                param_var.ty = resolved_type;
+        // Handle self parameter if present
+        let self_var_idx_opt = if let Some(self_param) = &fx_decl.self_param {
+            if let Some(ref impl_type_name) = self.current_impl_type {
+                let mut type_token = self_param.token.clone();
+                type_token.span.literal = impl_type_name.clone();
+                
+                let self_type = self.resolve_type_from_string(&type_token);
+                
+                // Register 'self' as a variable
+                let self_path = Path {
+                    span: self_param.token.span.clone(),
+                    segments: vec![PathSegment {
+                        identifier: self_param.token.clone(),
+                        arguments: None,
+                    }],
+                    tokens: vec![self_param.token.clone()],
+                };
+                
+                let self_var_idx = self.scopes.global_scope.declare_variable(
+                    &self_path,
+                    self_type,
+                    false, // not shadowing
+                    false, // TODO: handle mut self
+                );
+                
+                // Add self as the first parameter
+                let function = self.scopes.global_scope.functions.get_mut(fx_idx);
+                function.parameters.insert(0, self_var_idx);
+                
+                Some(self_var_idx)
+            } else {
+                None
             }
-            
-            self.scopes.current_local_scope_mut().locals.push(parameter);
+        } else {
+            None
+        };
+
+        let function = self.scopes.global_scope.functions.get(fx_idx);
+        let param_indices: Vec<VariableIndex> = function.parameters.clone();
+        
+        // Add self param to the local scope
+        if let Some(self_var_idx) = self_var_idx_opt {
+            self.scopes.current_local_scope_mut().locals.push(self_var_idx);
+        }
+        
+        let param_offset = if self_var_idx_opt.is_some() { 1 } else { 0 };
+        
+        for (param_idx, generic_param) in fx_decl.generics.params.iter().enumerate() {
+            let actual_param_idx = param_idx + param_offset;
+            if actual_param_idx < param_indices.len() {
+                let param_var_idx = param_indices[actual_param_idx];
+                
+                let resolved_type = match &generic_param.kind {
+                    GenericParamKind::Type { ty, .. } => {
+                        self.resolve_ast_type(ty)
+                    }
+                    GenericParamKind::Const { ty, .. } => {
+                        self.resolve_ast_type(ty)
+                    }
+                };
+                
+                let param_var = self.scopes.global_scope.variables.get_mut(param_var_idx);
+                param_var.ty = resolved_type;
+                
+                self.scopes.current_local_scope_mut().locals.push(param_var_idx);
+            }
         }
 
         let return_type = if fx_decl.return_type.is_some() {
@@ -1068,49 +1178,107 @@ impl ASTVisitor for Resolver {
         let function = self.scopes.global_scope.functions.get_mut(fx_idx);
         function.return_type = return_type;
 
+        for statement_id in &fx_decl.body.statements {
+            self.visit_statement(ast, *statement_id);
+        }
+        
+        // Update the function body's type based on the last statement
+        // If the last statement is a return expression, the body type is Void (explicit return)
+        // If the last statement is a tail expression (no semicolon), use its type (implicit return)
+        let body_ty = fx_decl.body.statements.last().map(|statement_id| {
+            let statement = ast.query_statement(*statement_id);
+            match statement.kind {
+                StatementKind::Expression(expr_id) | StatementKind::SemiExpression(expr_id) => {
+                    let expr = ast.query_expression(expr_id);
+                    if matches!(expr.kind, ExpressionKind::Return(_)) {
+                        TypeKind::Void
+                    } else if matches!(statement.kind, StatementKind::SemiExpression(_)) {
+                        TypeKind::Void
+                    } else {
+                        expr.ty.clone()
+                    }
+                }
+                _ => TypeKind::Void,
+            }
+        }).unwrap_or(TypeKind::Void);
+        
         let function = self.scopes.global_scope.functions.get(fx_idx);
-        let statements = function.body.statements.clone();
-        for stmt_id in statements.iter() {
-            let statement = ast.query_statement(*stmt_id);
-            match &statement.kind {
-                StatementKind::Return(return_statement) => {
-                    let return_statement = return_statement.clone();
-                    self.visit_return_statement(ast, &return_statement);
-                    break; // Exit the loop but continue to cleanup
-                }
-                _ => {
-                    self.visit_statement(ast, statement.id);
-                }
+        let expected_return_type = function.return_type.clone();
+
+        // Only check implicit returns (when body_ty is not Void)
+        // If body_ty is Void, the function either:
+        // 1. Ends with an explicit return statement (which is already type-checked), or
+        // 2. Has no tail expression (which is correct for void functions)
+        if !matches!(body_ty, TypeKind::Void) {
+            self.expect_type(expected_return_type, &body_ty, &fx_decl.identifier.span);
+        } else if !matches!(expected_return_type, TypeKind::Void) {
+            let always_returns = fx_decl.body.always_returns(ast);
+            
+            if !always_returns {
+                self.expect_type(expected_return_type, &TypeKind::Void, &fx_decl.body.span);
             }
         }
 
         self.scopes.exit_fx_scope();
     }
 
-    fn visit_return_statement(&mut self, ast: &mut Ast, return_statement: &ReturnStatement) {
-        let return_keyword = return_statement.return_keyword.clone();
+    fn visit_return_expression(&mut self, ast: &mut Ast, return_expression: &ReturnExpression, expr: &Expression) {
+        let return_keyword = return_expression.return_keyword.clone();
         // todo: do not clone this
         match self.scopes.surrounding_function().cloned() {
             None => {
                 let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                diagnostics_binding.report_return_outside_function(&return_statement.return_keyword);
+                diagnostics_binding.report_return_outside_function(&return_expression.return_keyword);
             }
             Some(function) => {
-                if let Some(return_expression) = &return_statement.return_value {
-                    self.visit_expression(ast, *return_expression);
-                    let return_expression = ast.query_expression(*return_expression);
-                    self.expect_type(function.return_type.clone(), &return_expression.ty, &return_expression.span(&ast));
+                if let Some(return_expression_value) = &return_expression.return_value {
+                    self.visit_expression(ast, *return_expression_value);
+                    let return_value = ast.query_expression(*return_expression_value);
+                    self.expect_type(function.return_type.clone(), &return_value.ty, &return_value.span(&ast));
                 } else {
                     self.expect_type(function.return_type.clone(), &TypeKind::Void, &return_keyword.span);
                 }
             }
         }
+        
+        ast.set_type(expr.id, TypeKind::Void);
     }
 
     fn visit_call_expression(&mut self, ast: &mut Ast, call_expression: &CallExpression, expr: &Expression) {
-        let function = self.scopes.global_scope.lookup_fx(
-            &call_expression.callee.segments.last().unwrap().identifier.span.literal
-        );
+        let path_len = call_expression.callee.segments.len();
+        let raw_callee_name = &call_expression.callee.segments.last().unwrap().identifier.span.literal;
+        
+        // Resolve Self to the actual type name if we're in an impl block
+        let callee_name: String = if raw_callee_name == "Self" {
+            if let Some(ref impl_type) = self.current_impl_type {
+                let resolved_name = impl_type.clone();
+                
+                // Resolve Self to actual type name
+                let expr_mut = ast.query_expression_mut(expr.id);
+                if let ExpressionKind::Call(ref mut call_expr_mut) = expr_mut.kind {
+                    // Update the last segment's identifier to use the resolved name
+                    let last_idx = call_expr_mut.callee.segments.len() - 1;
+                    call_expr_mut.callee.segments[last_idx].identifier.span.literal = resolved_name.clone();
+                }
+                
+                resolved_name
+            } else {
+                self.diagnostics.borrow_mut().report_self_outside_impl(
+                    &call_expression.callee.span.clone()
+                );
+                raw_callee_name.clone()
+            }
+        } else {
+            raw_callee_name.clone()
+        };
+        
+        // Check if this is a qualified path (Type::method)
+        let function = if path_len >= 2 {
+            let type_name = &call_expression.callee.segments[path_len - 2].identifier.span.literal;
+            self.scopes.global_scope.lookup_method(type_name, &callee_name)
+        } else {
+            self.scopes.global_scope.lookup_fx(&callee_name)
+        };
 
         let ty = match function {
             Some(fx_idx) => {
@@ -1145,9 +1313,7 @@ impl ASTVisitor for Resolver {
                 };
 
                 // Tuple struct or undeclared function
-                if let Some(struct_name) = self.scopes.lookup_struct_with_local(
-                    &call_expression.callee.segments.last().unwrap().identifier.span.literal
-                ) {
+                if let Some(struct_name) = self.scopes.lookup_struct_with_local(&callee_name) {
                     let struct_item = self.scopes.global_scope.get_struct(struct_name).clone();
                     if let ItemKind::Struct(_identifier, generics, variant_data) = &struct_item.kind {
                         let mut fields = Vec::new();
@@ -1213,7 +1379,7 @@ impl ASTVisitor for Resolver {
                                 TypeKind::Object(
                                     ObjectType {
                                         fields,
-                                        kind: ObjectKind::Tuple,
+                                        kind: ObjectKind::Struct(callee_name.clone()),
                                     }
                                 )
                             }
@@ -1280,6 +1446,98 @@ impl ASTVisitor for Resolver {
         };
 
         ast.set_type(expr.id, ty);
+    }
+
+    fn visit_method_call_expression(&mut self, ast: &mut Ast, method_call: &MethodCallExpression, expr: &Expression) {
+        self.visit_expression(ast, method_call.receiver);
+        
+        for arg in &method_call.arguments {
+            self.visit_expression(ast, *arg);
+        }
+        
+        let receiver_expr = ast.query_expression(method_call.receiver);
+        let receiver_type = receiver_expr.ty.clone();
+        
+        let type_name = match &receiver_type {
+            TypeKind::Object(obj_type) => {
+                match &obj_type.kind {
+                    ObjectKind::Struct(struct_name) => struct_name.clone(),
+                    ObjectKind::Tuple => {
+                        // The type should have been resolved from variable assignment
+                        // Try to get it from the format method name
+                        format!("{}", receiver_type).split("::").next().unwrap_or("").to_string()
+                    }
+                }
+            }
+            TypeKind::Enum { enum_name, .. } => enum_name.clone(),
+            _ => {
+                self.diagnostics.borrow_mut().report_inappropriate_method_call(
+                    &receiver_expr.span.literal,
+                    &method_call.method_name.span,
+                );
+                ast.set_type(expr.id, TypeKind::Void);
+                return;
+            }
+        };
+        
+        if type_name.is_empty() || matches!(type_name.as_str(), "int" | "float" | "bool" | "string" | "void" | "unresolved") {
+            self.diagnostics.borrow_mut().report_inappropriate_method_call(
+                &receiver_expr.span.literal,
+                &method_call.method_name.span,
+            );
+            ast.set_type(expr.id, TypeKind::Void);
+            return;
+        }
+
+        // Method lookup
+        let method_name = &method_call.method_name.span.literal;
+        if let Some(fx_idx) = self.scopes.global_scope.lookup_method(&type_name, method_name) {
+            let function = self.scopes.global_scope.functions.get(fx_idx);
+            
+            // Type check: self parameter should match receiver type
+            // (First parameter should always be self)
+            
+            // Check argument count (excluding self parameter)
+            let expected_arg_count = function.parameters.len().saturating_sub(1);
+            if method_call.arguments.len() != expected_arg_count {
+                self.diagnostics.borrow_mut().report_invalid_arg_count(
+                    &method_call.method_name.span,
+                    expected_arg_count,
+                    method_call.arguments.len()
+                );
+            }
+
+            // Type check arguments (skip first parameter which is self)
+            for (i, arg) in method_call.arguments.iter().enumerate() {
+                let param_idx = i + 1; // Skip self parameter
+                if param_idx < function.parameters.len() {
+                    let param_var_idx = function.parameters[param_idx];
+                    let param_var = self.scopes.global_scope.variables.get(param_var_idx);
+                    let arg_expr = ast.query_expression(*arg);
+                    let _expected_ty = expect_type(
+                        &self.diagnostics,
+                        param_var.ty.clone(),
+                        &arg_expr.ty,
+                        &arg_expr.span(ast)
+                    );
+                }
+            }
+
+            let method_call_mut = match &mut ast.query_expression_mut(expr.id).kind {
+                ExpressionKind::MethodCall(mc) => mc,
+                _ => unreachable!(),
+            };
+            method_call_mut.resolved_fx = fx_idx;
+
+            ast.set_type(expr.id, function.return_type.clone());
+        } else {
+            self.diagnostics.borrow_mut().report_unknown_method(
+                &method_call.method_name.span.literal,
+                &type_name,
+                &method_call.method_name.span
+            );
+            ast.set_type(expr.id, TypeKind::Void);
+        }
     }
 
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, expr: &Expression) {
@@ -1434,7 +1692,7 @@ impl ASTVisitor for Resolver {
             })
             .collect();
 
-        let tuple_type = TypeKind::tuple(element_types);
+        let tuple_type = TypeKind::tuple(element_types.clone());
         ast.set_type(expr.id, tuple_type);
     }
 
@@ -1477,43 +1735,69 @@ impl ASTVisitor for Resolver {
                         );
                         current_type = TypeKind::Error;
                     } else {
-                        current_type = object_type.fields[idx].ty.as_ref().clone();
+                        current_type = (*object_type.fields[idx].ty).clone();
                     }
                 };
             }
             TypeKind::Object(object_type) if matches!(object_type.kind, ObjectKind::Struct(_)) => {
-                let field_name = match &field_expr_kind {
-                    ExpressionKind::Path(path_expr) => {
-                        path_expr.path.tokens.last().unwrap().span.literal.clone()
-                    }
-                    _ => {
-                        self.diagnostics.borrow_mut().report_invalid_field_kind(
-                            format!("{:?}", field_expr_kind),
-                            &field_span
-                        );
-                        field_span.literal.clone()
-                    }
+                let is_numeric_access = match &field_expr_kind {
+                    ExpressionKind::Number(_) | ExpressionKind::Usize(_) => true,
+                    _ => false,
                 };
                 
-                // For struct types, use the concrete field types from the object instance
-                // instead of looking up the generic definition
-                if let Some(field_info) = object_type.fields.iter().find(|f| {
-                    if let Some(ref name) = f.name {
-                        *name == field_name
-                    } else {
-                        false
-                    }
-                }) {
-                    current_type = field_info.ty.as_ref().clone();
-                } else {
-                    // Field not found in the instantiated type, report error
-                    self.diagnostics.borrow_mut().report_unknown_field_in_object(
-                        field_span.literal.clone(),
-                        target_type_str,
-                        &field_span,
-                    );
+                if is_numeric_access {
+                    let index_literal = field_span.literal.clone();
+                    let tuple_size = object_type.fields.len();
 
-                    current_type = TypeKind::Error;
+                    // Compile-time bounds checking for constant indices
+                    if let Ok(idx) = index_literal.parse::<usize>() {
+                        if idx >= tuple_size {
+                            self.diagnostics.borrow_mut().report_tuple_unknown_field(
+                                &field_span,
+                                target_type_str,
+                            );
+                            current_type = TypeKind::Error;
+                        } else {
+                            current_type = (*object_type.fields[idx].ty).clone();
+                        }
+                    } else {
+                        self.diagnostics.borrow_mut().report_invalid_field_kind(
+                            format!("Invalid numeric index: {}", index_literal),
+                            &field_span
+                        );
+                        current_type = TypeKind::Error;
+                    }
+                } else {
+                    let field_name = match &field_expr_kind {
+                        ExpressionKind::Path(path_expr) => {
+                            path_expr.path.tokens.last().unwrap().span.literal.clone()
+                        }
+                        _ => {
+                            self.diagnostics.borrow_mut().report_invalid_field_kind(
+                                format!("{:?}", field_expr_kind),
+                                &field_span
+                            );
+                            field_span.literal.clone()
+                        }
+                    };
+                    
+                    if let Some(field_info) = object_type.fields.iter().find(|f| {
+                        if let Some(ref name) = f.name {
+                            *name == field_name
+                        } else {
+                            false
+                        }
+                    }) {
+                        current_type = field_info.ty.as_ref().clone();
+                    } else {
+                        self.diagnostics.borrow_mut().report_unknown_field_in_object(
+                            field_span.literal.clone(),
+                            target_type_str,
+                            &field_span,
+                        );
+
+                        current_type = TypeKind::Error;
+                    }
                 }
             }
             TypeKind::Enum { enum_name, variant_name: Some(variant_name) } => {
@@ -1668,11 +1952,34 @@ impl ASTVisitor for Resolver {
     }
 
     fn visit_struct_expression(&mut self, ast: &mut Ast, struct_expression: &StructExpression, expr: &Expression) {
-        let struct_name = &struct_expression.path.segments.last().unwrap().identifier.span.literal;
+        let raw_struct_name = &struct_expression.path.segments.last().unwrap().identifier.span.literal;
+        
+        let struct_name: String = if raw_struct_name == "Self" {
+            if let Some(ref impl_type) = self.current_impl_type {
+                let resolved_name = impl_type.clone();
+                
+                let expr_mut = ast.query_expression_mut(expr.id);
+                if let ExpressionKind::Struct(ref mut struct_expr_mut) = expr_mut.kind {
+                    // Update the last segment's identifier to use the resolved name
+                    let last_idx = struct_expr_mut.path.segments.len() - 1;
+                    struct_expr_mut.path.segments[last_idx].identifier.span.literal = resolved_name.clone();
+                }
+                
+                resolved_name
+            } else {
+                self.diagnostics.borrow_mut().report_self_outside_impl(
+                    &struct_expression.path.span.clone()
+                );
+                raw_struct_name.clone()
+            }
+        } else {
+            raw_struct_name.clone()
+        };
+        
         let path_len = struct_expression.path.segments.len();
         let mut field_types: Vec<(String, TypeKind)> = Vec::new();
         
-        if let Some(ref_struct_idx) = self.scopes.lookup_struct_with_local(struct_name) {
+        if let Some(ref_struct_idx) = self.scopes.lookup_struct_with_local(&struct_name) {
             let ref_struct = self.scopes.global_scope.get_struct(ref_struct_idx).clone();
 
             match &ref_struct.kind {
@@ -1773,7 +2080,7 @@ impl ASTVisitor for Resolver {
             if let Some(enum_idx) = enum_idx {
                 let enum_def = self.scopes.global_scope.get_enum(enum_idx).clone();
                 let variant_opt = enum_def.variants.iter().find(|variant| {
-                    variant.name == struct_name.as_str()
+                    variant.name == struct_name
                 });
 
                 if let Some(variant) = variant_opt {
@@ -1934,6 +2241,76 @@ impl ASTVisitor for Resolver {
         }
     }
 
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl) {
+        // Get the type name from `self`
+        let type_name = match &*impl_item.self_type {
+            AstType::Simple { type_name } => {
+                type_name.span.literal.clone()
+            }
+            AstType::Path(_, path) => {
+                path.segments.last().unwrap().identifier.span.literal.clone()
+            }
+            _ => {
+                // Complex types like arrays, tuples not supported yet
+                return;
+            }
+        };
+
+        // Set current impl type for Self resolution
+        let prev_impl_type = self.current_impl_type.take();
+        self.current_impl_type = Some(type_name.clone());
+
+        // Register each method in this impl block and create function entries
+        let mut method_mappings = std::collections::HashMap::new();
+        
+        for item in &impl_item.items {
+            if let AssociatedItemKind::Function(fx_decl) = &item.kind {
+                let method_name = fx_decl.identifier.span.literal.clone();
+                
+                // Method as path: TypeName::method_name
+                let path = format!("{}::{}", type_name, method_name);
+                let return_type = fx_decl.return_type.as_ref().map(|rt| {
+                    self.resolve_ast_type(&rt.ty)
+                }).unwrap_or(TypeKind::Void);
+                
+                let fx_idx_result = self.scopes.global_scope.create_function(
+                    path,
+                    fx_decl.body.clone(),
+                    fx_decl.generics.get_param_indices(),
+                    return_type,
+                );
+                
+                let fx_idx = match fx_idx_result {
+                    Ok(created_fx_idx) => created_fx_idx,
+                    Err(existing_fx_idx) => existing_fx_idx,
+                };
+                
+                self.scopes.global_scope.register_method(&type_name, &method_name, fx_idx);
+                
+                method_mappings.insert(item.id, fx_idx);
+            }
+        }
+
+        // Method body resolution
+        for item in &impl_item.items {
+            match &item.kind {
+                AssociatedItemKind::Function(fx_decl) => {
+                    let fx_idx = method_mappings.get(&item.id).copied().unwrap_or(item.id);
+                    let mut fx_decl_copy = fx_decl.clone();
+                    fx_decl_copy.index = fx_idx;
+
+                    self.visit_fx_decl(ast, &fx_decl_copy, fx_idx);
+                }
+                AssociatedItemKind::Const(_const_item) => {
+                    // TODO: Handle associated constants in impl blocks
+                }
+            }
+        }
+
+        // Restore previous impl type
+        self.current_impl_type = prev_impl_type;
+    }
+
     fn visit_error(&mut self, _ast: &mut Ast, _span: &TextSpan) {
 
     }
@@ -2014,7 +2391,7 @@ impl Resolver {
     }
 
     /// Create a scoped struct item to avoid name conflicts in local scopes
-    fn create_scoped_struct_item(&self, mut item: Item) -> Item {
+    fn create_scoped_struct_item(&self, mut item: Item<ItemKind>) -> Item<ItemKind> {
         if let Some(function_idx) = self.scopes.surrounding_function_idx() {
             if let crate::ast::ItemKind::Struct(ref mut name, generics, variant_data) = item.kind {
                 let function_name = &self.scopes.global_scope.functions.get(function_idx).name;
