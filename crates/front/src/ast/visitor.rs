@@ -55,7 +55,7 @@ pub trait ASTVisitor {
                 self.visit_enum_item(ast, generics, enum_definition, item.id);
             }
             ItemKind::Impl(impl_item) => {
-                self.visit_impl_item(ast, impl_item);
+                self.visit_impl_item(ast, impl_item, item.id);
             }
         }
     }
@@ -66,7 +66,7 @@ pub trait ASTVisitor {
 
     fn visit_enum_item(&mut self, ast: &mut Ast, generics: &Generics, enum_definition: &EnumDefinition, item_id: ItemIndex);
 
-    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl);
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl, item_id: ItemIndex);
 
     fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex);
 

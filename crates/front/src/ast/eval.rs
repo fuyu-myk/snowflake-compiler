@@ -433,7 +433,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         // No evaluation needed for path expressions
     }
 
-    fn visit_impl_item(&mut self, _ast: &mut Ast, _impl_item: &Impl) {
+    fn visit_impl_item(&mut self, _ast: &mut Ast, _impl_item: &Impl, _item_id: ItemIndex) {
         // No evaluation needed for impl items
     }
 

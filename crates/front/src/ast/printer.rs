@@ -95,7 +95,19 @@ impl ASTPrinter {
                 }
                 self.add_text(")");
             }
-            _ => {}
+            AstType::Path(_, path) => {
+                for (i, segment) in path.segments.iter().enumerate() {
+                    if i > 0 {
+                        self.add_text("::");
+                    }
+                    self.add_type(&segment.identifier.span.literal);
+                }
+            }
+            AstType::ImplTrait(_, _) => {
+                self.add_keyword("impl");
+                self.add_whitespace();
+                self.add_text("Trait");
+            }
         }
     }
     
@@ -467,19 +479,19 @@ impl ASTVisitor for ASTPrinter {
             ItemKind::Struct(identifier, generics, variant_data) => {
                 self.add_keyword("struct");
                 self.add_whitespace();
-                self.add_text(&identifier.span.literal);
+                self.add_type(&identifier.span.literal);
 
                 self.visit_struct_item(ast, generics, variant_data, item.id);
             }
             ItemKind::Enum(identifier, generics, enum_definition) => {
                 self.add_keyword("enum");
                 self.add_whitespace();
-                self.add_text(&identifier.span.literal);
+                self.add_type(&identifier.span.literal);
 
                 self.visit_enum_item(ast, generics, enum_definition, item.id);
             }
             ItemKind::Impl(impl_block) => {
-                self.visit_impl_item(ast, impl_block);
+                self.visit_impl_item(ast, impl_block, item.id);
             }
         }
     }
@@ -490,15 +502,21 @@ impl ASTVisitor for ASTPrinter {
         self.add_whitespace();
         self.add_text(&fx_decl.identifier.span.literal);
 
-        let are_parameters_empty = fx_decl.generics.is_empty();
-        if !are_parameters_empty {
-            self.add_text("(");
-        } else {
-            self.add_whitespace();
+        self.add_text("(");
+        
+        let mut has_printed_param = false;
+        
+        if let Some(ref self_param) = fx_decl.self_param {
+            if self_param.mutability == Mutability::Mutable {
+                self.add_keyword("mut");
+                self.add_whitespace();
+            }
+            self.add_keyword("self");
+            has_printed_param = true;
         }
 
         for (i, parameter) in fx_decl.generics.iter().enumerate() {
-            if i != 0 {
+            if has_printed_param || i > 0 {
                 self.add_text(",");
                 self.add_whitespace();
             }
@@ -514,13 +532,20 @@ impl ASTVisitor for ASTPrinter {
                     self.add_type_kind(ty);
                 }
             }
+            has_printed_param = true;
         }
 
-        if !are_parameters_empty {
-            self.add_text(")");
+        self.add_text(")");
+        
+        // Print return type if it exists
+        if let Some(ref return_type) = fx_decl.return_type {
             self.add_whitespace();
+            self.add_text("->");
+            self.add_whitespace();
+            self.add_type_kind(&return_type.ty);
         }
-
+        
+        self.add_whitespace();
         self.add_text("{\n");
         for statement in fx_decl.body.statements.iter() {
             self.visit_statement(ast, *statement);
@@ -595,7 +620,7 @@ impl ASTVisitor for ASTPrinter {
         self.add_text("}\n");
     }
 
-    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl) {
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl, _item_id: ItemIndex) {
         self.add_keyword("impl");
         self.add_whitespace();
         self.add_type_kind(&impl_item.self_type);

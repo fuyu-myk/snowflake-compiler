@@ -2246,7 +2246,7 @@ impl ASTVisitor for Resolver {
         }
     }
 
-    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl) {
+    fn visit_impl_item(&mut self, ast: &mut Ast, impl_item: &Impl, item_id: ItemIndex) {
         // Get the type name from `self`
         let type_name = match &*impl_item.self_type {
             AstType::Simple { type_name } => {
@@ -2260,6 +2260,26 @@ impl ASTVisitor for Resolver {
                 return;
             }
         };
+        
+        // Add impl to global scope - store at item_id to maintain alignment with AST items
+        // Push placeholders until there is enough space to set impls[item_id]
+        while self.scopes.global_scope.impls.indices().last().map_or(0, |idx| idx.as_index() + 1) <= item_id.as_index() {
+            // Create a placeholder impl
+            let placeholder = Impl {
+                generics: Generics { params: Vec::new(), span: TextSpan::new(0, 0, String::new()) },
+                self_type: Box::new(AstType::Simple { 
+                    type_name: Token::new(
+                        TokenKind::Identifier, 
+                        TextSpan::new(0, 0, String::new())
+                    )
+                }),
+                items: Vec::new(),
+            };
+            self.scopes.global_scope.impls.push(placeholder);
+        }
+
+        // Overwrite the placeholder with the actual impl
+        self.scopes.global_scope.impls[item_id] = impl_item.clone();
 
         // Set current impl type for Self resolution
         let prev_impl_type = self.current_impl_type.take();

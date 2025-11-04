@@ -4,7 +4,7 @@ use anyhow::Result;
 use snowflake_common::Idx;
 use snowflake_front::{ast::{AstType, ItemKind, VariantData}, compilation_unit::GlobalScope};
 
-use crate::ir::hir::{HIRExprKind, HIRExpression, HIRItemId, HIRStatement, HIRStmtKind, HIRStructTailExpr, QualifiedPath, HIR};
+use crate::ir::hir::{HIR, HIRExprKind, HIRExpression, HIRItemId, HIRItemKind, HIRStatement, HIRStmtKind, HIRStructTailExpr, QualifiedPath};
 
 
 const INDENT: &str = "    ";
@@ -17,7 +17,7 @@ impl <W> HIRWriter<W> where W: Write {
     pub fn write(writer: &mut W, hir: &HIR, global_scope: &GlobalScope, indent: usize) -> Result<()> {
         for (_, statements) in &hir.top_statements {
             for stmt in statements {
-                Self::write_statement(writer, stmt, global_scope, indent)?;
+                Self::write_statement(writer, stmt, hir, global_scope, indent)?;
             }
         }
         for (fx_idx, body) in &hir.functions {
@@ -27,6 +27,10 @@ impl <W> HIRWriter<W> where W: Write {
                 .map(|(_, fx)| fx);
             
             if let Some(fx) = fx_opt {
+                if fx.name.contains("::") {
+                    continue;
+                }
+                
                 // Regular function with declaration
                 write!(writer, "fx {}(", fx.name)?;
 
@@ -46,7 +50,7 @@ impl <W> HIRWriter<W> where W: Write {
 
             for statement in body {
                 Self::write_indent(writer, indent + 1)?;
-                Self::write_statement(writer, statement, global_scope, indent + 1)?;
+                Self::write_statement(writer, statement, hir, global_scope, indent + 1)?;
             }
             
             if fx_opt.is_some() {
@@ -59,15 +63,15 @@ impl <W> HIRWriter<W> where W: Write {
         Ok(())
     }
 
-    fn write_statement(writer: &mut W, statement: &HIRStatement, global_scope: &GlobalScope, indent: usize) -> Result<()> {
+    fn write_statement(writer: &mut W, statement: &HIRStatement, hir: &HIR, global_scope: &GlobalScope, indent: usize) -> Result<()> {
         match &statement.kind {
             HIRStmtKind::Expression { expr } => {
-                Self::write_expression(writer, expr, global_scope, indent)?;
+                Self::write_expression(writer, expr, hir, global_scope, indent)?;
                 write!(writer, ";")?;
                 writeln!(writer)?;
             }
             HIRStmtKind::TailExpression { expr } => {
-                Self::write_expression(writer, expr, global_scope, indent)?;
+                Self::write_expression(writer, expr, hir, global_scope, indent)?;
                 writeln!(writer)?;
             }
             HIRStmtKind::Declaration { var_idx, init_expr, is_mutable } => {
@@ -77,7 +81,7 @@ impl <W> HIRWriter<W> where W: Write {
 
                 if let Some(init) = init_expr {
                     write!(writer, " = ")?;
-                    Self::write_expression(writer, init, global_scope, indent)?;
+                    Self::write_expression(writer, init, hir, global_scope, indent)?;
                 }
 
                 writeln!(writer)?;
@@ -88,7 +92,7 @@ impl <W> HIRWriter<W> where W: Write {
 
                 if let Some(init) = init_expr {
                     write!(writer, " = ")?;
-                    Self::write_expression(writer, init, global_scope, indent)?;
+                    Self::write_expression(writer, init, hir, global_scope, indent)?;
                 }
 
                 writeln!(writer)?;
@@ -101,22 +105,22 @@ impl <W> HIRWriter<W> where W: Write {
                         write!(writer, "{} = ", var.name.tokens.last().unwrap().span.literal)?;
                     }
                     _ => {
-                        Self::write_expression(writer, target, global_scope, indent)?;
+                        Self::write_expression(writer, target, hir, global_scope, indent)?;
                         write!(writer, " = ")?;
                     }
                 }
 
-                Self::write_expression(writer, value, global_scope, indent)?;
+                Self::write_expression(writer, value, hir, global_scope, indent)?;
                 writeln!(writer)?;
             }
             HIRStmtKind::Item { item_id } => {
-                Self::write_item(writer, item_id, global_scope, indent)?;
+                Self::write_item(writer, item_id, hir, global_scope, indent)?;
             }
         }
         Ok(())
     }
 
-    fn write_expression(writer: &mut W, expression: &HIRExpression, global_scope: &GlobalScope, indent: usize) -> Result<()> {
+    fn write_expression(writer: &mut W, expression: &HIRExpression, hir: &HIR, global_scope: &GlobalScope, indent: usize) -> Result<()> {
         match &expression.kind {
             HIRExprKind::Number(number) => {
                 write!(writer, "{}", number)?;
@@ -143,7 +147,7 @@ impl <W> HIRWriter<W> where W: Write {
             HIRExprKind::Array { elements, element_type: _, alloc_type: _ } => {
                 write!(writer, "[")?;
                 for (i, elem) in elements.iter().enumerate() {
-                    Self::write_expression(writer, elem, global_scope, indent)?;
+                    Self::write_expression(writer, elem, hir, global_scope, indent)?;
                     if i != elements.len() - 1 {
                         write!(writer, ", ")?;
                     }
@@ -151,15 +155,15 @@ impl <W> HIRWriter<W> where W: Write {
                 write!(writer, "]")?;
             }
             HIRExprKind::Index { object, index, bounds_check: _, length: _ } => {
-                Self::write_expression(writer, object, global_scope, indent)?;
+                Self::write_expression(writer, object, hir, global_scope, indent)?;
                 write!(writer, "[")?;
-                Self::write_expression(writer, index, global_scope, indent)?;
+                Self::write_expression(writer, index, hir, global_scope, indent)?;
                 write!(writer, "]")?;
             }
             HIRExprKind::Tuple { elements, .. } => {
                 write!(writer, "(")?;
                 for (i, elem) in elements.iter().enumerate() {
-                    Self::write_expression(writer, elem, global_scope, indent)?;
+                    Self::write_expression(writer, elem, hir, global_scope, indent)?;
                     if i == 0 || i != elements.len() - 1 {
                         write!(writer, ", ")?;
                     }
@@ -167,52 +171,75 @@ impl <W> HIRWriter<W> where W: Write {
                 write!(writer, ")")?;
             }
             HIRExprKind::Field { object: tuple, field: index } => {
-                Self::write_expression(writer, tuple, global_scope, indent)?;
+                Self::write_expression(writer, tuple, hir, global_scope, indent)?;
                 write!(writer, ".")?;
-                Self::write_expression(writer, index, global_scope, indent)?;
+                Self::write_expression(writer, index, hir, global_scope, indent)?;
             }
-            HIRExprKind::Struct { fields, tail_expr, .. } => {
-                write!(writer, "{{ ")?;
-                for (i, field) in fields.iter().enumerate() {
-                    if field.is_shorthand {
-                        write!(writer, "{}", field.identifier.span.literal)?;
+            HIRExprKind::Struct { path, fields, tail_expr } => {
+                let (struct_name, is_tuple_struct) = if let QualifiedPath::ResolvedType(struct_idx) = path {
+                    let struct_item = global_scope.structs.get(*struct_idx);
+                    if let ItemKind::Struct(name_token, _, variant_data) = &struct_item.kind {
+                        let is_tuple = matches!(variant_data, VariantData::Tuple(_));
+                        (name_token.span.literal.clone(), is_tuple)
                     } else {
-                        write!(writer, "{}: ", field.identifier.span.literal)?;
-                        Self::write_expression(writer, &field.expr, global_scope, indent)?;
+                        (String::from("UnknownStruct"), false)
                     }
-                    
-                    if i != fields.len() - 1 || !matches!(tail_expr, HIRStructTailExpr::None) {
-                        write!(writer, ", ")?;
+                } else {
+                    (String::from("UnknownPath"), false)
+                };
+                
+                if is_tuple_struct {
+                    write!(writer, "{}(", struct_name)?;
+                    for (i, field) in fields.iter().enumerate() {
+                        Self::write_expression(writer, &field.expr, hir, global_scope, indent)?;
+                        if i != fields.len() - 1 {
+                            write!(writer, ", ")?;
+                        }
                     }
+                    write!(writer, ")")?;
+                } else {
+                    write!(writer, "{} {{ ", struct_name)?;
+                    for (i, field) in fields.iter().enumerate() {
+                        if field.is_shorthand {
+                            write!(writer, "{}", field.identifier.span.literal)?;
+                        } else {
+                            write!(writer, "{}: ", field.identifier.span.literal)?;
+                            Self::write_expression(writer, &field.expr, hir, global_scope, indent)?;
+                        }
+                        
+                        if i != fields.len() - 1 || !matches!(tail_expr, HIRStructTailExpr::None) {
+                            write!(writer, ", ")?;
+                        }
+                    }
+                    match tail_expr {
+                        HIRStructTailExpr::None => {}
+                        HIRStructTailExpr::Default(_) => {
+                            write!(writer, "..")?;
+                        }
+                    }
+                    write!(writer, " }}")?;
                 }
-                match tail_expr {
-                    HIRStructTailExpr::None => {}
-                    HIRStructTailExpr::Default(_) => {
-                        write!(writer, "..")?;
-                    }
-                }
-                write!(writer, " }}")?;
             }
             HIRExprKind::Binary { operator, left, right } => {
-                Self::write_expression(writer, left.as_ref(), global_scope, indent)?;
+                Self::write_expression(writer, left.as_ref(), hir, global_scope, indent)?;
                 write!(writer, " {} ", operator)?;
-                Self::write_expression(writer, right.as_ref(), global_scope, indent)?;
+                Self::write_expression(writer, right.as_ref(), hir, global_scope, indent)?;
             }
             HIRExprKind::Unary { operator, operand } => {
                 write!(writer, "{}", operator)?;
-                Self::write_expression(writer, operand.as_ref(), global_scope, indent)?;
+                Self::write_expression(writer, operand.as_ref(), hir, global_scope, indent)?;
             }
             HIRExprKind::If { condition, then_block, else_block } => {
                 write!(writer, "if ")?;
-                Self::write_expression(writer, condition, global_scope, indent)?;
+                Self::write_expression(writer, condition, hir, global_scope, indent)?;
                 writeln!(writer, " {{")?;
 
-                Self::write_expression(writer, then_block, global_scope, indent + 1)?;
+                Self::write_expression(writer, then_block, hir, global_scope, indent + 1)?;
                 
                 if let Some(else_block) = else_block {
                     Self::write_indent(writer, indent)?;
                     writeln!(writer, "}} else {{")?;
-                    Self::write_expression(writer, else_block, global_scope, indent + 1)?;
+                    Self::write_expression(writer, else_block, hir, global_scope, indent + 1)?;
                 }
                 
                 Self::write_indent(writer, indent)?;
@@ -224,7 +251,7 @@ impl <W> HIRWriter<W> where W: Write {
                 
                 for statement in body.statements.iter() {
                     Self::write_indent(writer, indent + 1)?;
-                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
+                    Self::write_statement(writer, statement, hir, global_scope, indent + 1)?;
                 }
 
                 Self::write_indent(writer, indent)?;
@@ -235,7 +262,7 @@ impl <W> HIRWriter<W> where W: Write {
                 write!(writer, "{}(", fx.name)?;
 
                 for (param_idx, param) in args.iter().enumerate() {
-                    Self::write_expression(writer, param, global_scope, indent)?;
+                    Self::write_expression(writer, param, hir, global_scope, indent)?;
                     if param_idx != args.len() - 1 {
                         write!(writer, ", ")?;
                     }
@@ -245,13 +272,13 @@ impl <W> HIRWriter<W> where W: Write {
             }
             HIRExprKind::Return { expr } => {
                 write!(writer, "return ")?;
-                Self::write_expression(writer, expr, global_scope, indent)?;
+                Self::write_expression(writer, expr, hir, global_scope, indent)?;
             }
             HIRExprKind::Loop { body } => {
                 writeln!(writer, "loop {{ ")?;
                 for statement in body {
                     Self::write_indent(writer, indent + 1)?;
-                    Self::write_statement(writer, statement, global_scope, indent + 1)?;
+                    Self::write_statement(writer, statement, hir, global_scope, indent + 1)?;
                 }
 
                 Self::write_indent(writer, indent)?;
@@ -287,14 +314,11 @@ impl <W> HIRWriter<W> where W: Write {
         Ok(())
     }
 
-    fn write_item(writer: &mut W, item: &HIRItemId, global_scope: &GlobalScope, _indent: usize) -> Result<()> {
-        // Try to get the item as a struct first
-        if let Some(ast_item) = global_scope.structs.indexed_iter()
-            .find(|(idx, _)| *idx == item.from)
-            .map(|(_, item)| item)
-        {
-            match &ast_item.kind {
-                ItemKind::Struct(name, generics, variant_data) => {
+    fn write_item(writer: &mut W, item: &HIRItemId, hir: &HIR, global_scope: &GlobalScope, _indent: usize) -> Result<()> {
+        match item.kind {
+            HIRItemKind::Struct => {
+                let ast_item = global_scope.structs.get(item.from);
+                if let ItemKind::Struct(name, generics, variant_data) = &ast_item.kind {
                     write!(writer, "struct {}", name.span.literal)?;
                     
                     if !generics.params.is_empty() {
@@ -318,7 +342,7 @@ impl <W> HIRWriter<W> where W: Write {
                                     writeln!(writer, ",")?;
                                 }
                             }
-                            writeln!(writer, "}}")?;
+                            writeln!(writer, "}}\n")?;
                         }
                         VariantData::Tuple(elements) => {
                             write!(writer, "(")?;
@@ -328,67 +352,131 @@ impl <W> HIRWriter<W> where W: Write {
                                     write!(writer, ", ")?;
                                 }
                             }
-                            writeln!(writer, ");")?;
+                            writeln!(writer, ");\n")?;
                         }
                         VariantData::Unit => {
-                            writeln!(writer, ";")?;
+                            writeln!(writer, ";\n")?;
                         }
                     }
                 }
-                ItemKind::Function(_) => {
-                    writeln!(writer, "// Function item referenced incorrectly")?;
-                }
-                ItemKind::Const(_) => {
-                    writeln!(writer, "// Const item referenced incorrectly")?;
-                }
-                ItemKind::Enum(..) => {
-                    writeln!(writer, "// Enum item referenced incorrectly as struct")?;
-                }
-                ItemKind::Impl(_) => {
-                    writeln!(writer, "// Impl block")?;
-                }
             }
-        } else if let Some(enum_info) = global_scope.enums.indexed_iter()
-            .find(|(idx, _)| *idx == item.from)
-            .map(|(_, info)| info)
-        {
-            write!(writer, "enum {}", enum_info.name)?;
-            writeln!(writer, " {{")?;
-            
-            for variant in &enum_info.variants {
-                write!(writer, "    {}", variant.name)?;
+            HIRItemKind::Enum => {
+                let enum_info = global_scope.enums.get(item.from);
+                writeln!(writer, "enum {} {{", enum_info.name)?;
                 
-                match &variant.data {
-                    VariantData::Struct { fields } => {
-                        writeln!(writer, " {{")?;
-                        for field in fields {
-                            if let Some(ref field_name) = field.identifier {
-                                write!(writer, "        {}: ", field_name.span.literal)?;
-                                Self::write_type_kind(writer, &field.ty)?;
-                                writeln!(writer, ",")?;
+                for variant in &enum_info.variants {
+                    write!(writer, "    {}", variant.name)?;
+                    
+                    match &variant.data {
+                        VariantData::Struct { fields } => {
+                            writeln!(writer, " {{")?;
+                            for field in fields {
+                                if let Some(ref field_name) = field.identifier {
+                                    write!(writer, "        {}: ", field_name.span.literal)?;
+                                    Self::write_type_kind(writer, &field.ty)?;
+                                    writeln!(writer, ",")?;
+                                }
                             }
+                            writeln!(writer, "    }}")?;
                         }
-                        writeln!(writer, "    }}")?;
-                    }
-                    VariantData::Tuple(elements) => {
-                        write!(writer, "(")?;
-                        for (i, element) in elements.iter().enumerate() {
-                            Self::write_type_kind(writer, &element.ty)?;
-                            if i < elements.len() - 1 {
-                                write!(writer, ", ")?;
+                        VariantData::Tuple(elements) => {
+                            write!(writer, "(")?;
+                            for (i, element) in elements.iter().enumerate() {
+                                Self::write_type_kind(writer, &element.ty)?;
+                                if i < elements.len() - 1 {
+                                    write!(writer, ", ")?;
+                                }
                             }
+                            writeln!(writer, "),")?;
                         }
-                        writeln!(writer, "),")?;
-                    }
-                    VariantData::Unit => {
-                        writeln!(writer, ",")?;
+                        VariantData::Unit => {
+                            writeln!(writer, ",")?;
+                        }
                     }
                 }
+                
+                writeln!(writer, "}}\n")?;
             }
-            
-            writeln!(writer, "}}")?;
-        } else {
-            writeln!(writer, "// Unknown item")?;
+            HIRItemKind::Impl => {
+                let impl_info = global_scope.impls.get(item.from);
+                write!(writer, "impl")?;
+                
+                if !impl_info.generics.params.is_empty() {
+                    write!(writer, "<")?;
+                    for (i, param) in impl_info.generics.params.iter().enumerate() {
+                        write!(writer, "{}", param.identifier.span.literal)?;
+                        if i < impl_info.generics.params.len() - 1 {
+                            write!(writer, ", ")?;
+                        }
+                    }
+                    write!(writer, ">")?;
+                }
+                
+                write!(writer, " ")?;
+                Self::write_type_kind(writer, &impl_info.self_type)?;
+                writeln!(writer, " {{")?;
+                
+                // Associated items
+                for assoc_item in &impl_info.items {
+                    match &assoc_item.kind {
+                        snowflake_front::ast::AssociatedItemKind::Function(fx_decl) => {
+                            let type_name = match &*impl_info.self_type {
+                                AstType::Simple { type_name } => type_name.span.literal.clone(),
+                                AstType::Path(_, path) => path.segments.last().unwrap().identifier.span.literal.clone(),
+                                _ => continue,
+                            };
+                            
+                            let method_name = fx_decl.identifier.span.literal.clone();
+                            let path = format!("{}::{}", type_name, method_name);
+                            
+                            if let Some((fx_idx, fx)) = global_scope.functions.indexed_iter()
+                                .find(|(_, fx)| fx.name == path)
+                            {
+                                write!(writer, "    fx {}(", method_name)?;
+                                
+                                for (i, param_id) in fx.parameters.iter().enumerate() {
+                                    let param = global_scope.variables.get(*param_id);
+
+                                    if param.name.segments.last().unwrap().identifier.span.literal == "self" {
+                                        write!(writer, "self")?;
+                                    } else {
+                                        write!(
+                                            writer,
+                                            "{}: {}",
+                                            param.name.segments.last().unwrap().identifier.span.literal, param.ty,
+                                        )?;
+                                    }
+
+                                    if i < fx.parameters.len() - 1 {
+                                        write!(writer, ", ")?;
+                                    }
+                                }
+                                writeln!(writer, ") -> {} {{", fx.return_type)?;
+                                
+                                if let Some(body) = hir.functions.get(&fx_idx) {
+                                    for statement in body {
+                                        Self::write_indent(writer, _indent + 2)?;
+                                        Self::write_statement(writer, statement, hir, global_scope, _indent + 2)?;
+                                    }
+                                }
+                                
+                                writeln!(writer, "    }}")?;
+                            }
+                        }
+                        snowflake_front::ast::AssociatedItemKind::Const(const_item) => {
+                            write!(writer, "    const ")?;
+                            if let snowflake_front::ast::PatternKind::Identifier(_, ident) = &const_item.identifier.kind {
+                                write!(writer, "{}", ident.span.literal)?;
+                            }
+                            write!(writer, ": ")?;
+                            Self::write_type_kind(writer, &const_item.type_annotation.type_kind)?;
+                            writeln!(writer)?;
+                        }
+                    }
+                }
+                
+                writeln!(writer, "}}\n")?;
+            }
         }
 
         Ok(())

@@ -7,7 +7,7 @@ use snowflake_front::{
 };
 use snowflake_common::{text::span::TextSpan, typings::TypeKind};
 
-use crate::ir::hir::{AllocType, Block, HIRContext, HIRExprField, HIRExprKind, HIRExpression, HIRItemId, HIRNodeId, HIRStatement, HIRStmtKind, HIRStructTailExpr, QualifiedPath, ScopeId, HIR};
+use crate::ir::hir::{AllocType, Block, HIR, HIRContext, HIRExprField, HIRExprKind, HIRExpression, HIRItemId, HIRItemKind, HIRNodeId, HIRStatement, HIRStmtKind, HIRStructTailExpr, QualifiedPath, ScopeId};
 
 
 struct Ctx {
@@ -159,7 +159,12 @@ impl HIRBuilder {
                     let span = TextSpan::combine_two(&name.span, &generics.span);
 
                     let struct_stmt = HIRStatement {
-                        kind: HIRStmtKind::Item { item_id: HIRItemId { from: struct_idx } },
+                        kind: HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: struct_idx,
+                                kind: HIRItemKind::Struct,
+                            } 
+                        },
                         id: self.next_node_id(),
                         span,
                     };
@@ -178,6 +183,24 @@ impl HIRBuilder {
                         }
                         _ => continue, // Skip complex types
                     };
+                    
+                    // Use the item's ID as the impl index in global_scope.impls
+                    // (from the resolution phase, each impl is stored at its item.id index)
+                    let impl_idx = item.id;
+                    let impl_stmt = HIRStatement {
+                        kind: HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: impl_idx,
+                                kind: HIRItemKind::Impl,
+                            } 
+                        },
+                        id: self.next_node_id(),
+                        span: item.span.clone(),
+                    };
+                    
+                    self.hir.top_statements.entry(impl_idx)
+                        .or_insert_with(Vec::new)
+                        .push(impl_stmt);
                     
                     for assoc_item in &impl_item.items {
                         if let snowflake_front::ast::AssociatedItemKind::Function(fx_decl) = &assoc_item.kind {
@@ -208,7 +231,12 @@ impl HIRBuilder {
                     let span = TextSpan::combine_two(&name.span, &generics.span);
 
                     let enum_stmt = HIRStatement {
-                        kind: HIRStmtKind::Item { item_id: HIRItemId { from: enum_idx } },
+                        kind: HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: enum_idx,
+                                kind: HIRItemKind::Enum,
+                            } 
+                        },
                         id: self.next_node_id(),
                         span,
                     };
@@ -270,7 +298,12 @@ impl HIRBuilder {
 
                 match &ast_item.kind {
                     ItemKind::Struct(_, _, _) => {
-                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                        HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: *item_id,
+                                kind: HIRItemKind::Struct,
+                            } 
+                        }
                     }
                     ItemKind::Function(_) => {
                         // Placeholder
@@ -279,11 +312,17 @@ impl HIRBuilder {
                         }
                     }
                     ItemKind::Const(_) => {
-                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                        HIRStmtKind::Expression { 
+                            expr: self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast_item.span.clone()) 
+                        }
                     }
                     ItemKind::Impl(_) => {
-                        // Placeholder for impl blocks
-                        HIRStmtKind::Item { item_id: HIRItemId { from: *item_id } }
+                        HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: *item_id,
+                                kind: HIRItemKind::Impl,
+                            } 
+                        }
                     }
                     ItemKind::Enum(..) => {
                         todo!("Enum items not yet supported in HIR")
