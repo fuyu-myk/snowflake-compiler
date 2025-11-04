@@ -212,6 +212,8 @@ pub enum CBinOp {
     BitwiseXor,
     ShiftLeft,
     ShiftRight,
+    LogicalAnd,
+    LogicalOr,
 }
 
 impl Display for CBinOp {
@@ -233,6 +235,8 @@ impl Display for CBinOp {
             CBinOp::GreaterThan => write!(f, ">"),
             CBinOp::LessThanOrEqual => write!(f, "<="),
             CBinOp::GreaterThanOrEqual => write!(f, ">="),
+            CBinOp::LogicalAnd => write!(f, "&&"),
+            CBinOp::LogicalOr => write!(f, "||"),
         };
     }
 }
@@ -258,6 +262,8 @@ impl TryFrom<&BinaryOp> for CBinOp {
             BinaryOpKind::GreaterThan => Ok(CBinOp::GreaterThan),
             BinaryOpKind::LessThanOrEqual => Ok(CBinOp::LessThanOrEqual),
             BinaryOpKind::GreaterThanOrEqual => Ok(CBinOp::GreaterThanOrEqual),
+            BinaryOpKind::LogicalAnd => Ok(CBinOp::LogicalAnd),
+            BinaryOpKind::LogicalOr => Ok(CBinOp::LogicalOr),
             BinaryOpKind::Power => Err(()),
         };
     }

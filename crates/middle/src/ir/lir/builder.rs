@@ -174,6 +174,16 @@ impl<'mir> LIRBuilder<'mir> {
                                     left,
                                     right,
                                 },
+                                BinOp::LogicalAnd => InstructionKind::And {
+                                    target: self.get_ref_location(instruct_idx),
+                                    left,
+                                    right,
+                                },
+                                BinOp::LogicalOr => InstructionKind::Or {
+                                    target: self.get_ref_location(instruct_idx),
+                                    left,
+                                    right,
+                                },
                             }
                         }
                         mir::InstructionKind::Unary { operator, operand } => {

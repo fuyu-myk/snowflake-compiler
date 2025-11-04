@@ -14,6 +14,9 @@ impl AlgebraicSimplification {
                 BinOp::Add | BinOp::Sub | BinOp::BitOr | BinOp::BitShl | BinOp::BitShr => Some(known_value),
                 BinOp::Mul | BinOp::BitAnd => Some(0),
                 BinOp::Div | BinOp::Mod => todo!("Handle division by zero"),
+                // false && x = false, false || x = x (identity)
+                BinOp::LogicalAnd => Some(0),
+                BinOp::LogicalOr => Some(known_value),
                 _ => None,
             }
         } else if known_value == 1 {
@@ -34,6 +37,9 @@ impl AlgebraicSimplification {
                         None
                     }
                 }
+                // true && x = x (identity), true || x = true
+                BinOp::LogicalAnd => Some(known_value),
+                BinOp::LogicalOr => Some(1),
                 _ => None,
             }
         } else {

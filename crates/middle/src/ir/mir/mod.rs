@@ -414,6 +414,8 @@ pub enum BinOp {
     Gt,
     Leq,
     Geq,
+    LogicalAnd,
+    LogicalOr,
 }
 
 impl From<ast::BinaryOpKind> for BinOp {
@@ -436,6 +438,8 @@ impl From<ast::BinaryOpKind> for BinOp {
             ast::BinaryOpKind::GreaterThan => Self::Gt,
             ast::BinaryOpKind::LessThanOrEqual => Self::Leq,
             ast::BinaryOpKind::GreaterThanOrEqual => Self::Geq,
+            ast::BinaryOpKind::LogicalAnd => Self::LogicalAnd,
+            ast::BinaryOpKind::LogicalOr => Self::LogicalOr,
         }
     }
 }
@@ -459,6 +463,8 @@ impl Display for BinOp {
             Self::Gt => write!(f, "Gt"),
             Self::Leq => write!(f, "Leq"),
             Self::Geq => write!(f, "Geq"),
+            Self::LogicalAnd => write!(f, "LogicalAnd"),
+            Self::LogicalOr => write!(f, "LogicalOr"),
         }
     }
 }

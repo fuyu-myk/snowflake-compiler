@@ -185,6 +185,10 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             BinaryOpKind::GreaterThan => Value::Boolean(left.expect_number() > right.expect_number()),
             BinaryOpKind::LessThanOrEqual => Value::Boolean(left.expect_number() <= right.expect_number()),
             BinaryOpKind::GreaterThanOrEqual => Value::Boolean(left.expect_number() >= right.expect_number()),
+
+            // logical operators
+            BinaryOpKind::LogicalAnd => Value::Boolean(left.expect_boolean() && right.expect_boolean()),
+            BinaryOpKind::LogicalOr => Value::Boolean(left.expect_boolean() || right.expect_boolean()),
         });
     }
 

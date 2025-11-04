@@ -574,6 +574,11 @@ impl Resolver {
                 self.expect_type(left_ty.clone(), right_ty, &right.span(&ast));
                 TypeKind::Bool
             },
+            BinaryOpKind::LogicalAnd | BinaryOpKind::LogicalOr => {
+                self.expect_type(TypeKind::Bool, left_ty, &left.span(&ast));
+                self.expect_type(TypeKind::Bool, right_ty, &right.span(&ast));
+                TypeKind::Bool
+            },
             BinaryOpKind::Plus | BinaryOpKind::Minus | BinaryOpKind::Multiply | BinaryOpKind::Divide => {
                 if left_ty.is_assignable_to(right_ty) {
                     left_ty.clone()

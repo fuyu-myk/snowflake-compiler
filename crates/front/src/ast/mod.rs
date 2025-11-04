@@ -1228,7 +1228,27 @@ pub enum PatternKind {
     TupleStruct(Option<Box<QualifiedPath>>, Path, Vec<Box<Pattern>>),
     Tuple(Vec<Box<Pattern>>),
     Expression(Box<Expression>),
+    Range(Option<Box<Expression>>, Option<Box<Expression>>, RangeSpan<RangeEnd>),
+    Rest,
     Err,
+}
+
+#[derive(Debug, Clone)]
+pub enum RangeSyntax {
+    DotDotDot,
+    DotDotEquals,
+}
+
+#[derive(Debug, Clone)]
+pub enum RangeEnd {
+    Inclusive(RangeSyntax),
+    Exclusive,
+}
+
+#[derive(Debug, Clone)]
+pub struct RangeSpan<T> {
+    pub range_type: T,
+    pub span: TextSpan,
 }
 
 #[derive(Debug, Clone)]
@@ -1691,6 +1711,10 @@ pub enum BinaryOpKind {
     GreaterThan,
     LessThanOrEqual,
     GreaterThanOrEqual,
+
+    // logical
+    LogicalAnd, // &&
+    LogicalOr,  // ||
 }
 
 impl Display for BinaryOpKind {
@@ -1713,6 +1737,8 @@ impl Display for BinaryOpKind {
             BinaryOpKind::GreaterThan => write!(f, ">"),
             BinaryOpKind::LessThanOrEqual => write!(f, "<="),
             BinaryOpKind::GreaterThanOrEqual => write!(f, ">="),
+            BinaryOpKind::LogicalAnd => write!(f, "&&"),
+            BinaryOpKind::LogicalOr => write!(f, "||"),
         };
     }
 }
@@ -1758,10 +1784,14 @@ impl BinaryOp {
             BinaryOpKind::Equals => 15,
             BinaryOpKind::NotEquals => 15,
             
-            // Bitwise operators (lowest precedence)
+            // Bitwise operators
             BinaryOpKind::BitwiseAnd => 14,
             BinaryOpKind::BitwiseXor => 13,
             BinaryOpKind::BitwiseOr => 12,
+            
+            // Logical operators (lowest precedence)
+            BinaryOpKind::LogicalAnd => 11,
+            BinaryOpKind::LogicalOr => 10,
         }
     }
 

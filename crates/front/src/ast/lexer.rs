@@ -352,6 +352,10 @@ impl <'a> Lexer<'a> {
                         self.consume();
                         TokenKind::AmpersandAs
                     },
+                    Some('&') => {
+                        self.consume();
+                        TokenKind::AmpersandAmpersand
+                    },
                     _ => TokenKind::Ampersand,
                 }
             },
@@ -360,6 +364,10 @@ impl <'a> Lexer<'a> {
                     Some('=') => {
                         self.consume();
                         TokenKind::PipeAs
+                    },
+                    Some('|') => {
+                        self.consume();
+                        TokenKind::PipePipe
                     },
                     _ => TokenKind::Pipe,
                 }
@@ -416,6 +424,10 @@ impl <'a> Lexer<'a> {
                     Some('=') => {
                         self.consume();
                         TokenKind::EqualsEquals
+                    },
+                    Some('>') => {
+                        self.consume();
+                        TokenKind::FatArrow
                     },
                     _ => TokenKind::Equals,
                 }

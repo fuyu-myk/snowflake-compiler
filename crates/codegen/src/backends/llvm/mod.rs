@@ -442,6 +442,56 @@ impl<'ctx> LLVMBackend<'ctx> {
                 
                 self.store_to_location(*target, result, lir)?;
             }
+            InstructionKind::And { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result = self.builder.build_and(
+                    left_val.into_int_value(), right_val.into_int_value(), "and"
+                )?;
+                
+                self.store_to_location(*target, result.into(), lir)?;
+            }
+            InstructionKind::Or { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result = self.builder.build_or(
+                    left_val.into_int_value(), right_val.into_int_value(), "or"
+                )?;
+                
+                self.store_to_location(*target, result.into(), lir)?;
+            }
+            InstructionKind::Xor { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result = self.builder.build_xor(
+                    left_val.into_int_value(), right_val.into_int_value(), "xor"
+                )?;
+                
+                self.store_to_location(*target, result.into(), lir)?;
+            }
+            InstructionKind::Shl { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result = self.builder.build_left_shift(
+                    left_val.into_int_value(), right_val.into_int_value(), "shl"
+                )?;
+                
+                self.store_to_location(*target, result.into(), lir)?;
+            }
+            InstructionKind::Shr { target, left, right } => {
+                let left_val = self.compile_operand(left, lir)?;
+                let right_val = self.compile_operand(right, lir)?;
+                
+                let result = self.builder.build_right_shift(
+                    left_val.into_int_value(), right_val.into_int_value(), false, "shr"
+                )?;
+                
+                self.store_to_location(*target, result.into(), lir)?;
+            }
             InstructionKind::Move { target, source } => {
                 match &source.ty {
                     Type::Array { .. } => {

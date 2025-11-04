@@ -109,6 +109,8 @@ impl MIRPassLocal for ConstantsFolding {
                             BinOp::Gt => (left_int > right_int) as i32,
                             BinOp::Leq => (left_int <= right_int) as i32,
                             BinOp::Geq => (left_int >= right_int) as i32,
+                            BinOp::LogicalAnd => ((left_int != 0) && (right_int != 0)) as i32,
+                            BinOp::LogicalOr => ((left_int != 0) || (right_int != 0)) as i32,
                         };
 
                         let new_value = Value::Constant(Constant::Int(result));

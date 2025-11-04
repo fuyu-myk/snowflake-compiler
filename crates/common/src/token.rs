@@ -46,6 +46,10 @@ pub enum TokenKind {
     EqualsEquals, // == for equality
     NotEquals, // != for inequality
 
+    // logical operators
+    AmpersandAmpersand, // && for logical and
+    PipePipe, // || for logical or
+
     // keywords
     Let,
     If, 
@@ -81,6 +85,7 @@ pub enum TokenKind {
     DoubleQuote,
     Period,
     DoublePeriod,
+    FatArrow, // =>
 
     // comments (handled by lexer, not tokenized)
     LineComment, // // for single line comments
@@ -156,6 +161,10 @@ impl Display for TokenKind {
             TokenKind::EqualsEquals => write!(f, "=="),
             TokenKind::NotEquals => write!(f, "!="),
 
+            // logical operators
+            TokenKind::AmpersandAmpersand => write!(f, "&&"),
+            TokenKind::PipePipe => write!(f, "||"),
+
             // keywords
             TokenKind::Let => write!(f, "Let"),
             TokenKind::If => write!(f, "If"),
@@ -191,6 +200,7 @@ impl Display for TokenKind {
             TokenKind::DoubleQuote => write!(f, "\""),
             TokenKind::Period => write!(f, "."),
             TokenKind::DoublePeriod => write!(f, ".."),
+            TokenKind::FatArrow => write!(f, "FatArrow"),
 
             // comments
             TokenKind::LineComment => write!(f, "LineComment"),

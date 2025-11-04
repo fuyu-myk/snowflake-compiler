@@ -286,6 +286,21 @@ a += 5 -= 1 // lhs must have same type (int) as rhs
 a += a * 2 + 3
 ```
 
+- [x] **Logical operators** [completed 04.11.2025]
+
+* Logical and and logical or for booleans
+
+```snow
+// Assuming a, b, c and d are bool
+if a && b {
+    // do something
+}
+
+if c || d {
+    // do something else
+}
+```
+
 * TODO: Perhaps find a better way of handling spans
 
 ## Functionalities

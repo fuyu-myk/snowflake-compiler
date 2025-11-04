@@ -88,6 +88,21 @@ impl <'a> Parser<'a> {
         self.peek(0)
     }
 
+    fn peek(&self, offset: isize) -> &Token {
+        let mut index = (self.current.get_value() as isize + offset) as usize;
+
+        if index >= self.tokens.len() {
+            index = self.tokens.len() - 1;
+        }
+
+        self.tokens.get(index).unwrap()
+    }
+
+    fn consume(&self) -> &Token {
+        self.current.increment();
+        self.peek(-1)
+    }
+
     fn parse_statement(&mut self) -> StmtIndex {
         let statement = match self.current().kind {
             TokenKind::Let => {
@@ -1047,6 +1062,10 @@ impl <'a> Parser<'a> {
             TokenKind::GreaterThan => Some(BinaryOpKind::GreaterThan),
             TokenKind::LessThanOrEqual => Some(BinaryOpKind::LessThanOrEqual),
             TokenKind::GreaterThanOrEqual => Some(BinaryOpKind::GreaterThanOrEqual),
+
+            // logical operators
+            TokenKind::AmpersandAmpersand => Some(BinaryOpKind::LogicalAnd),
+            TokenKind::PipePipe => Some(BinaryOpKind::LogicalOr),
             _ => None,
         };
         return kind.map(|kind| BinaryOp::new(kind, token.clone()));
@@ -1271,21 +1290,6 @@ impl <'a> Parser<'a> {
                 self.ast.error_expression(token.span)
             }
         }.id;
-    }
-
-    fn peek(&self, offset: isize) -> &Token {
-        let mut index = (self.current.get_value() as isize + offset) as usize;
-
-        if index >= self.tokens.len() {
-            index = self.tokens.len() - 1;
-        }
-
-        self.tokens.get(index).unwrap()
-    }
-
-    fn consume(&self) -> &Token {
-        self.current.increment();
-        self.peek(-1)
     }
 
     // Pattern parsing methods
