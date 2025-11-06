@@ -59,6 +59,8 @@ impl<W> MIRWriter<W> where W: Write {
                 let bb = mir.basic_blocks.get_or_panic(bb_idx);
                 Self::write_basic_block(writer, &mir, function, bb_idx, &bb)?;
             }
+
+            writeln!(writer)?;
         }
         
         Ok(())

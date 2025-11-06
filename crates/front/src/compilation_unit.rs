@@ -1,7 +1,7 @@
 use snowflake_common::{bug_report, idx, Idx, IndexVec};
 use snowflake_common::typings::{FieldType, ObjectKind, ObjectType, TypeKind};
 
-use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, AssociatedItemKind, Ast, AstType, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, GenericParam, GenericParamKind, Generics, IfExpression, Impl, IndexExpression, Item, ItemIndex, ItemKind, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, Path, PathExpression, PathSegment, Pattern, PatternKind, ReturnExpression, Statement, StatementKind, StaticTypeAnnotation, StringExpression, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VariantData, WhileExpression};
+use crate::ast::{ArrayExpression, AssignExpression, AssignmentOpKind, AssociatedItemKind, Ast, AstType, BinaryExpression, BinaryOp, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, CompoundBinaryExpression, ConstStatement, ConstantItem, ContinueExpression, EnumDefinition, Expression, ExpressionKind, FieldExpression, FloatExpression, FxDeclaration, GenericParam, GenericParamKind, Generics, IfExpression, Impl, IndexExpression, Item, ItemIndex, ItemKind, LetStatement, MethodCallExpression, Mutability, NumberExpression, ParenExpression, Path, PathExpression, PathSegment, Pattern, PatternKind, ReturnExpression, Statement, StatementKind, StaticTypeAnnotation, StringExpression, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, UsizeExpression, VariantData, WhileExpression};
 use crate::ast::visitor::ASTVisitor;
 use crate::ast::eval::ASTEvaluator;
 use snowflake_common::diagnostics::{DiagnosticsReportCell};
@@ -33,6 +33,7 @@ pub struct Variable {
     pub name: Path,
     pub ty: TypeKind,
     pub is_shadowing: bool,
+    pub is_mutable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -72,8 +73,8 @@ impl GlobalScope {
         } 
     }
 
-    pub fn declare_variable(&mut self, identifier: &Path, ty: TypeKind, is_global: bool, is_shadowing: bool) -> VariableIndex {
-        let variable = Variable { name: identifier.clone(), ty, is_shadowing };
+    pub fn declare_variable(&mut self, identifier: &Path, ty: TypeKind, is_global: bool, is_shadowing: bool, is_mutable: bool) -> VariableIndex {
+        let variable = Variable { name: identifier.clone(), ty, is_shadowing, is_mutable };
         let variable_index = self.variables.push(variable);
 
         if is_global {
@@ -354,9 +355,9 @@ impl ScopeStack {
         self.exit_scope();
     }
 
-    fn declare_variable(&mut self, identifier: &Path, ty: TypeKind) -> VariableIndex {
+    fn declare_variable(&mut self, identifier: &Path, ty: TypeKind, is_mutable: bool) -> VariableIndex {
         let is_inside_global_scope = self.is_inside_local_scope();
-        let index = self._declare_variable(identifier, ty, !is_inside_global_scope);
+        let index = self._declare_variable(identifier, ty, !is_inside_global_scope, is_mutable);
 
         if is_inside_global_scope {
             self.current_local_scope_mut().add_local_var(index);
@@ -365,7 +366,7 @@ impl ScopeStack {
         return index;
     }
 
-    fn _declare_variable(&mut self, identifier: &Path, ty: TypeKind, is_global: bool) -> VariableIndex {
+    fn _declare_variable(&mut self, identifier: &Path, ty: TypeKind, is_global: bool, is_mutable: bool) -> VariableIndex {
         let is_shadowing = match self.current_local_scope() {
             None => false,
             Some(scope) => scope.locals.iter().any(|local| {
@@ -374,7 +375,7 @@ impl ScopeStack {
             }),
         };
 
-        self.global_scope.declare_variable(identifier, ty, is_global, is_shadowing)
+        self.global_scope.declare_variable(identifier, ty, is_global, is_shadowing, is_mutable)
     }
 
     fn lookup_variable(&mut self, identifier: &Path) -> Option<VariableIndex> { // top-down lookup
@@ -554,6 +555,57 @@ impl Resolver {
     }
 
     pub fn resolve(&mut self, ast: &mut Ast) {
+        // First pass: resolve all function signatures (return types and parameter types)
+        for id in ast.items.cloned_indices() {
+            let item = ast.query_item(id).clone();
+            if item.is_local {
+                continue;
+            }
+            
+            match &item.kind {
+                ItemKind::Function(fx_decl) => {
+                    let fx_idx = fx_decl.index;
+                    
+                    let return_type = if fx_decl.return_type.is_some() {
+                        self.resolve_ast_type(&fx_decl.return_type.as_ref().unwrap().ty)
+                    } else {
+                        TypeKind::Void
+                    };
+                    
+                    let mut param_updates = Vec::new();
+                    let function = self.scopes.global_scope.functions.get(fx_idx);
+                    for (param_idx, generic_param) in fx_decl.generics.params.iter().enumerate() {
+                        if param_idx < function.parameters.len() {
+                            let param_var_idx = function.parameters[param_idx];
+                            
+                            let resolved_type = match &generic_param.kind {
+                                GenericParamKind::Type { ty, .. } => {
+                                    self.resolve_ast_type(&ty)
+                                }
+                                GenericParamKind::Const { ty, .. } => {
+                                    self.resolve_ast_type(&ty)
+                                }
+                            };
+                            
+                            param_updates.push((param_var_idx, resolved_type));
+                        }
+                    }
+                    
+                    let function = self.scopes.global_scope.functions.get_mut(fx_idx);
+                    function.return_type = return_type;
+                    
+                    for (param_var_idx, resolved_type) in param_updates {
+                        let param_var = self.scopes.global_scope.variables.get_mut(param_var_idx);
+                        param_var.ty = resolved_type;
+                    }
+                }
+                _ => {
+                    // Other items will be processed in the second pass
+                }
+            }
+        }
+        
+        // Second pass: visit all items
         for id in ast.items.cloned_indices() {
             let item = ast.query_item(id);
             if item.is_local {
@@ -836,27 +888,94 @@ impl Resolver {
         TypeKind::ObjectUnresolved(type_name.clone())
     }
 
-    fn path_from_pattern_identifier(&self, pattern: &Pattern) -> Path {
+    fn path_from_pattern_identifier(&self, pattern: &Pattern) -> Vec<Path> {
         match &pattern.kind {
             PatternKind::Identifier(_, token) => {
-                Path {
+                vec![Path {
                     span: token.span.clone(),
                     segments: vec![PathSegment {
                         identifier: token.clone(),
                         arguments: None,
                     }],
                     tokens: vec![token.clone()],
+                }]
+            }
+            PatternKind::Tuple(elements) => {
+                let mut paths = Vec::new();
+                for element in elements {
+                    let mut element_paths = self.path_from_pattern_identifier(element);
+                    paths.append(&mut element_paths);
                 }
+                paths
             }
             _ => todo!("Unsupported pattern kind {:?} for path extraction", pattern.kind),
+        }
+    }
+
+    fn match_pattern_with_type(&self, pattern: &Pattern, ty: &TypeKind) -> Vec<(Path, TypeKind, bool)> {
+        match (&pattern.kind, ty) {
+            // Simple identifier pattern
+            (PatternKind::Identifier(binding_mode, token), ty) => {
+                let path = Path {
+                    span: token.span.clone(),
+                    segments: vec![PathSegment {
+                        identifier: token.clone(),
+                        arguments: None,
+                    }],
+                    tokens: vec![token.clone()],
+                };
+
+                let is_mutable = matches!(binding_mode.0, Mutability::Mutable);
+                vec![(path, ty.clone(), is_mutable)]
+            }
+            // Tuple pattern
+            (PatternKind::Tuple(elements), TypeKind::Object(obj_type)) if matches!(
+                obj_type.kind,
+                ObjectKind::Tuple,
+            ) => {
+                if elements.len() != obj_type.fields.len() {
+                    let element_spans = TextSpan::combine(
+                        elements.iter().map(|e| e.span.clone()).collect::<Vec<_>>()
+                    );
+
+                    self.diagnostics.borrow_mut().report_error(
+                    format!("mismatched element count in tuple pattern"),
+                        format!(
+                            "Expected tuple with {} elements, found one with {} elements",
+                            elements.len(), obj_type.fields.len()
+                        ),
+                        element_spans,
+                    );
+
+                    return vec![];
+                }
+
+                let mut bindings = Vec::new();
+                for (element_pattern, field) in elements.iter().zip(&obj_type.fields) {
+                    let mut element_bindings = self.match_pattern_with_type(
+                        element_pattern,
+                        &field.ty
+                    );
+
+                    bindings.append(&mut element_bindings);
+                }
+
+                bindings
+            }
+
+            _ => todo!(
+                "Unsupported pattern kind {:?} for type matching with type {:?}",
+                pattern.kind,
+                ty
+            ),
         }
     }
 }
 
 impl ASTVisitor for Resolver {
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
-        let identifier = self.path_from_pattern_identifier(&let_statement.pattern);
-        
+        let identifiers = self.path_from_pattern_identifier(&let_statement.pattern);
+
         // Set expected array type if we have an array type annotation
         let expected_type = match &let_statement.type_annotation {
             Some(type_annotation) => {
@@ -890,8 +1009,15 @@ impl ASTVisitor for Resolver {
             None => initialiser_expression.ty.clone(),
         };
 
-        let variable = self.scopes.declare_variable(&identifier, ty);
-        ast.set_variable_for_statement(&statement.id, variable);
+        let bindings = self.match_pattern_with_type(&let_statement.pattern, &ty);
+        if bindings.is_empty() {
+            return;
+        }
+
+        for (identifier_path, binding_ty, is_mutable) in bindings {
+            let variable = self.scopes.declare_variable(&identifier_path, binding_ty, is_mutable);
+            ast.set_variable_for_statement(&statement.id, variable);
+        }
     }
 
     fn visit_const_statement(&mut self, ast: &mut Ast, const_statement: &ConstStatement, statement: &Statement) {
@@ -921,7 +1047,7 @@ impl ASTVisitor for Resolver {
 
         let ty = self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
 
-        let variable = self.scopes.declare_variable(&identifier, ty);
+        let variable = self.scopes.declare_variable(&identifier, ty, false);
         ast.set_variable_for_statement(&statement.id, variable);
     }
 
@@ -1129,6 +1255,7 @@ impl ASTVisitor for Resolver {
                     self_type,
                     false, // not shadowing
                     false, // TODO: handle mut self
+                    false, // not mutable
                 );
                 
                 // Add self as the first parameter
@@ -1865,29 +1992,32 @@ impl ASTVisitor for Resolver {
     }
 
     fn visit_constant_item(&mut self, ast: &mut Ast, constant_item: &ConstantItem, _item_id: ItemIndex) {
-        let identifier = self.path_from_pattern_identifier(&constant_item.identifier);
-        let identifier_str = &identifier.tokens.last().unwrap().span.literal;
+        let identifiers = self.path_from_pattern_identifier(&constant_item.identifier);
 
-        if identifier_str.chars().any(|c| c.is_lowercase()) {
-            self.diagnostics.borrow_mut().warn_non_upper_case(&identifier_str, &constant_item.identifier.span);
-        }
-
-        let mut ty = self.resolve_type_from_annotation(&constant_item.type_annotation);
-        if matches!(ty, TypeKind::Array(_, _)) {
-            self.expected_array_type = Some(ty.clone());
-        }
-
-        if constant_item.expr.is_some() {
-            let const_item_expr = **constant_item.expr.as_ref().unwrap();
-            self.visit_expression(ast, const_item_expr);
-            let initialiser_expression = &ast.query_expression(const_item_expr);
-
-            self.expected_array_type = None;
+        for identifier in identifiers {
+            let identifier_str = &identifier.tokens.last().unwrap().span.literal;
     
-            ty = self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
+            if identifier_str.chars().any(|c| c.is_lowercase()) {
+                self.diagnostics.borrow_mut().warn_non_upper_case(&identifier_str, &constant_item.identifier.span);
+            }
+    
+            let mut ty = self.resolve_type_from_annotation(&constant_item.type_annotation);
+            if matches!(ty, TypeKind::Array(_, _)) {
+                self.expected_array_type = Some(ty.clone());
+            }
+    
+            if constant_item.expr.is_some() {
+                let const_item_expr = **constant_item.expr.as_ref().unwrap();
+                self.visit_expression(ast, const_item_expr);
+                let initialiser_expression = &ast.query_expression(const_item_expr);
+    
+                self.expected_array_type = None;
+        
+                ty = self.expect_type(ty.clone(), &initialiser_expression.ty, &initialiser_expression.span(&ast));
+            }
+    
+            self.scopes.global_scope.declare_variable(&identifier, ty, true, false, false);
         }
-
-        self.scopes.global_scope.declare_variable(&identifier, ty, true, false);
     }
 
     fn visit_struct_item(&mut self, ast: &mut Ast, _generics: &Generics, _variant_data: &VariantData, item_id: ItemIndex) {
@@ -2210,6 +2340,13 @@ impl ASTVisitor for Resolver {
                         ast.set_type(expr.id, struct_type);
                         return;
                     }
+                    
+                    self.diagnostics.borrow_mut().report_undeclared_item(
+                        &identifier,
+                        &path_expression.path.span
+                    );
+                    ast.set_type(expr.id, TypeKind::Error);
+                    return;
                 }
                 Some(var_idx) => {
                     let variable = self.scopes.global_scope.variables.get(var_idx);
@@ -2235,13 +2372,23 @@ impl ASTVisitor for Resolver {
                     };
                     ast.set_type(expr.id, enum_type);
                     return;
+                } else {
+                    // Variant not found in enum
+                    self.diagnostics.borrow_mut().report_undeclared_item(
+                        &identifier,
+                        &path_expression.path.span
+                    );
+                    ast.set_type(expr.id, TypeKind::Error);
+                    return;
                 }
             } else {
-                // None of the above – undeclared item
+                // Enum not found – undeclared item
                 self.diagnostics.borrow_mut().report_undeclared_item(
                     enum_name,
                     &path_expression.path.segments[path_len - 2].identifier.span
                 );
+                ast.set_type(expr.id, TypeKind::Error);
+                return;
             }
         }
     }

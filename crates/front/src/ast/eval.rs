@@ -230,7 +230,9 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
 
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
         self.visit_expression(ast, let_statement.initialiser);
-        self.frames.insert(let_statement.variable_index, self.expect_last_value().clone());
+        if let Some(var_idx) = let_statement.variable_indices.first() {
+            self.frames.insert(*var_idx, self.expect_last_value().clone());
+        }
     }
 
     fn visit_parenthesised_expression(&mut self, ast: &mut Ast, parenthesised_expression: &ParenExpression, _expr: &Expression) {

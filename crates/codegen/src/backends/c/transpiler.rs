@@ -59,19 +59,27 @@ impl <'a> CTranspiler<'a> {
                 CStatement::Expr(expr)
             }
             StatementKind::Let(let_statement) => {
-                let var = self.global_scope.variables.get(let_statement.variable_index);
-                let var_name = self.get_variable_name(let_statement.variable_index);
-                let (init_statements, init) = self.transpile_expr(ast, let_statement.initialiser);
-                
-                if let Some(init_statements) = init_statements {
-                    statements.extend(init_statements);
-                }
+                if let Some(var_idx) = let_statement.variable_indices.first() {
+                    let var = self.global_scope.variables.get(*var_idx);
+                    let var_name = self.get_variable_name(*var_idx);
+                    let (init_statements, init) = self.transpile_expr(ast, let_statement.initialiser);
+                    
+                    if let Some(init_statements) = init_statements {
+                        statements.extend(init_statements);
+                    }
 
-                CStatement::VarDecl(CVarDecl {
-                    name: var_name,
-                    ty: CType::try_from(&var.ty).expect("Unsupported type"),
-                    init: Some(init)
-                })
+                    CStatement::VarDecl(CVarDecl {
+                        name: var_name,
+                        ty: CType::try_from(&var.ty).expect("Unsupported type"),
+                        init: Some(init),
+                    })
+                } else {
+                    let (init_statements, init) = self.transpile_expr(ast, let_statement.initialiser);
+                    if let Some(init_statements) = init_statements {
+                        statements.extend(init_statements);
+                    }
+                    CStatement::Expr(init)
+                }
             }
             StatementKind::Const(const_statement) => {
                 let var = self.global_scope.variables.get(const_statement.variable_index);

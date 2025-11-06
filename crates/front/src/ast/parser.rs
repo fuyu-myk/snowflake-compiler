@@ -390,6 +390,7 @@ impl <'a> Parser<'a> {
                 ty,
                 false,
                 false,
+                false, // TODO: handle mut parameters
             );
             
             let generic_param = GenericParam::new(
@@ -512,7 +513,8 @@ impl <'a> Parser<'a> {
                     }, 
                     TypeKind::Unresolved, // Use Unresolved for generic type parameters for now
                     false, 
-                    false
+                    false,
+                    false, // generic types are not mutable
                 );
 
                 let generic_param = GenericParam::new(

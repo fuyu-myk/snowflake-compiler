@@ -75,7 +75,7 @@ impl Ast {
 
         match &mut statement.kind {
             StatementKind::Let(var_declaration) => {
-                var_declaration.variable_index = variable_index;
+                var_declaration.variable_indices.push(variable_index);
             }
             StatementKind::Const(const_declaration) => {
                 const_declaration.variable_index = variable_index;
@@ -156,7 +156,7 @@ impl Ast {
                 pattern: pattern.clone(),
                 initialiser, 
                 type_annotation, 
-                variable_index: VariableIndex::new(0) 
+                variable_indices: Vec::new()
             }),
             StmtIndex::new(0),
             span
@@ -1157,7 +1157,7 @@ pub struct LetStatement {
     pub pattern: Pattern,
     pub initialiser: ExprIndex,
     pub type_annotation: Option<StaticTypeAnnotation>,
-    pub variable_index: VariableIndex,
+    pub variable_indices: Vec<VariableIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -1222,7 +1222,7 @@ pub struct Pattern {
 
 #[derive(Debug, Clone)]
 pub enum PatternKind {
-    Wildcard, // TODO: future impl
+    Wildcard,
     Identifier(BindingMode, Token),
     Struct(Option<Box<QualifiedPath>>, Path, Vec<PatternField>),
     TupleStruct(Option<Box<QualifiedPath>>, Path, Vec<Box<Pattern>>),

@@ -271,18 +271,30 @@ impl HIRBuilder {
             StatementKind::Let(let_statement) => {
                 let expr = self.build_expression(let_statement.initialiser, ast, global_scope, ctx, true);
                 
-                // Extract mutability from the pattern
-                let is_mutable = match &let_statement.pattern.kind {
-                    snowflake_front::ast::PatternKind::Identifier(binding_mode, _) => {
-                        matches!(binding_mode.0, snowflake_front::ast::Mutability::Mutable)
+                if let_statement.variable_indices.len() > 1 {
+                    self.generate_pattern_bindings(
+                        &let_statement.pattern,
+                        &expr,
+                        &let_statement.variable_indices,
+                        span.clone(),
+                        ctx,
+                        global_scope
+                    );
+
+                    return;
+                } else if let Some(var_idx) = let_statement.variable_indices.first() {
+                    let var = &global_scope.variables[*var_idx];
+                    let is_mutable = var.is_mutable;
+                    
+                    HIRStmtKind::Declaration { 
+                        var_idx: *var_idx, 
+                        init_expr: Some(expr),
+                        is_mutable 
                     }
-                    _ => false // Other patterns default to immutable for now
-                };
-                
-                HIRStmtKind::Declaration { 
-                    var_idx: let_statement.variable_index, 
-                    init_expr: Some(expr),
-                    is_mutable 
+                } else {
+                    HIRStmtKind::Expression { 
+                        expr: self.create_expression(HIRExprKind::Unit, TypeKind::Void, span.clone()) 
+                    }
                 }
             }
             StatementKind::Const(const_statement) => {
@@ -919,7 +931,34 @@ impl HIRBuilder {
     }
 
     fn declare_next_temp_var(&self, global_scope: &mut GlobalScope, ty: TypeKind) -> VariableIndex {
-        global_scope.declare_variable(&self.next_temp_var(), ty, false, false)
+        global_scope.declare_variable(&self.next_temp_var(), ty, false, false, false)
+    }
+
+    /// Helper function to extract all variable indices from a pattern
+    /// This walks the pattern tree and collects all variable bindings
+    fn extract_pattern_variables(&self, pattern: &snowflake_front::ast::Pattern, global_scope: &GlobalScope) -> Vec<VariableIndex> {
+        let var_count = self.count_pattern_variables(pattern);
+        
+        if var_count == 0 {
+            return vec![];
+        }
+        
+        let all_indices: Vec<VariableIndex> = global_scope.variables.indices().collect();
+        let total_vars = all_indices.len();
+        let start_idx = total_vars.saturating_sub(var_count);
+        
+        all_indices[start_idx..].to_vec()
+    }
+    
+    /// Count the number of variable bindings in a pattern
+    fn count_pattern_variables(&self, pattern: &snowflake_front::ast::Pattern) -> usize {
+        match &pattern.kind {
+            snowflake_front::ast::PatternKind::Identifier(_, _) => 1,
+            snowflake_front::ast::PatternKind::Tuple(elements) => {
+                elements.iter().map(|elem| self.count_pattern_variables(elem)).sum()
+            }
+            _ => 0,
+        }
     }
 
     fn next_temp_var(&self) -> Path {
@@ -941,6 +980,103 @@ impl HIRBuilder {
                 span: TextSpan::default_with_name(&temp_var_name),
                 kind: TokenKind::Identifier,
             }]
+        }
+    }
+
+    /// Generate HIR declarations for pattern bindings
+    /// Recursively walks the pattern and generates field access expressions
+    fn generate_pattern_bindings(
+        &mut self,
+        pattern: &snowflake_front::ast::Pattern,
+        base_expr: &HIRExpression,
+        variable_indices: &[VariableIndex],
+        span: TextSpan,
+        ctx: &mut Ctx,
+        global_scope: &GlobalScope,
+    ) {
+        let mut var_index = 0;
+        self.generate_pattern_bindings_recursive(
+            pattern,
+            base_expr,
+            variable_indices,
+            &mut var_index,
+            span,
+            ctx,
+            global_scope,
+        );
+    }
+
+    fn generate_pattern_bindings_recursive(
+        &mut self,
+        pattern: &snowflake_front::ast::Pattern,
+        base_expr: &HIRExpression,
+        variable_indices: &[VariableIndex],
+        var_index: &mut usize,
+        span: TextSpan,
+        ctx: &mut Ctx,
+        global_scope: &GlobalScope,
+    ) {
+        use snowflake_front::ast::PatternKind;
+
+        match &pattern.kind {
+            PatternKind::Identifier(_, _) => {
+                // Simple identifier - bind to base expression
+                if *var_index < variable_indices.len() {
+                    let var_idx = variable_indices[*var_index];
+                    let var = &global_scope.variables[var_idx];
+                    let is_mutable = var.is_mutable;
+
+                    let stmt_kind = HIRStmtKind::Declaration {
+                        var_idx,
+                        init_expr: Some(base_expr.clone()),
+                        is_mutable,
+                    };
+
+                    ctx.statements.push(self.create_statement(stmt_kind, span.clone()));
+                    *var_index += 1;
+                }
+            }
+            PatternKind::Tuple(elements) => {
+                // Tuple pattern - extract each element
+                let element_types = if let TypeKind::Object(obj_type) = &base_expr.ty {
+                    obj_type.fields.iter().map(|f| f.ty.as_ref().clone()).collect::<Vec<_>>()
+                } else {
+                    vec![]
+                };
+
+                for (i, element_pattern) in elements.iter().enumerate() {
+                    let field_index_expr = self.create_expression(
+                        HIRExprKind::Number(i as i64),
+                        TypeKind::Int,
+                        span.clone(),
+                    );
+
+                    let element_ty = element_types.get(i).cloned().unwrap_or(TypeKind::Error);
+
+                    let field_expr = self.create_expression(
+                        HIRExprKind::Field {
+                            object: Box::new(base_expr.clone()),
+                            field: Box::new(field_index_expr),
+                        },
+                        element_ty,
+                        span.clone(),
+                    );
+
+                    // Recursively handle the element pattern
+                    self.generate_pattern_bindings_recursive(
+                        element_pattern,
+                        &field_expr,
+                        variable_indices,
+                        var_index,
+                        span.clone(),
+                        ctx,
+                        global_scope,
+                    );
+                }
+            }
+            _ => {
+                // Other pattern kinds not yet supported
+            }
         }
     }
 }

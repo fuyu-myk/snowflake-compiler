@@ -1,3 +1,5 @@
+use std::path;
+
 use termion::color;
 use termion::color::{Fg, Reset};
 use crate::ast::*;
@@ -157,6 +159,59 @@ impl ASTPrinter {
             VariantData::Unit => self.add_text(";"),
         }
     }
+
+    fn print_pattern(&mut self, pattern: &Pattern) {
+        match &pattern.kind {
+            PatternKind::Identifier(binding_mode, token) => {
+                if let Mutability::Mutable = binding_mode.0 {
+                    self.add_keyword("mut");
+                    self.add_whitespace();
+                }
+                self.add_variable(&token.span.literal);
+            }
+            PatternKind::Wildcard => self.add_text("_"),
+            PatternKind::Tuple(fields) => {
+                self.add_text("(");
+                for (i, field) in fields.iter().enumerate() {
+                    self.print_pattern(field);
+
+                    if i != fields.len() - 1 {
+                        self.add_text(",");
+                        self.add_whitespace();
+                    }
+                }
+                self.add_text(")");
+            }
+            PatternKind::Struct(_, path, fields) => {
+                self.add_text(&path.span.literal);
+                self.add_text(" { ");
+                for (i, field) in fields.iter().enumerate() {
+                    self.print_pattern(&field.pattern);
+
+                    if i != fields.len() - 1 {
+                        self.add_text(",");
+                        self.add_whitespace();
+                    }
+                }
+                self.add_text(" }");
+            }
+            PatternKind::TupleStruct(_, path, fields) => {
+                self.add_text(&path.span.literal);
+                self.add_text("(");
+                for (i, field) in fields.iter().enumerate() {
+                    self.print_pattern(field);
+
+                    if i != fields.len() - 1 {
+                        self.add_text(",");
+                        self.add_whitespace();
+                    }
+                }
+                self.add_text(")");
+            }
+            PatternKind::Rest => self.add_text(".."),
+            _ => {}
+        }
+    }
 }
 
 impl ASTVisitor for ASTPrinter {
@@ -188,18 +243,8 @@ impl ASTVisitor for ASTPrinter {
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, _statement: &Statement) {
         self.add_keyword("let"); // let keyword in magenta
         self.add_whitespace();
+        self.print_pattern(&let_statement.pattern);
 
-        match &let_statement.pattern.kind {
-            PatternKind::Identifier(binding_mode, _) => {
-                if let Mutability::Mutable = binding_mode.0 {
-                    self.add_keyword("mut");
-                    self.add_whitespace();
-                }
-            }
-            _ => {}
-        }
-
-        self.add_text(let_statement.pattern.span.literal.as_str()); // variable name in white
         if let Some(type_annotation) = &let_statement.type_annotation {
             self.add_type_annot(type_annotation);
             self.add_whitespace();
@@ -463,7 +508,7 @@ impl ASTVisitor for ASTPrinter {
     }
 
     fn visit_path_expression(&mut self, _ast: &mut Ast, path_expression: &PathExpression, _expr: &Expression) {
-        self.add_text(&path_expression.path.span.literal);
+        self.add_variable(&path_expression.path.span.literal);
     }
 
     fn visit_item_default(&mut self, ast: &mut Ast, item: ItemIndex) {
