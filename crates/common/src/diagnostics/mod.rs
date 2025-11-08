@@ -465,6 +465,18 @@ impl DiagnosticsReport {
         );
     }
 
+    pub fn mismatched_variant_name(&mut self, enum_name: &str, path: &str, span: TextSpan) {
+        self.report_error(
+            format!("mismatched variant name in tuple struct pattern"),
+            format!(
+                "Enum '{}' has no variant named '{}'",
+                enum_name,
+                path
+            ),
+            span,
+        );
+    }
+
     // Warnings
     pub fn warn_non_upper_case(&mut self, variable: &str, span: &TextSpan) {
         self.report_warning(

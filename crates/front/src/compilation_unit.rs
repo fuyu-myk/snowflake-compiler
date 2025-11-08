@@ -160,58 +160,7 @@ impl GlobalScope {
         ItemIndex::new(resolved_index as usize)
     }
 
-    /// Resolve all unresolved struct types to struct indices
-    pub fn resolve_struct_types(&mut self) -> Result<(), Vec<Token>> {
-        let mut unresolved_types = Vec::new();
-        let mut struct_lookup = std::collections::HashMap::new();
-
-        for (struct_idx, item) in self.structs.indexed_iter() {
-            if item.is_local {
-                continue;
-            }
-            
-            match &item.kind {
-                crate::ast::ItemKind::Struct(name, _, _) => {
-                    struct_lookup.insert(name.span.literal.clone(), struct_idx);
-                }
-                _ => continue,
-            }
-        }
-        
-        let function_indices: Vec<_> = self.functions.indices().collect();
-        let variable_indices: Vec<_> = self.variables.indices().collect();
-
-        for func_idx in function_indices {
-            let param_indices = self.functions[func_idx].parameters.clone();
-            for param_idx in param_indices {
-                if let Err(unresolved) = Self::resolve_type_recursive_static(
-                    &mut self.variables[param_idx].ty, &struct_lookup
-                ) {
-                    unresolved_types.extend(unresolved);
-                }
-            }
-            
-            if let Err(unresolved) = Self::resolve_type_recursive_static(
-                &mut self.functions[func_idx].return_type, &struct_lookup
-            ) {
-                unresolved_types.extend(unresolved);
-            }
-        }
-        
-        for var_idx in variable_indices {
-            if let Err(unresolved) = Self::resolve_type_recursive_static(
-                &mut self.variables[var_idx].ty, &struct_lookup
-            ) {
-                unresolved_types.extend(unresolved);
-            }
-        }
-        
-        if unresolved_types.is_empty() {
-            Ok(())
-        } else {
-            Err(unresolved_types)
-        }
-    }
+    
 
     pub fn declare_enum(&mut self, name: String, item: &Item<ItemKind>, variants: Vec<VariantInfo>) -> Result<ItemIndex, ItemIndex> {
         if let Some(existing_enum_idx) = self.lookup_enum(&name) {
@@ -274,37 +223,6 @@ impl GlobalScope {
         }
 
         None
-    }
-    
-    /// Static helper for type resolution
-    fn resolve_type_recursive_static(ty: &mut TypeKind, struct_names: &HashMap<String, ItemIndex>) -> Result<(), Vec<Token>> {
-        match ty {
-            TypeKind::ObjectUnresolved(name) => {
-                if let Some(_) = struct_names.get(name.span.literal.as_str()) {
-                    *ty = TypeKind::struct_resolved(name.span.literal.clone(), vec![]);
-                    Ok(())
-                } else {
-                    Err(vec![name.clone()])
-                }
-            }
-            TypeKind::Array(element_type, _) => {
-                Self::resolve_type_recursive_static(element_type, struct_names)
-            }
-            TypeKind::Object(object_type) => {
-                let mut all_unresolved = Vec::new();
-                for field in &mut object_type.fields {
-                    if let Err(unresolved) = Self::resolve_type_recursive_static(&mut field.ty, struct_names) {
-                        all_unresolved.extend(unresolved);
-                    }
-                }
-                if all_unresolved.is_empty() {
-                    Ok(())
-                } else {
-                    Err(all_unresolved)
-                }
-            }
-            _ => Ok(()),
-        }
     }
 }
 
@@ -499,10 +417,13 @@ struct Resolver {
     expected_array_type: Option<TypeKind>, // Track expected array type for better error reporting
     visited_local_items: std::collections::HashSet<ItemIndex>,
     current_impl_type: Option<String>, // Track the type being implemented for Self resolution
+    current_function: Option<String>, // Track the current function for nested function resolution
 }
 
 fn expect_type(diagnostics: &DiagnosticsReportCell, expected: TypeKind, actual: &TypeKind, span: &TextSpan) -> TypeKind {
-    if matches!(expected, TypeKind::ObjectUnresolved(_)) || matches!(actual, TypeKind::ObjectUnresolved(_)) {
+    // Allow generic types and unresolved types to pass through without checking
+    if matches!(expected, TypeKind::Generic(_) | TypeKind::Unresolved) || 
+       matches!(actual, TypeKind::Generic(_) | TypeKind::Unresolved) {
         return expected;
     }
     
@@ -526,6 +447,7 @@ impl Resolver {
             expected_array_type: None,
             visited_local_items: std::collections::HashSet::new(),
             current_impl_type: None,
+            current_function: None,
         }
     }
 
@@ -555,6 +477,41 @@ impl Resolver {
     }
 
     pub fn resolve(&mut self, ast: &mut Ast) {
+        // Pass 0: Register all structs and enums in global scope
+        for id in ast.items.cloned_indices() {
+            let item = ast.query_item(id).clone();
+            if item.is_local {
+                continue;
+            }
+            
+            match &item.kind {
+                ItemKind::Struct(_, _, _) => {
+                    match self.scopes.global_scope.declare_struct(item.clone()) {
+                        Ok(_) => {},
+                        Err(_existing_idx) => {
+                            // Duplicate will be handled during visit_struct_item
+                        }
+                    }
+                }
+                ItemKind::Enum(name, _, definition) => {
+                    let variants = definition.variants.iter().enumerate().map(|(idx, v)| {
+                        VariantInfo {
+                            discriminant: idx,
+                            name: v.identifier.span.literal.clone(),
+                            data: v.data.clone(),
+                        }
+                    }).collect();
+                    
+                    let _ = self.scopes.global_scope.declare_enum(
+                        name.span.literal.clone(),
+                        &item,
+                        variants
+                    );
+                }
+                _ => {}
+            }
+        }
+        
         // First pass: resolve all function signatures (return types and parameter types)
         for id in ast.items.cloned_indices() {
             let item = ast.query_item(id).clone();
@@ -813,7 +770,7 @@ impl Resolver {
     /// Resolve type from string with generic parameter context
     fn resolve_type_from_string_with_generics(&self, type_name: &Token, generic_params: &[GenericParam]) -> TypeKind {
         let builtin_type = TypeKind::from_token(type_name);
-        if !matches!(builtin_type, TypeKind::ObjectUnresolved(_)) {
+        if !matches!(builtin_type, TypeKind::Unresolved) {
             return builtin_type;
         }
 
@@ -835,8 +792,8 @@ impl Resolver {
         }
 
         if generic_params.iter().any(|param| param.identifier.span.literal == type_name.span.literal) {
-            // Resolved during instantiation
-            return TypeKind::ObjectUnresolved(type_name.clone());
+            // This is a generic type parameter
+            return TypeKind::Generic(type_name.span.literal.clone());
         }
         
         if let Some(struct_idx) = self.scopes.lookup_struct_with_local(&type_name.span.literal) {
@@ -885,7 +842,7 @@ impl Resolver {
         }
         
         self.diagnostics.borrow_mut().report_undeclared_type(type_name);
-        TypeKind::ObjectUnresolved(type_name.clone())
+        TypeKind::Error
     }
 
     fn path_from_pattern_identifier(&self, pattern: &Pattern) -> Vec<Path> {
@@ -907,6 +864,28 @@ impl Resolver {
                     paths.append(&mut element_paths);
                 }
                 paths
+            }
+            PatternKind::Struct(_, _, fields) => {
+                let mut paths = Vec::new();
+                for field in fields {
+                    let mut field_paths = self.path_from_pattern_identifier(&field.pattern);
+                    paths.append(&mut field_paths);
+                }
+                paths
+            }
+            PatternKind::TupleStruct(_, _, patterns) => {
+                let mut paths = Vec::new();
+                for pattern in patterns {
+                    let mut pattern_paths = self.path_from_pattern_identifier(pattern);
+                    paths.append(&mut pattern_paths);
+                }
+                paths
+            }
+            PatternKind::Wildcard => {
+                vec![]
+            }
+            PatternKind::Rest => {
+                vec![]
             }
             _ => todo!("Unsupported pattern kind {:?} for path extraction", pattern.kind),
         }
@@ -933,7 +912,12 @@ impl Resolver {
                 obj_type.kind,
                 ObjectKind::Tuple,
             ) => {
-                if elements.len() != obj_type.fields.len() {
+                let has_rest = elements.iter().any(|e| matches!(e.kind, PatternKind::Rest));
+                let non_rest_count = elements.iter()
+                    .filter(|e| !matches!(e.kind, PatternKind::Rest))
+                    .count();
+                
+                if !has_rest && elements.len() != obj_type.fields.len() {
                     let element_spans = TextSpan::combine(
                         elements.iter().map(|e| e.span.clone()).collect::<Vec<_>>()
                     );
@@ -949,9 +933,280 @@ impl Resolver {
 
                     return vec![];
                 }
+                
+                if has_rest && non_rest_count > obj_type.fields.len() {
+                    let element_spans = TextSpan::combine(
+                        elements.iter().map(|e| e.span.clone()).collect::<Vec<_>>()
+                    );
+
+                    self.diagnostics.borrow_mut().report_error(
+                        format!("too many elements in tuple pattern"),
+                        format!(
+                            "Tuple has {} elements, but pattern specifies {} elements (plus rest pattern)",
+                            obj_type.fields.len(), non_rest_count
+                        ),
+                        element_spans,
+                    );
+
+                    return vec![];
+                }
 
                 let mut bindings = Vec::new();
-                for (element_pattern, field) in elements.iter().zip(&obj_type.fields) {
+                let mut field_idx = 0;
+                let mut pattern_idx = 0;
+                
+                while pattern_idx < elements.len() && field_idx < obj_type.fields.len() {
+                    let element_pattern = &elements[pattern_idx];
+                    
+                    if matches!(element_pattern.kind, PatternKind::Rest) {
+                        pattern_idx += 1;
+
+                        // Calculate how many fields the rest pattern should absorb
+                        let remaining_patterns = elements.len() - pattern_idx;
+                        let remaining_fields = obj_type.fields.len() - field_idx;
+                        if remaining_fields >= remaining_patterns {
+                            field_idx += remaining_fields - remaining_patterns;
+                        }
+                        continue;
+                    }
+                    
+                    let field = &obj_type.fields[field_idx];
+                    let mut element_bindings = self.match_pattern_with_type(
+                        element_pattern,
+                        &field.ty
+                    );
+
+                    bindings.append(&mut element_bindings);
+                    
+                    field_idx += 1;
+                    pattern_idx += 1;
+                }
+
+                bindings
+            }
+            // Struct pattern with resolved type
+            (PatternKind::Struct(_, _, fields), TypeKind::Object(obj_type)) if matches!(
+                obj_type.kind,
+                ObjectKind::Struct(_),
+            ) => {
+                let has_rest = fields.iter().any(|f| f.identifier.kind == TokenKind::DoublePeriod);
+                let non_rest_field_count = fields.iter()
+                    .filter(|f| f.identifier.kind != TokenKind::DoublePeriod)
+                    .count();
+                
+                if !has_rest && non_rest_field_count != obj_type.fields.len() {
+                    let field_spans = TextSpan::combine(
+                        fields.iter().map(|f| f.pattern.span.clone()).collect::<Vec<_>>()
+                    );
+
+                    self.diagnostics.borrow_mut().report_error(
+                    format!("mismatched field count in struct pattern"),
+                        format!(
+                            "Expected struct with {} fields, found pattern with {} fields",
+                            obj_type.fields.len(), non_rest_field_count
+                        ),
+                        field_spans,
+                    );
+
+                    return vec![];
+                }
+                
+                if has_rest && non_rest_field_count > obj_type.fields.len() {
+                    let field_spans = TextSpan::combine(
+                        fields.iter().map(|f| f.pattern.span.clone()).collect::<Vec<_>>()
+                    );
+
+                    self.diagnostics.borrow_mut().report_error(
+                        format!("too many fields in struct pattern"),
+                        format!(
+                            "Struct has {} fields, but pattern specifies {} fields (plus rest pattern)",
+                            obj_type.fields.len(), non_rest_field_count
+                        ),
+                        field_spans,
+                    );
+
+                    return vec![];
+                }
+
+                let mut bindings = Vec::new();
+                for pattern_field in fields {
+                    if pattern_field.identifier.kind == TokenKind::DoublePeriod {
+                        continue;
+                    }
+                    
+                    let field_name = &pattern_field.identifier.span.literal;
+                    
+                    if let Some(struct_field) = obj_type.fields.iter().find(|f| {
+                        f.name.as_ref() == Some(field_name)
+                    }) {
+                        let mut field_bindings = self.match_pattern_with_type(
+                            &pattern_field.pattern,
+                            &struct_field.ty
+                        );
+                        bindings.append(&mut field_bindings);
+                    } else {
+                        self.diagnostics.borrow_mut().report_error(
+                            format!("unknown field in pattern"),
+                            format!(
+                                "Struct does not have a field named '{}'",
+                                field_name
+                            ),
+                            pattern_field.identifier.span.clone(),
+                        );
+                    }
+                }
+
+                bindings
+            }
+            // Struct pattern with error or unresolved type
+            (PatternKind::Struct(_, _, fields), TypeKind::Error | TypeKind::Unresolved) => {
+                let mut bindings = Vec::new();
+                for field in fields {
+                    let mut field_bindings = self.match_pattern_with_type(
+                        &field.pattern,
+                        ty
+                    );
+                    bindings.append(&mut field_bindings);
+                }
+                bindings
+            }
+            // Struct pattern with enums
+            (PatternKind::Struct(_, path, fields), TypeKind::Enum { enum_name, variant_name }) => {
+                if let Some(variant_name) = variant_name {
+                    if path.segments.last().unwrap().identifier.span.literal != *variant_name {
+                        self.diagnostics.borrow_mut().report_error(
+                            format!("mismatched variant name in struct pattern"),
+                            format!(
+                                "Expected variant '{}', found '{}'",
+                                variant_name,
+                                path.segments.last().unwrap().identifier.span.literal
+                            ),
+                            path.span.clone(),
+                        );
+
+                        return vec![];
+                    }
+                }
+
+                let mut bindings = Vec::new();
+                let enum_idx = self.scopes.global_scope.lookup_enum(&enum_name);
+                if enum_idx.is_none() {
+                    self.diagnostics.borrow_mut().report_undeclared_type(&path.segments.last().unwrap().identifier);
+                    return vec![];
+                }
+
+                let enum_item = self.scopes.global_scope.get_enum(enum_idx.unwrap());
+                let variant_info = enum_item.variants.iter().find(|var| var.name == path.segments.last().unwrap().identifier.span.literal);
+
+                if variant_info.is_none() {
+                    self.diagnostics.borrow_mut().mismatched_variant_name(
+                        enum_name,
+                        &path.segments.last().unwrap().identifier.span.literal,
+                        path.span.clone(),
+                    );
+
+                    return vec![];
+                }
+
+                let variant_info = variant_info.unwrap();
+
+                // Extract field types from the variant data
+                match &variant_info.data {
+                    VariantData::Struct { fields: variant_fields } => {
+                        if fields.len() != variant_fields.len() {
+                            for field in fields {
+                                if matches!(field.pattern.kind, PatternKind::Rest) {
+                                    // Allow rest pattern to absorb extra fields
+                                    return vec![];
+                                }
+                            }
+
+                            let field_spans = TextSpan::combine(
+                                fields.iter().map(|f| f.pattern.span.clone()).collect::<Vec<_>>()
+                            );
+
+                            self.diagnostics.borrow_mut().report_error(
+                                format!("mismatched field count in struct pattern"),
+                                format!(
+                                    "Expected variant with {} fields, found pattern with {} fields",
+                                    variant_fields.len(), fields.len()
+                                ),
+                                field_spans,
+                            );
+
+                            return vec![];
+                        }
+
+                        // Match pattern fields with variant fields by name
+                        for pattern_field in fields {
+                            let field_name = &pattern_field.identifier.span.literal;
+                            if let Some(variant_field) = variant_fields.iter().find(|vf| {
+                                vf.identifier.as_ref().map(|id| &id.span.literal) == Some(field_name)
+                            }) {
+                                let field_type = self.resolve_ast_type(&variant_field.ty);
+                                let mut field_bindings = self.match_pattern_with_type(
+                                    &pattern_field.pattern,
+                                    &field_type
+                                );
+                                bindings.append(&mut field_bindings);
+                            } else {
+                                self.diagnostics.borrow_mut().report_error(
+                                    format!("unknown field in pattern"),
+                                    format!(
+                                        "Variant '{}' does not have a field named '{}'",
+                                        variant_info.name, field_name
+                                    ),
+                                    pattern_field.identifier.span.clone(),
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        self.diagnostics.borrow_mut().report_error(
+                            format!("invalid pattern for variant"),
+                            format!(
+                                "Variant '{}' is not a struct variant",
+                                variant_info.name
+                            ),
+                            path.span.clone(),
+                        );
+                        return vec![];
+                    }
+                }
+
+                bindings
+            }
+            // Tuple struct pattern with resolved type
+            (PatternKind::TupleStruct(_, _, fields), TypeKind::Object(obj_type)) if matches!(
+                obj_type.kind,
+                ObjectKind::Struct(_),
+            ) => {
+                if fields.len() != obj_type.fields.len() {
+                    for field in fields {
+                        if matches!(field.kind, PatternKind::Rest) {
+                            // Allow rest pattern to absorb extra fields
+                            return vec![];
+                        }
+                    }
+
+                    let field_spans = TextSpan::combine(
+                        fields.iter().map(|f| f.span.clone()).collect::<Vec<_>>()
+                    );
+
+                    self.diagnostics.borrow_mut().report_error(
+                    format!("mismatched field count in struct pattern"),
+                        format!(
+                            "Expected struct with {} fields, found one with {} fields",
+                            obj_type.fields.len(), fields.len()
+                        ),
+                        field_spans,
+                    );
+
+                    return vec![];
+                }
+
+                let mut bindings = Vec::new();
+                for (element_pattern, field) in fields.iter().zip(&obj_type.fields) {
                     let mut element_bindings = self.match_pattern_with_type(
                         element_pattern,
                         &field.ty
@@ -962,7 +1217,104 @@ impl Resolver {
 
                 bindings
             }
+            // Tuple struct pattern with enums
+            (PatternKind::TupleStruct(_, path, fields), TypeKind::Enum { enum_name, variant_name }) => {
+                if let Some(variant_name) = variant_name {
+                    if path.segments.last().unwrap().identifier.span.literal != *variant_name {
+                        self.diagnostics.borrow_mut().report_error(
+                            format!("mismatched variant name in tuple struct pattern"),
+                            format!(
+                                "Expected variant '{}', found '{}'",
+                                variant_name,
+                                path.segments.last().unwrap().identifier.span.literal
+                            ),
+                            path.span.clone(),
+                        );
 
+                        return vec![];
+                    }
+                }
+
+                let mut bindings = Vec::new();
+                let enum_idx = self.scopes.global_scope.lookup_enum(&enum_name);
+                if enum_idx.is_none() {
+                    self.diagnostics.borrow_mut().report_undeclared_type(&path.segments.last().unwrap().identifier);
+                    return vec![];
+                }
+
+                let enum_item = self.scopes.global_scope.get_enum(enum_idx.unwrap());
+                let variant_info = enum_item.variants.iter().find(|var| var.name == path.segments.last().unwrap().identifier.span.literal);
+
+                if variant_info.is_none() {
+                    self.diagnostics.borrow_mut().mismatched_variant_name(
+                        enum_name,
+                        &path.segments.last().unwrap().identifier.span.literal,
+                        path.span.clone(),
+                    );
+
+                    return vec![];
+                }
+
+                let variant_info = variant_info.unwrap();
+
+                match &variant_info.data {
+                    VariantData::Tuple(elements) => {
+                        if fields.len() != elements.len() {
+                            for field in fields {
+                                if matches!(field.kind, PatternKind::Rest) {
+                                    // Allow rest pattern to absorb extra fields
+                                    return vec![];
+                                }
+                            }
+
+                            let field_spans = TextSpan::combine(
+                                fields.iter().map(|f| f.span.clone()).collect::<Vec<_>>()
+                            );
+
+                            self.diagnostics.borrow_mut().report_error(
+                                format!("mismatched field count in tuple struct pattern"),
+                                format!(
+                                    "Expected variant with {} fields, found pattern with {} fields",
+                                    elements.len(), fields.len()
+                                ),
+                                field_spans,
+                            );
+
+                            return vec![];
+                        }
+
+                        for (field_pattern, element) in fields.iter().zip(elements.iter()) {
+                            let element_type = self.resolve_ast_type(&element.ty);
+                            let mut field_bindings = self.match_pattern_with_type(
+                                field_pattern,
+                                &element_type
+                            );
+                            bindings.append(&mut field_bindings);
+                        }
+                    }
+                    _ => {
+                        self.diagnostics.borrow_mut().report_error(
+                            format!("invalid pattern for variant"),
+                            format!(
+                                "Variant '{}' is not a tuple variant",
+                                variant_info.name
+                            ),
+                            path.span.clone(),
+                        );
+                        return vec![];
+                    }
+                }
+
+                bindings
+            }
+            // Wildcard pattern
+            (PatternKind::Wildcard, _) => {
+                vec![]
+            }
+            // Rest pattern
+            (PatternKind::Rest, _) => {
+                vec![]
+            }
             _ => todo!(
                 "Unsupported pattern kind {:?} for type matching with type {:?}",
                 pattern.kind,
@@ -974,7 +1326,7 @@ impl Resolver {
 
 impl ASTVisitor for Resolver {
     fn visit_let_statement(&mut self, ast: &mut Ast, let_statement: &LetStatement, statement: &Statement) {
-        let identifiers = self.path_from_pattern_identifier(&let_statement.pattern);
+        let _ = self.path_from_pattern_identifier(&let_statement.pattern);
 
         // Set expected array type if we have an array type annotation
         let expected_type = match &let_statement.type_annotation {
@@ -1208,14 +1560,19 @@ impl ASTVisitor for Resolver {
         if let Some(else_branch) = &if_statement.else_branch {
             self.scopes.enter_scope();
 
-            self.visit_block_expression(ast, &else_branch.body, expr);
+            self.visit_expression(ast, *else_branch);
+            let else_expr = ast.query_expression(*else_branch);
 
             let then_expression_type = if_statement.then_branch.type_or_void(ast);
-            let else_expression_type = else_branch.body.type_or_void(ast);
+            let else_expression_type = match &else_expr.kind {
+                ExpressionKind::Block(block_expr) => block_expr.type_or_void(ast),
+                _ => else_expr.ty.clone(),
+            };
+
             
             // Only perform type unification if both branches return non-void types
             if !matches!(then_expression_type, TypeKind::Void) && !matches!(else_expression_type, TypeKind::Void) {
-                let else_span = else_branch.body.span(ast);
+                let else_span = else_expr.span(ast);
                 ty = self.expect_type(then_expression_type, &else_expression_type, &else_span);
             } else {
                 ty = TypeKind::Void;
@@ -1231,6 +1588,11 @@ impl ASTVisitor for Resolver {
         let fx_idx = fx_decl.index;
 
         self.scopes.enter_fx_scope(fx_idx);
+
+        // Save and set current function context for nested function resolution
+        let prev_function = self.current_function.take();
+        let function = self.scopes.global_scope.functions.get(fx_idx);
+        self.current_function = Some(function.name.clone());
 
         // Handle self parameter if present
         let self_var_idx_opt = if let Some(self_param) = &fx_decl.self_param {
@@ -1352,6 +1714,9 @@ impl ASTVisitor for Resolver {
         }
 
         self.scopes.exit_fx_scope();
+        
+        // Restore previous function context
+        self.current_function = prev_function;
     }
 
     fn visit_return_expression(&mut self, ast: &mut Ast, return_expression: &ReturnExpression, expr: &Expression) {
@@ -1409,7 +1774,16 @@ impl ASTVisitor for Resolver {
             let type_name = &call_expression.callee.segments[path_len - 2].identifier.span.literal;
             self.scopes.global_scope.lookup_method(type_name, &callee_name)
         } else {
-            self.scopes.global_scope.lookup_fx(&callee_name)
+            if let Some(ref current_fx) = self.current_function {
+                let scoped_name = format!("{}::{}", current_fx, callee_name);
+                if let Some(fx_idx) = self.scopes.global_scope.lookup_fx(&scoped_name) {
+                    Some(fx_idx)
+                } else {
+                    self.scopes.global_scope.lookup_fx(&callee_name)
+                }
+            } else {
+                self.scopes.global_scope.lookup_fx(&callee_name)
+            }
         };
 
         let ty = match function {
@@ -1837,6 +2211,7 @@ impl ASTVisitor for Resolver {
         let target_span = target_obj.span(ast);
         let should_visit_field = match &current_type {
             TypeKind::Object(object_type) if matches!(object_type.kind, ObjectKind::Struct(_)) => false,
+            TypeKind::Enum { .. } => false,
             _ => true,
         };
         
@@ -2064,6 +2439,15 @@ impl ASTVisitor for Resolver {
                 }
             }
         } else {
+            let struct_name = match &item.kind {
+                ItemKind::Struct(name, _, _) => &name.span.literal,
+                _ => return,  // Should never happen
+            };
+            
+            if self.scopes.global_scope.lookup_struct(struct_name).is_some() {
+                return;
+            }
+            
             match self.scopes.global_scope.declare_struct(item) {
                 Ok(_struct_idx) => {
                     // Global struct successfully registered
@@ -2284,6 +2668,13 @@ impl ASTVisitor for Resolver {
         } else {
             bug_report!("Internal compiler error: Expected enum item");
         };
+
+        if self.scopes.global_scope.lookup_enum(enum_name).is_some() {
+            if !enum_name.chars().next().unwrap().is_uppercase() || enum_name.contains('_') {
+                self.diagnostics.borrow_mut().warn_non_upper_camel_case(enum_name, &enum_item.span);
+            }
+            return;
+        }
 
         let variants: Vec<VariantInfo> = enum_definition.variants.iter()
             .enumerate()
@@ -2620,9 +3011,6 @@ impl CompilationUnit {
         ast.visualise();
 
         Self::check_error_diagnostics(&text, &diagnostics_report).map_err(|_| Rc::clone(&diagnostics_report))?;
-        
-        // Resolve struct types from unresolved to resolved indices
-        let _ = resolver.scopes.global_scope.resolve_struct_types();
 
         Ok(CompilationUnit {
             global_scope: resolver.scopes.global_scope,

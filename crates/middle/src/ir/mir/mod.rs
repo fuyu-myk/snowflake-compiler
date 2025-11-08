@@ -136,8 +136,8 @@ impl From<snowflake_common::typings::TypeKind> for Type {
                 Self::Object(object_type.fields.iter().map(|f| Box::new(Type::from(f.ty.as_ref().clone()))).collect())
             }
             snowflake_common::typings::TypeKind::Unit => Self::Unit,
-            snowflake_common::typings::TypeKind::ObjectUnresolved(_) => {
-                bug_report!("Unresolved struct type should have been resolved before MIR conversion")
+            snowflake_common::typings::TypeKind::Generic(_) => {
+                bug_report!("Generic type should have been resolved/instantiated before MIR conversion")
             }
             snowflake_common::typings::TypeKind::Unresolved | snowflake_common::typings::TypeKind::Error => {
                 bug_report!("Unresolved or error type")

@@ -113,11 +113,33 @@ impl MIRBuilder {
                     bug_report!("Function '{}' (idx {:?}) not found in fx_map. Available functions: {:?}", 
                         fx_name, fx_idx, fx_map.keys().collect::<Vec<_>>())
                 });
+            
+            let callee_fn = &self.mir.functions[mir_fx_idx];
+            let actual_return_type = callee_fn.basic_blocks.iter()
+                .filter_map(|bb_idx| {
+                    let bb = self.mir.basic_blocks.get_or_panic(*bb_idx);
+                    match &bb.terminator().kind {
+                        TerminatorKind::Return { value } => {
+                            match value {
+                                Value::InstructionRef(instr_idx) => {
+                                    Some(callee_fn.instructions.get(*instr_idx).ty.clone())
+                                }
+                                _ => Some(callee_fn.return_type.clone())
+                            }
+                        }
+                        _ => None
+                    }
+                })
+                .next()
+                .unwrap_or_else(|| callee_fn.return_type.clone());
+            
             let instruction = self.mir.functions[fx_called].instructions.get_mut(instruct_idx);
 
             match &mut instruction.kind {
                 InstructionKind::Call { fx_idx: call_fx_idx, .. } => {
                     *call_fx_idx = mir_fx_idx;
+                    
+                    instruction.ty = actual_return_type;
                 }
                 _ => bug_report!("Expected call instruction, found {:?}", instruction.kind),
             }
@@ -186,7 +208,12 @@ impl FunctionBuilder {
                 HIRStmtKind::TailExpression { expr } => {
                     tail_expression = Some((expr, statement.span.clone()));
                     let value = self.build_expr(basic_blocks, &mut bb_builder, global_scope, expr);
-                    let ty: Type = expr.ty.clone().into();
+                    let ty: Type = match &value {
+                        Value::InstructionRef(instr_ref) => {
+                            self.function.instructions[*instr_ref].ty.clone()
+                        }
+                        _ => expr.ty.clone().into(),
+                    };
 
                     if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
                         let instruct_idx = bb_builder.add_instruction(
@@ -325,6 +352,25 @@ impl FunctionBuilder {
         assert!(self.incomplete_phis.is_empty());
         assert!(self.loops.is_empty());
 
+        // Update function return type if it's an Enum with empty variants
+        //   - Happens when a function declares it returns an enum type,
+        //     but the actual return value is a specific variant (Object type)
+        if let Type::Enum { variants, .. } = &self.function.return_type {
+            if variants.is_empty() {
+                // Find the actual return type from return statements
+                for bb_idx in &self.function.basic_blocks {
+                    let bb = basic_blocks.get_or_panic(*bb_idx);
+                    if let TerminatorKind::Return { value } = &bb.terminator().kind {
+                        if let Value::InstructionRef(instr_idx) = value {
+                            let actual_type = self.function.instructions[*instr_idx].ty.clone();
+                            self.function.return_type = actual_type;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         (self.function, self.calls_to_resolve)
     }
 
@@ -371,7 +417,12 @@ impl FunctionBuilder {
             }
             HIRStmtKind::TailExpression { expr } => {
                 let val = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
-                let ty = expr.ty.clone().into();
+                let ty = match &val {
+                    Value::InstructionRef(instr_ref) => {
+                        self.function.instructions[*instr_ref].ty.clone()
+                    }
+                    _ => expr.ty.clone().into(),
+                };
                 
                 if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
                     bb_builder.add_instruction(
@@ -467,7 +518,21 @@ impl FunctionBuilder {
                 let value = init_expr.as_ref().map(|init| {
                     self.build_expr(basic_blocks, bb_builder, global_scope, init)
                 });
-                let ty = global_scope.variables.get(*var_idx).ty.clone().into();
+                
+                let ty = if let Some(value_ref) = &value {
+                    match value_ref {
+                        Value::InstructionRef(instr_ref) => {
+                            let instr = &self.function.instructions[*instr_ref];
+                            instr.ty.clone()
+                        }
+                        _ => {
+                            Type::from(global_scope.variables.get(*var_idx).ty.clone())
+                        }
+                    }
+                } else {
+                    Type::from(global_scope.variables.get(*var_idx).ty.clone())
+                };
+                
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
@@ -481,7 +546,21 @@ impl FunctionBuilder {
                 let value = init_expr.as_ref().map(|init| {
                     self.build_expr(basic_blocks, bb_builder, global_scope, init)
                 });
-                let ty = global_scope.variables.get(*var_idx).ty.clone().into();
+                
+                let ty = if let Some(value_ref) = &value {
+                    match value_ref {
+                        Value::InstructionRef(instr_ref) => {
+                            let instr = &self.function.instructions[*instr_ref];
+                            instr.ty.clone()
+                        }
+                        _ => {
+                            Type::from(global_scope.variables.get(*var_idx).ty.clone())
+                        }
+                    }
+                } else {
+                    Type::from(global_scope.variables.get(*var_idx).ty.clone())
+                };
+                
                 let instruct_idx = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
@@ -625,6 +704,20 @@ impl FunctionBuilder {
                     .map(|elem| &elem.span)
                     .collect();
 
+                let element_types: Vec<Box<Type>> = element_values.iter().zip(elements.iter())
+                    .map(|(value, hir_elem)| {
+                        match value {
+                            Value::InstructionRef(instr_ref) => {
+                                let instr = &self.function.instructions[*instr_ref];
+                                Box::new(instr.ty.clone())
+                            }
+                            _ => {
+                                Box::new(hir_elem.ty.clone().into())
+                            }
+                        }
+                    })
+                    .collect();
+
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
@@ -633,7 +726,7 @@ impl FunctionBuilder {
                             kind: ObjectKind::Tuple,
                             fields: element_values.clone()
                         },
-                        Type::Object(elements.iter().map(|e| Box::new(e.ty.clone().into())).collect()),
+                        Type::Object(element_types),
                         TextSpan::combine_refs(&element_span_refs),
                     ),
                 );
@@ -644,12 +737,30 @@ impl FunctionBuilder {
                 let object_val = self.build_expr(basic_blocks, bb_builder, global_scope, &object);
                 let field_val = self.build_expr(basic_blocks, bb_builder, global_scope, &field);
                 
+                // Determine the result type
+                let result_ty = match (Type::from(expr.ty.clone()), &object_val, &field_val) {
+                    (Type::Enum { .. }, Value::InstructionRef(instr_ref), Value::Constant(Constant::Int(idx))) => {
+                        let object_instr = &self.function.instructions[*instr_ref];
+                        if let Type::Object(ref element_types) = object_instr.ty {
+                            // Extract the field type at the given index
+                            if let Some(field_type) = element_types.get(*idx as usize) {
+                                field_type.as_ref().clone()
+                            } else {
+                                Type::from(expr.ty.clone())
+                            }
+                        } else {
+                            Type::from(expr.ty.clone())
+                        }
+                    }
+                    _ => Type::from(expr.ty.clone()),
+                };
+                
                 let instruct_ref = bb_builder.add_instruction(
                     basic_blocks,
                     &mut self.function,
                     Instruction::new(
                         InstructionKind::Field { object: object_val, field: field_val },
-                        Type::from(expr.ty.clone()),
+                        result_ty,
                         expr.span.clone(),
                     ),
                 );
@@ -887,7 +998,15 @@ impl FunctionBuilder {
                         }
                         HIRStmtKind::TailExpression { expr } => {
                             last_value = self.build_expr(basic_blocks, bb_builder, global_scope, expr);
-                            let ty = expr.ty.clone().into();
+                            
+                            let ty = match &last_value {
+                                Value::InstructionRef(instr_ref) => {
+                                    self.function.instructions[*instr_ref].ty.clone()
+                                }
+                                _ => {
+                                    expr.ty.clone().into()
+                                }
+                            };
                             
                             if !basic_blocks.get_or_panic(bb_builder.current).is_terminated() {
                                 let instruct_idx = bb_builder.add_instruction(

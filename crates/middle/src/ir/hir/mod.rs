@@ -124,6 +124,7 @@ pub enum HIRItemKind {
     Struct,
     Enum,
     Impl,
+    Function,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

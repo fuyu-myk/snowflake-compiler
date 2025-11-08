@@ -271,7 +271,10 @@ impl HIRBuilder {
             StatementKind::Let(let_statement) => {
                 let expr = self.build_expression(let_statement.initialiser, ast, global_scope, ctx, true);
                 
-                if let_statement.variable_indices.len() > 1 {
+                let is_complex_pattern = matches!(let_statement.pattern.kind, 
+                    PatternKind::Tuple(_) | PatternKind::Struct(..) | PatternKind::TupleStruct(..));
+                
+                if is_complex_pattern || let_statement.variable_indices.len() > 1 {
                     self.generate_pattern_bindings(
                         &let_statement.pattern,
                         &expr,
@@ -317,10 +320,20 @@ impl HIRBuilder {
                             } 
                         }
                     }
-                    ItemKind::Function(_) => {
-                        // Placeholder
-                        HIRStmtKind::Expression { 
-                            expr: self.create_expression(HIRExprKind::Unit, TypeKind::Void, ast_item.span.clone()) 
+                    ItemKind::Function(fx_decl) => {
+                        let mut nested_ctx = Ctx::with_function(fx_decl.index);
+                        let statement_count = fx_decl.body.statements.len();
+                        for (idx, stmt_id) in fx_decl.body.statements.iter().enumerate() {
+                            let is_last = idx == statement_count - 1;
+                            self.build_statement(*stmt_id, ast, global_scope, &mut nested_ctx, false, is_last);
+                        }
+                        self.hir.functions.insert(fx_decl.index, nested_ctx.statements);
+                        
+                        HIRStmtKind::Item { 
+                            item_id: HIRItemId { 
+                                from: *item_id,
+                                kind: HIRItemKind::Function,
+                            } 
                         }
                     }
                     ItemKind::Const(_) => {
@@ -407,11 +420,15 @@ impl HIRBuilder {
 
                 let mut else_ctx = ctx.new_child();
                 if let Some(else_branch) = &if_expr.else_branch {
-                    let else_count = else_branch.body.statements.len();
-                    for (idx, stmt_id) in else_branch.body.statements.iter().enumerate() {
-                        let is_last = idx == else_count - 1;
-                        self.build_statement(*stmt_id, ast, global_scope, &mut else_ctx, false, is_last);
-                    }
+                    let else_expr = self.build_expression(*else_branch, ast, global_scope, &mut else_ctx, false);
+
+                    // Add the else expression as a tail expression so it becomes the value of the else block
+                    let else_stmt = self.create_statement(
+                        HIRStmtKind::TailExpression { expr: else_expr },
+                        expr.span.clone()
+                    );
+                    
+                    else_ctx.statements.push(else_stmt);
                 }
                 let current_scope = self.current_scope_id();
                 let then_block = HIRExprKind::Block {
@@ -1044,14 +1061,120 @@ impl HIRBuilder {
                     vec![]
                 };
 
-                for (i, element_pattern) in elements.iter().enumerate() {
+                // Calculate field indices for each pattern element, accounting for rest patterns
+                let mut field_idx = 0;
+                let mut pattern_idx = 0;
+                
+                while pattern_idx < elements.len() && field_idx < element_types.len() {
+                    let element_pattern = &elements[pattern_idx];
+                    
+                    // Skip rest patterns
+                    if matches!(element_pattern.kind, PatternKind::Rest) {
+                        pattern_idx += 1;
+                        // Calculate how many fields the rest pattern should absorb
+                        let remaining_patterns = elements.len() - pattern_idx;
+                        let remaining_fields = element_types.len() - field_idx;
+                        if remaining_fields >= remaining_patterns {
+                            field_idx += remaining_fields - remaining_patterns;
+                        }
+                        continue;
+                    }
+                    
                     let field_index_expr = self.create_expression(
-                        HIRExprKind::Number(i as i64),
+                        HIRExprKind::Number(field_idx as i64),
                         TypeKind::Int,
                         span.clone(),
                     );
 
-                    let element_ty = element_types.get(i).cloned().unwrap_or(TypeKind::Error);
+                    let element_ty = element_types.get(field_idx).cloned().unwrap_or(TypeKind::Error);
+
+                    let field_expr = self.create_expression(
+                        HIRExprKind::Field {
+                            object: Box::new(base_expr.clone()),
+                            field: Box::new(field_index_expr),
+                        },
+                        element_ty,
+                        span.clone(),
+                    );
+
+                    // Recursively handle the element pattern
+                    self.generate_pattern_bindings_recursive(
+                        element_pattern,
+                        &field_expr,
+                        variable_indices,
+                        var_index,
+                        span.clone(),
+                        ctx,
+                        global_scope,
+                    );
+                    
+                    field_idx += 1;
+                    pattern_idx += 1;
+                }
+            }
+            PatternKind::Wildcard => {
+                // Wildcard patterns don't bind any variables
+            }
+            PatternKind::Struct(_, _path, fields) => {
+                if let TypeKind::Object(obj_type) = &base_expr.ty {
+                    for pattern_field in fields {
+                        let field_name = &pattern_field.identifier.span.literal;
+                        
+                        if let Some((field_index, struct_field)) = obj_type.fields.iter().enumerate()
+                            .find(|(_, f)| f.name.as_ref() == Some(field_name)) 
+                        {
+                            let field_index_expr = self.create_expression(
+                                HIRExprKind::Number(field_index as i64),
+                                TypeKind::Int,
+                                span.clone(),
+                            );
+
+                            let field_ty = struct_field.ty.as_ref().clone();
+
+                            let field_expr = self.create_expression(
+                                HIRExprKind::Field {
+                                    object: Box::new(base_expr.clone()),
+                                    field: Box::new(field_index_expr),
+                                },
+                                field_ty,
+                                span.clone(),
+                            );
+
+                            // Recursively handle the field's pattern
+                            self.generate_pattern_bindings_recursive(
+                                &pattern_field.pattern,
+                                &field_expr,
+                                variable_indices,
+                                var_index,
+                                span.clone(),
+                                ctx,
+                                global_scope,
+                            );
+                        }
+                    }
+                }
+            }
+            PatternKind::TupleStruct(_, _path, patterns) => {
+                let field_offset = if matches!(base_expr.ty, TypeKind::Enum { .. }) { 1 } else { 0 };
+
+                for (i, element_pattern) in patterns.iter().enumerate() {
+                    let field_index_expr = self.create_expression(
+                        HIRExprKind::Number((i + field_offset) as i64),
+                        TypeKind::Int,
+                        span.clone(),
+                    );
+
+                    let element_ty = match &element_pattern.kind {
+                        PatternKind::Wildcard => TypeKind::Int, // Placeholder for wildcards
+                        _ => {
+                            if *var_index < variable_indices.len() {
+                                let var_idx = variable_indices[*var_index];
+                                global_scope.variables[var_idx].ty.clone()
+                            } else {
+                                TypeKind::Error
+                            }
+                        }
+                    };
 
                     let field_expr = self.create_expression(
                         HIRExprKind::Field {

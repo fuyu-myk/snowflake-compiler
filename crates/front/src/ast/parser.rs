@@ -1,4 +1,4 @@
-use crate::ast::{AssignmentOpKind, AssociatedItem, Ast, AstType, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, BlockExpression, ElseBranch, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, ItemIndex, ItemKind, Mutability, Path, PathSegment, Pattern, PatternKind, SelfParam, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, UnaryOp, UnaryOpKind, Variant, VariantData};
+use crate::ast::{AssignmentOpKind, AssociatedItem, Ast, AstType, BinaryOp, BinaryOpAssociativity, BinaryOpKind, BindingMode, BlockExpression, ExprField, ExprIndex, Expression, ExpressionKind, FieldDefinition, FxReturnType, GenericParam, GenericParamKind, Generics, Item, ItemIndex, ItemKind, Mutability, Path, PathSegment, Pattern, PatternField, PatternKind, SelfParam, Statement, StatementKind, StaticTypeAnnotation, StmtIndex, UnaryOp, UnaryOpKind, Variant, VariantData};
 use snowflake_common::text::span::TextSpan;
 use snowflake_common::token::{Token, TokenKind};
 use snowflake_common::{bug_report, Idx};
@@ -38,6 +38,7 @@ pub struct Parser<'a> {
     ast: &'a mut Ast,
     global_scope: &'a mut GlobalScope,
     function_depth: usize,
+    current_function_name: Vec<String>,
 }
 
 impl <'a> Parser<'a> {
@@ -60,6 +61,7 @@ impl <'a> Parser<'a> {
             ast,
             global_scope,
             function_depth: 0,
+            current_function_name: Vec::new(),
         }
     }
 
@@ -209,6 +211,16 @@ impl <'a> Parser<'a> {
 
         let return_type = self.parse_optional_return_type();
 
+        // scoped name for nested functions
+        let function_name = if !self.current_function_name.is_empty() {
+            format!("{}::{}", self.current_function_name.join("::"), identifier.span.literal)
+        } else {
+            identifier.span.literal.clone()
+        };
+
+        // push current function name for nested functions
+        self.current_function_name.push(identifier.span.literal.clone());
+        
         // parse body
         self.function_depth += 1;
 
@@ -216,6 +228,9 @@ impl <'a> Parser<'a> {
         spans.push(body.span.clone());
 
         self.function_depth -= 1;
+        
+        // pop current function name
+        self.current_function_name.pop();
 
         let resolved_return_type = return_type.clone().map(
             |return_type| {
@@ -231,7 +246,7 @@ impl <'a> Parser<'a> {
             ItemIndex::unreachable()
         } else {
             let fx_idx_result = self.global_scope.create_function(
-                identifier.span.literal.clone(),
+                function_name.clone(),
                 body.clone(),
                 generics.get_param_indices(),
                 resolved_return_type,
@@ -250,7 +265,8 @@ impl <'a> Parser<'a> {
             return Err(self.ast.assoc_func_item(fx_keyword, identifier, generics, self_param, body, return_type, fx_idx))
         }
 
-        Ok(self.ast.func_item(fx_keyword, identifier, generics, self_param, body, return_type, fx_idx))
+        let is_local = self.function_depth > 0;
+        Ok(self.ast.func_item_local(fx_keyword, identifier, generics, self_param, body, return_type, fx_idx, is_local))
     }
 
     fn parse_optional_return_type(&mut self) -> Option<FxReturnType> {
@@ -1120,11 +1136,19 @@ impl <'a> Parser<'a> {
         self.ast.if_expression(if_keyword, condition_expr, then, else_statement)
     }
 
-    fn parse_optional_else_statement(&mut self) -> Option<ElseBranch> {
+    fn parse_optional_else_statement(&mut self) -> Option<ExprIndex> {
         if self.current().kind == TokenKind::Else {
-            let else_keyword = self.consume_and_check(TokenKind::Else).clone(); // checks for 'else'
-            let else_expression = self.parse_body(); // parsing 'else' statement
-            return Some(ElseBranch::new(else_keyword, else_expression));
+            self.consume_and_check(TokenKind::Else).clone(); // checks for 'else'
+
+            if self.current().kind == TokenKind::If { // else if expr
+                let if_keyword = self.consume_and_check(TokenKind::If).clone();
+                let else_if_expression = self.parse_if_expression(if_keyword);
+                return Some(else_if_expression.id);
+            } else {
+                let open_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+                let else_expression = self.parse_block_expression(open_brace); // parsing 'else' expr
+                return Some(else_expression.id);
+            }
         }
 
         None
@@ -1306,10 +1330,36 @@ impl <'a> Parser<'a> {
                 self.parse_binding_pattern_with_mut()
             }
             TokenKind::Identifier => {
-                self.parse_identifier_pattern()
+                let mut path = None;
+
+                if self.peek(1).kind == TokenKind::DoubleColon{
+                    path = Some(self.parse_path(self.consume().clone()));
+                }
+
+                if self.peek(1).kind == TokenKind::OpenBrace || self.current().kind == TokenKind::OpenBrace {
+                    if path.is_none() {
+                        path = Some(self.parse_path(self.consume().clone()));
+                    }
+
+                    self.parse_struct_pattern(path.unwrap())
+                } else if self.peek(1).kind == TokenKind::LeftParen || self.current().kind == TokenKind::LeftParen {
+                    if path.is_none() {
+                        path = Some(self.parse_path(self.consume().clone()));
+                    }
+
+                    self.parse_tuple_struct_pattern(path.unwrap())
+                } else {
+                    self.parse_identifier_pattern()
+                }
             }
             TokenKind::LeftParen => {
                 self.parse_tuple_pattern()
+            }
+            TokenKind::Underscore => {
+                self.parse_wildcard_pattern()
+            }
+            TokenKind::DoublePeriod => {
+                self.parse_rest_pattern()
             }
             _ => {
                 self.diagnostics_report.borrow_mut().report_unexpected_token(&TokenKind::Identifier, &self.current());
@@ -1353,9 +1403,91 @@ impl <'a> Parser<'a> {
         }
         
         let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
-        let span = snowflake_common::text::span::TextSpan::combine_refs(&[&left_paren.span, &right_paren.span]);
+        let span = TextSpan::combine_refs(&[&left_paren.span, &right_paren.span]);
         
         self.ast.tuple_pattern(patterns, span, left_paren)
+    }
+
+    fn parse_wildcard_pattern(&mut self) -> Pattern {
+        let underscore = self.consume_and_check(TokenKind::Underscore);
+        self.ast.wildcard_pattern(underscore.clone())
+    }
+
+    fn parse_rest_pattern(&mut self) -> Pattern {
+        let double_period = self.consume_and_check(TokenKind::DoublePeriod);
+        self.ast.rest_pattern(double_period.clone())
+    }
+
+    fn parse_struct_pattern(&mut self, path: Path) -> Pattern {
+        let left_brace = self.consume_and_check(TokenKind::OpenBrace).clone();
+        let mut fields = Vec::new();
+
+        while self.current().kind != TokenKind::CloseBrace && !self.is_at_end() {
+            let is_mutable = if self.current().kind == TokenKind::Mutable {
+                self.consume();
+                true
+            } else {
+                false
+            };
+
+            let identifier = if self.current().kind == TokenKind::Identifier {
+                self.consume_and_check(TokenKind::Identifier).clone()
+            } else {
+                self.consume_and_check(TokenKind::DoublePeriod).clone()
+            };
+
+            let field_pattern = if self.current().kind == TokenKind::Colon {
+                self.consume_and_check(TokenKind::Colon);
+                let pat = self.parse_pattern();
+
+                PatternField {
+                    identifier,
+                    pattern: Box::new(pat),
+                    is_shorthand: false,
+                }
+            } else {
+                let binding_mode = if is_mutable {
+                    BindingMode(Mutability::Mutable)
+                } else {
+                    BindingMode(Mutability::Immutable)
+                };
+                
+                PatternField {
+                    identifier: identifier.clone(),
+                    pattern: Box::new(self.ast.identifier_pattern(
+                        binding_mode,
+                        identifier,
+                    )),
+                    is_shorthand: true,
+                }
+            };
+
+            fields.push(field_pattern);
+            self.consume_if(TokenKind::Comma);
+        }
+
+        let right_brace = self.consume_and_check(TokenKind::CloseBrace).clone();
+        let span = TextSpan::combine_refs(&[&left_brace.span, &right_brace.span]);
+
+        self.ast.struct_pattern(path.clone(), fields, span, path.tokens.last().unwrap().clone())
+    }
+
+    fn parse_tuple_struct_pattern(&mut self, path: Path) -> Pattern {
+        let left_paren = self.consume_and_check(TokenKind::LeftParen).clone();
+        let mut patterns = Vec::new();
+
+        while self.current().kind != TokenKind::RightParen && !self.is_at_end() {
+            patterns.push(Box::new(self.parse_pattern()));
+
+            if self.current().kind != TokenKind::RightParen {
+                self.consume_and_check(TokenKind::Comma);
+            }
+        }
+
+        let right_paren = self.consume_and_check(TokenKind::RightParen).clone();
+        let span = TextSpan::combine_refs(&[&left_paren.span, &right_paren.span]);
+
+        self.ast.tuple_struct_pattern(path.clone(), patterns, span, path.tokens.last().unwrap().clone())
     }
 
     fn consume_and_check(&self, kind: TokenKind) -> &Token {

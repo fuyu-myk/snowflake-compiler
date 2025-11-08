@@ -81,6 +81,7 @@ impl <'a> Lexer<'a> {
                 let identifier = self.consume_identifier();
 
                 kind = match identifier.as_str() {
+                    "_" => TokenKind::Underscore,
                     "let" => TokenKind::Let,
                     "if" => TokenKind::If,
                     "else" => TokenKind::Else,
@@ -277,6 +278,7 @@ impl <'a> Lexer<'a> {
             ';' => TokenKind::SemiColon,
             '"' => TokenKind::DoubleQuote,
             '.' => self.potential_multi_char_operator('.'),
+            '_' => TokenKind::Underscore,
             _ => TokenKind::Bad,
         }
     }

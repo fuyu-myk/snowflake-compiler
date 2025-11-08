@@ -203,6 +203,54 @@ impl Ast {
         }
     }
 
+    pub fn wildcard_pattern(&mut self, token: Token) -> Pattern {
+        Pattern {
+            id: StmtIndex::new(0), // Will be set when pattern is used in statement
+            kind: PatternKind::Wildcard,
+            span: token.span.clone(),
+            token,
+        }
+    }
+
+    pub fn rest_pattern(&mut self, token: Token) -> Pattern {
+        Pattern {
+            id: StmtIndex::new(0), // Will be set when pattern is used in statement
+            kind: PatternKind::Rest,
+            span: token.span.clone(),
+            token,
+        }
+    }
+
+    pub fn struct_pattern(
+        &mut self,
+        path: Path,
+        fields: Vec<PatternField>,
+        span: TextSpan,
+        token: Token,
+    ) -> Pattern {
+        Pattern {
+            id: StmtIndex::new(0),
+            kind: PatternKind::Struct(None, path, fields),
+            span,
+            token,
+        }
+    }
+
+    pub fn tuple_struct_pattern(
+        &mut self,
+        path: Path,
+        patterns: Vec<Box<Pattern>>,
+        span: TextSpan,
+        token: Token,
+    ) -> Pattern {
+        Pattern {
+            id: StmtIndex::new(0),
+            kind: PatternKind::TupleStruct(None, path, patterns),
+            span,
+            token,
+        }
+    }
+
     pub fn error_pattern(
         &mut self,
         span: TextSpan,
@@ -245,7 +293,7 @@ impl Ast {
     }
 
     pub fn if_expression(
-        &mut self, if_keyword: Token, condition: ExprIndex, then_branch: BlockExpression, else_statement: Option<ElseBranch>
+        &mut self, if_keyword: Token, condition: ExprIndex, then_branch: BlockExpression, else_statement: Option<ExprIndex>
     ) -> &Expression {
         let mut span_refs = vec![&if_keyword.span];
         let condition_span = self.query_expression(condition).span(self);
@@ -254,8 +302,8 @@ impl Ast {
         span_refs.push(&then_span);
         
         let else_spans: Vec<TextSpan> = if let Some(ref else_branch) = else_statement {
-            let else_span = else_branch.body.span.clone();
-            vec![else_branch.else_keyword.span.clone(), else_span]
+            let else_span = self.query_expression(*else_branch).span(self);
+            vec![else_span]
         } else {
             vec![]
         };
@@ -781,6 +829,20 @@ impl Ast {
         return_type: Option<FxReturnType>,
         index: ItemIndex
     ) -> &Item<ItemKind> {
+        self.func_item_local(fx_keyword, identifier, generics, self_param, body, return_type, index, false)
+    }
+
+    pub fn func_item_local(
+        &mut self,
+        fx_keyword: Token,
+        identifier: Token,
+        generics: Generics,
+        self_param: Option<SelfParam>,
+        body: BlockExpression,
+        return_type: Option<FxReturnType>,
+        index: ItemIndex,
+        is_local: bool
+    ) -> &Item<ItemKind> {
         let mut all_spans = vec![
             fx_keyword.span.clone(),
             identifier.span.clone(),
@@ -796,7 +858,7 @@ impl Ast {
         
         let span = TextSpan::combine(all_spans);
 
-        self.item_from_kind(ItemKind::Function(FxDeclaration { fx_keyword, identifier, generics, self_param, body, return_type, index }), span)
+        self.item_from_kind_local(ItemKind::Function(FxDeclaration { fx_keyword, identifier, generics, self_param, body, return_type, index }), span, is_local)
     }
 
     pub fn visit(&mut self, visitor: &mut dyn ASTVisitor) {
@@ -1571,7 +1633,17 @@ impl BlockExpression {
                         ExpressionKind::If(if_expr) => {
                             // If/else always returns if both branches always return
                             if let Some(else_branch) = &if_expr.else_branch {
-                                if_expr.then_branch.always_returns(ast) && else_branch.body.always_returns(ast)
+                                let else_expr = ast.query_expression(*else_branch);
+                                match &else_expr.kind {
+                                    ExpressionKind::If(else_if_expr) => {
+                                        // Else if - recursively check
+                                        if_expr.then_branch.always_returns(ast) && else_if_expr.always_returns_recurse(ast)
+                                    }
+                                    ExpressionKind::Block(else_expr) => {
+                                        if_expr.then_branch.always_returns(ast) && else_expr.always_returns(ast)
+                                    }
+                                    _ => false,
+                                }
                             } else {
                                 false
                             }
@@ -1589,23 +1661,30 @@ impl BlockExpression {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ElseBranch {
-    pub else_keyword: Token,
-    pub body: BlockExpression,
-}
-
-impl ElseBranch {
-    pub fn new(else_keyword: Token, body: BlockExpression) -> Self {
-        ElseBranch { else_keyword, body }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct IfExpression {
     pub if_keyword: Token,
     pub condition: ExprIndex,
     pub then_branch: BlockExpression,
-    pub else_branch: Option<ElseBranch>,
+    pub else_branch: Option<ExprIndex>,
+}
+
+impl IfExpression {
+    fn always_returns_recurse(&self, ast: &Ast) -> bool {
+        if self.else_branch.is_none() {
+            false
+        } else {
+            let else_branch = ast.query_expression(self.else_branch.unwrap());
+            match &else_branch.kind {
+                ExpressionKind::If(else_if_expr) => {
+                    self.then_branch.always_returns(ast) && else_if_expr.always_returns_recurse(ast)
+                }
+                ExpressionKind::Block(else_block) => {
+                    self.then_branch.always_returns(ast) && else_block.always_returns(ast)
+                }
+                _ => false, // should not happen
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1944,9 +2023,9 @@ impl Expression {
                 let mut spans = vec![if_span, condition, then_branch];
 
                 if let Some(else_branch) = &expr.else_branch {
-                    let else_span = else_branch.else_keyword.span.clone();
+                    let else_expr = ast.query_expression(*else_branch);
+                    let else_span = else_expr.span(ast);
                     spans.push(else_span);
-                    spans.push(else_branch.body.span.clone());
                 }
 
                 TextSpan::combine(spans)

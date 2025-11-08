@@ -1,4 +1,4 @@
-use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, EnumDefinition, Expression, FieldExpression, FxDeclaration, Generics, IfExpression, Impl, IndexExpression, ItemIndex, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, PathExpression, ReturnExpression, Statement, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, VariantData, WhileExpression}, compilation_unit::{GlobalScope, VariableIndex}};
+use crate::{ast::{ASTVisitor, AssignExpression, Ast, BinaryExpression, BinaryOpKind, BlockExpression, BoolExpression, BreakExpression, CallExpression, ConstantItem, ContinueExpression, EnumDefinition, Expression, ExpressionKind, FieldExpression, FxDeclaration, Generics, IfExpression, Impl, IndexExpression, ItemIndex, LetStatement, MethodCallExpression, NumberExpression, ParenExpression, PathExpression, ReturnExpression, Statement, StructExpression, TupleExpression, UnaryExpression, UnaryOpKind, VariantData, WhileExpression}, compilation_unit::{GlobalScope, VariableIndex}};
 use snowflake_common::text::span::TextSpan;
 use std::{collections::HashMap};
 
@@ -202,7 +202,7 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
         }));
     }
 
-    fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, _expr: &Expression) {
+    fn visit_if_expression(&mut self, ast: &mut Ast, if_statement: &IfExpression, expr: &Expression) {
         self.push_frame();
         self.visit_expression(ast, if_statement.condition);
 
@@ -217,11 +217,21 @@ impl <'a> ASTVisitor for ASTEvaluator<'a> {
             self.pop_frame();
         } else if let Some(else_branch) = &if_statement.else_branch {
             self.push_frame();
-            for statement in else_branch.body.iter() {
-                if self.returned {
-                    break;
+            let else_expr = ast.query_expression(*else_branch).clone();
+
+            match &else_expr.kind {
+                ExpressionKind::If(else_if) => {
+                    self.visit_if_expression(ast, else_if, expr);
                 }
-                self.visit_statement(ast, *statement);
+                ExpressionKind::Block(else_expr) => {
+                    for statement in else_expr.statements.iter() {
+                        if self.returned {
+                            break;
+                        }
+                        self.visit_statement(ast, *statement);
+                    }
+                }
+                _ => {}
             }
             self.pop_frame();
         }

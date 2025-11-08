@@ -477,6 +477,32 @@ impl <W> HIRWriter<W> where W: Write {
                 
                 writeln!(writer, "}}\n")?;
             }
+            HIRItemKind::Function => {
+                let fx = global_scope.functions.get(item.from);
+                
+                // Write function declaration
+                write!(writer, "fx {}(", fx.name)?;
+
+                for (i, param_id) in fx.parameters.iter().enumerate() {
+                    let param = global_scope.variables.get(*param_id);
+                    write!(writer, "{}: {}", param.name.tokens.last().unwrap().span.literal, param.ty)?;
+                    
+                    if i < fx.parameters.len() - 1 {
+                        write!(writer, ", ")?;
+                    }
+                }
+                writeln!(writer, ") -> {} {{", fx.return_type)?;
+                
+                // Write function body
+                if let Some(body) = hir.functions.get(&item.from) {
+                    for statement in body {
+                        Self::write_indent(writer, _indent + 1)?;
+                        Self::write_statement(writer, statement, hir, global_scope, _indent + 1)?;
+                    }
+                }
+                
+                writeln!(writer, "}}\n")?;
+            }
         }
 
         Ok(())

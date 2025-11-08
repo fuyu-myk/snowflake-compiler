@@ -206,9 +206,7 @@ pub trait ASTVisitor {
         }
 
         if let Some(else_branch) = &if_expression.else_branch {
-            for statement in else_branch.body.iter() {
-                self.visit_statement(ast, *statement);
-            }
+            self.visit_expression(ast, *else_branch);
         }
     }
 

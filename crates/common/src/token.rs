@@ -86,6 +86,7 @@ pub enum TokenKind {
     Period,
     DoublePeriod,
     FatArrow, // =>
+    Underscore, // _
 
     // comments (handled by lexer, not tokenized)
     LineComment, // // for single line comments
@@ -201,6 +202,7 @@ impl Display for TokenKind {
             TokenKind::Period => write!(f, "."),
             TokenKind::DoublePeriod => write!(f, ".."),
             TokenKind::FatArrow => write!(f, "FatArrow"),
+            TokenKind::Underscore => write!(f, "Underscore"),
 
             // comments
             TokenKind::LineComment => write!(f, "LineComment"),

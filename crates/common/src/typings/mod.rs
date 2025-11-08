@@ -19,7 +19,7 @@ pub enum TypeKind {
     Usize,
     Array(Box<TypeKind>, usize), // Fixed-size array: [type; size]
     Object(ObjectType), // Unified type for tuples and structs
-    ObjectUnresolved(Token), // During parsing - referenced by name for structs
+    Generic(String), // Generic type parameter (e.g., T in struct Foo<T>)
     Unresolved, // used as a default
     Path(Option<String>, String), // Optional module path and type name
     Enum {
@@ -82,7 +82,7 @@ impl Display for TypeKind {
                     }
                 }
             },
-            TypeKind::ObjectUnresolved(name) => name.span.literal.clone(),
+            TypeKind::Generic(name) => name.clone(),
             TypeKind::Unresolved => "unresolved".to_string(),
             TypeKind::Path(module_path, type_name) => {
                 if let Some(module) = module_path {
@@ -130,7 +130,7 @@ impl TypeKind {
                     _ => false,
                 }
             },
-            (TypeKind::ObjectUnresolved(left_name), TypeKind::ObjectUnresolved(right_name)) => left_name == right_name,
+            (TypeKind::Generic(left_name), TypeKind::Generic(right_name)) => left_name == right_name,
             (TypeKind::Enum { enum_name: left_enum, .. }, TypeKind::Enum { enum_name: right_enum, .. }) => left_enum == right_enum,
             (TypeKind::Error, _) => true,
             (_, TypeKind::Error) => true,
@@ -146,7 +146,7 @@ impl TypeKind {
             "string" => TypeKind::String,
             "void" => TypeKind::Void,
             "usize" => TypeKind::Usize,
-            _ => TypeKind::ObjectUnresolved(s.clone()), // Assume unknown types are structs
+            _ => TypeKind::Unresolved, // Unknown types will be resolved later
         }
     }
 

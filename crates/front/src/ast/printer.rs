@@ -319,9 +319,8 @@ impl ASTVisitor for ASTPrinter {
         self.add_keyword("if");
         self.add_whitespace();
 
-        self.add_text("(");
         self.visit_expression(ast, if_statement.condition);
-        self.add_text(") {\n");
+        self.add_text(" {\n");
 
         for statement in &if_statement.then_branch.statements {
             self.visit_statement(ast, *statement);
@@ -330,24 +329,14 @@ impl ASTVisitor for ASTPrinter {
         self.indent -= 1;
         self.add_padding();
         self.add_text("}");
-        self.indent += 1;
 
         if let Some(else_branch) = &if_statement.else_branch {
             self.add_whitespace();
             self.add_keyword("else");
             self.add_whitespace();
-            self.add_text("{\n");
 
-            for statement in else_branch.body.statements.iter() {
-                self.visit_statement(ast, *statement);
-            }
-
-            self.indent -= 1;
-            self.add_padding();
-            self.add_text("}\n");
-            self.indent += 1;
+            self.visit_expression(ast, *else_branch);
         }
-        self.indent -=1;
     }
 
     fn visit_assignment_expression(&mut self, ast: &mut Ast, assignment_expression: &AssignExpression, _expr: &Expression) {

@@ -339,13 +339,16 @@ if c || d {
 
 - [x] **`if` expressions** [completed 09.06.2025]
 
-* Inclusive of optional `else` statements
-* Ability to parse and evaluate the below statement:
+* Inclusive of optional `else` expressions
+* Can be chained with additional `if` expressions
+* Ability to parse and evaluate the below expression:
 
     ```snow
     let a = 23
     if a > 8 {
-        a = 8
+        a = 2
+    } else if a == 8 {
+        a = 3
     } else {
         a = 6
     }
@@ -542,7 +545,40 @@ if c || d {
 
 - [ ] **Pattern matching** [WIP]
 
-* Defined using `match` keyword
-* Exhaustiveness checks
+* Simple pattern matching (`let` statement binding and destructuring in tuples, structs and tuple structs)
+* Wildcards and rests can be used in patterns as well to ignore values/fields
+
+    ```snow
+    let (((a, _), _), d) = (((1, 2), 3), 4);
+    let sum = a + d  // Expected: 5
+    ```
+
+    ```snow
+    struct Point3D {
+        x: int,
+        y: int,
+        z: int,
+    }
+
+    let p = Point3D { x: 5, y: 10, z: 15 };
+    let pair = (p, 20);
+    let (Point3D { x, .. }, val) = pair;
+    x + val  // Expected: 25
+    ```
+
+    ```snow
+    enum Shape {
+        Circle(int),
+        Rectangle(int, int),
+        Triangle(int, int, int),
+    }
+
+    let s = Shape::Circle(9);
+    let Shape::Circle(radius) = s;
+    radius * 2  // Expected: 18
+    ```
+
+* More complex pattern matching defined using `match` keyword
+    * Exhaustiveness checks
+
 * Other pattern matching through `if let`, `while let`
-* Let statement binding and destructuring

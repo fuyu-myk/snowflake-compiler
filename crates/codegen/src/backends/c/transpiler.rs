@@ -319,7 +319,7 @@ impl <'a> CTranspiler<'a> {
             TypeKind::Bool => "int".to_string(),
             TypeKind::Void => "void".to_string(),
             TypeKind::Usize => "size_t".to_string(),
-            TypeKind::ObjectUnresolved(name) => format!("struct_{}", name.span.literal),
+            TypeKind::Generic(name) => format!("generic_{}", name),
             TypeKind::Unit => "void".to_string(),
             TypeKind::Unresolved => panic!("Unresolved type"),
             TypeKind::Error => panic!("Error type"),
