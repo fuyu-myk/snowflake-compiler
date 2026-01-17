@@ -6,7 +6,7 @@ Compilers have always been a black box to me, ever since I learnt C some time ba
 
 I referenced Julian Hartl's video series on YouTube for the creation of this project.
 
-# Compiler architecture
+## Compiler architecture
 
 Thus far, the current compiler architecture is highlighted below:
 
@@ -19,9 +19,9 @@ Thus far, the current compiler architecture is highlighted below:
 * LLVM
     * The [`inkwell`](https://github.com/TheDan64/inkwell) library is used due to my unfamiliarity with LLVM
 
-# Current features
+## Current features
 
-## Architecture
+### Architecture
 
 - [x] **Lexer** [completed 04.06.2025]
 
@@ -99,6 +99,7 @@ Thus far, the current compiler architecture is highlighted below:
         * Copy Propagation - Reduces compile time by reducing copying
         * Constant Folding - Variables that can be computed at compile time are computed
         * Algebraic Simplification - Using mathematical properties to reduce complexity of expressions in the code
+        * Tail Call Elimination - Transform recursive function calls to loops [TODO]
 
     - [x] *Low-level IR (LIR)* [completed 09.08.2025]
     * Further lowering of MIR to facilitate iced_x86 codegen
@@ -122,16 +123,16 @@ Thus far, the current compiler architecture is highlighted below:
 > Phi nodes could cause odd executable generation issues in certain circumstances (like in while loops).
 > They are resolved through extra logic in LLVM IR generation for `TerminatorKind::Goto`.
 
-## Types supported
+### Types supported
 
-### Primitives
+#### Primitives
 
 - [x] Integers
 - [x] Floats
 - [x] Boolean
 - [x] Strings
 
-### Data Structures supported
+#### Data Structures supported
 
 - [x] Arrays [completed 05.08.2025]
 
@@ -250,7 +251,7 @@ fx main() {
 * Enum names should be defined in `UpperCamelCase`, otherwise a warning would be generated
 * TODO: Generic parameters
 
-## Operators
+### Operators
 
 - [x] **Basic arithmetic support** [completed 05.06.2025]
 
@@ -303,7 +304,7 @@ if c || d {
 
 * TODO: Perhaps find a better way of handling spans
 
-## Functionalities
+### Functionalities
 
 - [x] **Diagnostic reporting** [WIP]
 

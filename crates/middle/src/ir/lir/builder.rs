@@ -319,16 +319,39 @@ impl<'mir> LIRBuilder<'mir> {
                             let field_operands: Vec<Operand> = fields.iter()
                                 .map(|field| self.build_operand(field))
                                 .collect();
+                            
+                            let object_type = Type::Object {
+                                element_types: field_operands.iter().map(|op| Box::new(op.ty.clone())).collect()
+                            };
+                            
                             InstructionKind::Object {
-                                target: self.get_ref_location(instruct_idx),
+                                target: self.get_ref_location_with_type(instruct_idx, object_type),
                                 elements: field_operands,
                             }
                         }
                         mir::InstructionKind::Field { object: tuple, field } => {
                             let tuple_operand = self.build_operand(tuple);
                             let field_operand = self.build_operand(field);
+                            
+                            let result_ty = if let OperandKind::Const(ConstValue::Int32(field_idx)) = &field_operand.kind {
+                                match &tuple_operand.ty {
+                                    Type::Object { element_types } => {
+                                        let idx = *field_idx as usize;
+                                        if idx < element_types.len() {
+                                            element_types[idx].as_ref().clone()
+                                        } else {
+                                            // Fallback to instruction type
+                                            self.get_current_fx().instructions.get(instruct_idx).ty.clone().into()
+                                        }
+                                    }
+                                    _ => self.get_current_fx().instructions.get(instruct_idx).ty.clone().into()
+                                }
+                            } else {
+                                self.get_current_fx().instructions.get(instruct_idx).ty.clone().into()
+                            };
+                            
                             InstructionKind::FieldAccess {
-                                target: self.get_ref_location(instruct_idx),
+                                target: self.get_ref_location_with_type(instruct_idx, result_ty),
                                 object: tuple_operand,
                                 field: field_operand,
                             }
@@ -505,7 +528,22 @@ impl<'mir> LIRBuilder<'mir> {
                 let location = self.instruction_to_location.get(instr_idx)
                     .copied()
                     .unwrap_or_else(|| self.create_temp_location(*instr_idx));
-                let ty = self.lir.locations.get(location).ty.clone();
+                
+                let instruction = self.get_current_fx().instructions.get(*instr_idx);
+                let instr_ty: Type = instruction.ty.clone().into();
+                let location_ty = &self.lir.locations[location].ty;
+                
+                let ty = match (location_ty, &instr_ty) {
+                    (Type::Object { element_types: loc_els }, Type::Object { element_types: instr_els }) => {
+                        if loc_els.len() >= instr_els.len() {
+                            location_ty.clone()
+                        } else {
+                            instr_ty
+                        }
+                    }
+                    (Type::Object { .. }, _) => location_ty.clone(),
+                    _ => instr_ty
+                };
                 
                 Operand {
                     ty,
@@ -539,6 +577,36 @@ impl<'mir> LIRBuilder<'mir> {
 
         match aliased_var {
             Some(aliased_var) => match self.var_to_location.get(&aliased_var) {
+                Some(&location) => {
+                    let current_ty = &self.lir.locations[location].ty;
+                    let needs_update = matches!(current_ty, Type::Int32 | Type::UInt64) && 
+                        matches!(&ty, Type::Object { .. });
+                    
+                    let needs_nested_update = match (current_ty, &ty) {
+                        (Type::Object { element_types: current_els }, Type::Object { element_types: new_els }) => {
+                            new_els.len() > current_els.len() || 
+                            new_els.iter().zip(current_els.iter()).any(|(new_el, curr_el)| {
+                                matches!((curr_el.as_ref(), new_el.as_ref()),
+                                    (Type::Object { element_types: curr_nested }, Type::Object { element_types: new_nested })
+                                    if new_nested.len() > curr_nested.len())
+                            })
+                        }
+                        _ => false
+                    };
+                    
+                    if needs_update || needs_nested_update {
+                        self.lir.locations[location].ty = ty.clone();
+                    }
+                    location
+                }
+                None => {
+                    let location = self.create_location(ty);
+                    self.var_to_location.insert(aliased_var, location);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
+            None => match self.instruction_to_location.get(&instruction_idx) {
                 Some(location) => *location,
                 None => {
                     let location = self.create_location(ty);
@@ -546,8 +614,30 @@ impl<'mir> LIRBuilder<'mir> {
                     location
                 }
             }
+        }
+    }
+
+    fn get_ref_location_with_type(&mut self, instruction_idx: InstructionIdx, ty: Type) -> LocationIdx {
+        let aliased_var = self.get_current_fx().locals.get(&instruction_idx).copied();
+
+        match aliased_var {
+            Some(aliased_var) => match self.var_to_location.get(&aliased_var) {
+                Some(&location) => {
+                    self.lir.locations[location].ty = ty.clone();
+                    location
+                }
+                None => {
+                    let location = self.create_location(ty);
+                    self.var_to_location.insert(aliased_var, location);
+                    self.instruction_to_location.insert(instruction_idx, location);
+                    location
+                }
+            }
             None => match self.instruction_to_location.get(&instruction_idx) {
-                Some(location) => *location,
+                Some(&location) => {
+                    self.lir.locations[location].ty = ty.clone();
+                    location
+                }
                 None => {
                     let location = self.create_location(ty);
                     self.instruction_to_location.insert(instruction_idx, location);

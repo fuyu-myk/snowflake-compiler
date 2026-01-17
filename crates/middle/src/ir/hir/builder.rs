@@ -484,10 +484,8 @@ impl HIRBuilder {
                     let path_len = call_expr.callee.segments.len();
                     let variant_name = call_expr.callee.segments.last().unwrap().identifier.span.literal.clone();
                     
-                    // Try struct first, then enum variant
-                    let item_result = if let Some(struct_idx) = global_scope.lookup_struct(&variant_name) {
-                        Some((struct_idx, None)) // (index, variant_discriminant)
-                    } else if path_len >= 2 {
+                    // Try enum variant first, then struct
+                    let item_result = if path_len >= 2 {
                         // Check for enum variant
                         let enum_name = &call_expr.callee.segments[path_len - 2].identifier.span.literal;
                         if let Some((enum_idx, variant)) = global_scope.lookup_enum_variant(enum_name, &variant_name) {
@@ -495,6 +493,8 @@ impl HIRBuilder {
                         } else {
                             None
                         }
+                    } else if let Some(struct_idx) = global_scope.lookup_struct(&variant_name) {
+                        Some((struct_idx, None)) // (index, variant_discriminant)
                     } else {
                         None
                     };
@@ -1166,6 +1166,25 @@ impl HIRBuilder {
 
                     let element_ty = match &element_pattern.kind {
                         PatternKind::Wildcard => TypeKind::Int, // Placeholder for wildcards
+                        PatternKind::TupleStruct(_, path, _) => {
+                            let path_len = path.segments.len();
+                            if path_len >= 2 {
+                                let enum_name = path.segments[path_len - 2].identifier.span.literal.clone();
+                                let variant_name = path.segments[path_len - 1].identifier.span.literal.clone();
+                                TypeKind::Enum {
+                                    enum_name,
+                                    variant_name: Some(variant_name),
+                                }
+                            } else {
+                                // Fallback to variable type
+                                if *var_index < variable_indices.len() {
+                                    let var_idx = variable_indices[*var_index];
+                                    global_scope.variables[var_idx].ty.clone()
+                                } else {
+                                    TypeKind::Error
+                                }
+                            }
+                        }
                         _ => {
                             if *var_index < variable_indices.len() {
                                 let var_idx = variable_indices[*var_index];

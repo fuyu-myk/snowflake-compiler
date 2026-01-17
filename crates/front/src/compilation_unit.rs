@@ -1817,9 +1817,53 @@ impl ASTVisitor for Resolver {
                 } else {
                     None
                 };
+                
+                // Enum variant constructor
+                if let Some((enum_idx, variant_info)) = self.scopes.global_scope.lookup_enum_variant(
+                    enum_name.map_or("???", |name| name), 
+                    &call_expression.callee.segments.last().unwrap().identifier.span.literal,
+                ) {
+                    let variant_data = variant_info.data.clone();
+                    let variant_name = variant_info.name.clone();
+                    let enum_def_name = self.scopes.global_scope.get_enum(enum_idx).name.clone();
+                    let mut fields = Vec::new();
 
+                    if let VariantData::Tuple(elements) = variant_data {
+                        if elements.len() != call_expression.arguments.len() {
+                            let mut diagnostics_binding = self.diagnostics.borrow_mut();
+                            diagnostics_binding.report_invalid_arg_count(
+                                &call_expression.callee.span,
+                                elements.len(),
+                                call_expression.arguments.len(),
+                            );
+                        }
+
+                        for (argument, element) in call_expression.arguments.iter().zip(elements.iter()) {
+                            self.visit_expression(ast, *argument);
+                            let argument_expression = ast.query_expression(*argument);
+
+                            let element_type = self.resolve_ast_type(&element.ty);
+                            self.expect_type(element_type.clone(), &argument_expression.ty, &argument_expression.span(&ast));
+
+                            fields.push(
+                                FieldType {
+                                    ty: Box::new(element_type),
+                                    name: None,
+                                }
+                            )
+                        }
+
+                        TypeKind::Enum {
+                            enum_name: enum_def_name,
+                            variant_name: Some(variant_name),
+                        }
+                    } else {
+                        let mut diagnostics_binding = self.diagnostics.borrow_mut();
+                        diagnostics_binding.report_undeclared_function(&call_expression.callee.segments.last().unwrap().identifier);
+                        TypeKind::Error
+                    }
                 // Tuple struct or undeclared function
-                if let Some(struct_name) = self.scopes.lookup_struct_with_local(&callee_name) {
+                } else if let Some(struct_name) = self.scopes.lookup_struct_with_local(&callee_name) {
                     let struct_item = self.scopes.global_scope.get_struct(struct_name).clone();
                     if let ItemKind::Struct(_identifier, generics, variant_data) = &struct_item.kind {
                         let mut fields = Vec::new();
@@ -1894,49 +1938,6 @@ impl ASTVisitor for Resolver {
                                 diagnostics_binding.report_undeclared_function(&call_expression.callee.segments.last().unwrap().identifier);
                                 TypeKind::Error
                             }
-                        }
-                    } else {
-                        let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                        diagnostics_binding.report_undeclared_function(&call_expression.callee.segments.last().unwrap().identifier);
-                        TypeKind::Error
-                    }
-                } else if let Some((enum_idx, variant_info)) = self.scopes.global_scope.lookup_enum_variant(
-                    enum_name.map_or("???", |name| name), 
-                    &call_expression.callee.segments.last().unwrap().identifier.span.literal,
-                ) {
-                    let variant_data = variant_info.data.clone();
-                    let variant_name = variant_info.name.clone();
-                    let enum_def_name = self.scopes.global_scope.get_enum(enum_idx).name.clone();
-                    let mut fields = Vec::new();
-
-                    if let VariantData::Tuple(elements) = variant_data {
-                        if elements.len() != call_expression.arguments.len() {
-                            let mut diagnostics_binding = self.diagnostics.borrow_mut();
-                            diagnostics_binding.report_invalid_arg_count(
-                                &call_expression.callee.span,
-                                elements.len(),
-                                call_expression.arguments.len(),
-                            );
-                        }
-
-                        for (argument, element) in call_expression.arguments.iter().zip(elements.iter()) {
-                            self.visit_expression(ast, *argument);
-                            let argument_expression = ast.query_expression(*argument);
-
-                            let element_type = self.resolve_ast_type(&element.ty);
-                            self.expect_type(element_type.clone(), &argument_expression.ty, &argument_expression.span(&ast));
-
-                            fields.push(
-                                FieldType {
-                                    ty: Box::new(element_type),
-                                    name: None,
-                                }
-                            )
-                        }
-
-                        TypeKind::Enum {
-                            enum_name: enum_def_name,
-                            variant_name: Some(variant_name),
                         }
                     } else {
                         let mut diagnostics_binding = self.diagnostics.borrow_mut();

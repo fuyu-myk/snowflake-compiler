@@ -431,20 +431,34 @@ impl From<mir::Type> for Type {
             },
             mir::Type::Enum { discriminant, variants } => {
                 // Convert enum tagged union to LIR representation
-                // Tagged union: struct with discriminant and largest variant payload
-                let discriminant_type = Box::new(Type::from(*discriminant));
-                let mut all_field_types = vec![discriminant_type];
-                
-                // TODO: Calculate size and use byte array
-                for variant_fields in variants {
-                    for field_type in variant_fields {
-                        all_field_types.push(Box::new(Type::from(*field_type)));
+                if variants.is_empty() {
+                    Type::Object {
+                        element_types: vec![Box::new(Type::from(*discriminant))],
                     }
-                }
-                
-                // TODO: Union type in future?
-                Type::Object {
-                    element_types: all_field_types,
+                } else if variants.len() == 1 && !variants[0].is_empty() {
+                    let discriminant_type = Box::new(Type::from(*discriminant));
+                    let mut all_field_types = vec![discriminant_type];
+                    
+                    for field_type in &variants[0] {
+                        all_field_types.push(Box::new(Type::from(field_type.as_ref().clone())));
+                    }
+                    
+                    Type::Object {
+                        element_types: all_field_types,
+                    }
+                } else {
+                    let discriminant_type = Box::new(Type::from(*discriminant));
+                    let mut all_field_types = vec![discriminant_type];
+                    
+                    for variant_fields in variants {
+                        for field_type in variant_fields {
+                            all_field_types.push(Box::new(Type::from(*field_type)));
+                        }
+                    }
+                    
+                    Type::Object {
+                        element_types: all_field_types,
+                    }
                 }
             }
             mir::Type::Unit => Type::Unit,
